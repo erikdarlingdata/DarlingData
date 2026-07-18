@@ -38,6 +38,7 @@ import atexit
 import base64
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,17 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GEN_TEMPLATE = os.path.join(HERE, "template_generate.sql")
+
+
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment
+    so the harness runs both locally and in CI. Locally SQLCMD_BIN defaults to
+    'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI sets SQLCMD_BIN to the
+    go-based sqlcmd and SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    container's self-signed cert and disable encryption, which the modern Go
+    TLS stack needs to connect to the SQL Server 2017 container."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
 EXEC_TEMPLATE = os.path.join(HERE, "template_execute.sql")
 
 # Per-case .sql files are ephemeral; keep them out of the committed tests dir.
@@ -151,7 +163,8 @@ def _write_sql(path, sql):
 
 def _run_sql_file(server, password, path):
     cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+        *_sqlcmd_prefix(),
+        "-S", server, "-U", "sa", "-P", password,
         "-d", "master", "-i", path, "-y", "0", "-h", "-1",
     ]
     # Capture bytes and decode as UTF-8: go-sqlcmd emits UTF-8 on stdout, so a

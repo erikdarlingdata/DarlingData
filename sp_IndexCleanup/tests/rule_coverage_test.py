@@ -130,9 +130,21 @@ Usage:
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
+
+
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment
+    so the harness runs both locally and in CI. Locally SQLCMD_BIN defaults to
+    'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI sets SQLCMD_BIN to the
+    go-based sqlcmd and SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    container's self-signed cert and disable encryption, which the modern Go
+    TLS stack needs to connect to the SQL Server 2017 container."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
 
 
 TEST_DATABASE = "Crap"
@@ -851,7 +863,8 @@ def run_sqlcmd(server, password, input_file=None, query=None,
                database=TEST_DATABASE, timeout=600):
     """Run SQL from a file or a query string and capture output."""
     cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+        *_sqlcmd_prefix(),
+        "-S", server, "-U", "sa", "-P", password,
         "-d", database,
         "-W",  # trim trailing spaces
         "-s", "\t",  # tab delimiter

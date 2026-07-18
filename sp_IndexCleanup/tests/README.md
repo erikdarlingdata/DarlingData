@@ -63,9 +63,23 @@ asserts the guard fired and suppressed it. It never silently skips, and it prove
 the index was analyzed and genuinely has zero reads first, so the absence of an
 `Unused Index` row means the guard, not an invisible index.
 
-These are **not** wired into CI. `.github/workflows/sql-tests.yml` only runs
-basic-execution and help-output smoke tests, which is why behavioral regressions
-have shipped before. Run these by hand.
+### CI
+
+`run_tests.py`, `fixture_cases_test.py`, and `no_access_test.py` run in CI on
+every 2017/2019/2022/2025 container. They need a `StackOverflow2013` with a
+`Users` table, which the containers do not have, so CI first builds a
+faithful-schema synthetic one from `fixture_stackoverflow2013.sql` (exact Users
+columns, clustered PK, the `DropIndexes` helper, ~500k varied rows). Real values
+are not needed: the harness forces its index reads and every rule is structural.
+
+`rule_coverage_test.py` is **local only**, not in CI. Several of its positive
+controls assert the procedure still recommends PAGE compression for small tables,
+and on a freshly-started instance -- which the CI containers always are -- those
+`COMPRESSION SCRIPT` rows are absent in the single-database (`@database_name`)
+path, though present via `@get_all_databases` (groups F/G) and present on any
+established instance. Whether that is a real gap or a stats-not-yet-settled
+artifact is unresolved; until it is, run this one by hand on a long-lived
+instance. Green CI does **not** mean `rule_coverage_test.py` passed.
 
 ## Fixtures (manual)
 

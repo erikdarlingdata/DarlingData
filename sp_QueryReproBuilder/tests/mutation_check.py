@@ -31,10 +31,23 @@ import argparse
 import atexit
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+
+
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment
+    so the harness runs both locally and in CI. Locally SQLCMD_BIN defaults to
+    'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI sets SQLCMD_BIN to the
+    go-based sqlcmd and SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    container's self-signed cert and disable encryption, which the modern Go
+    TLS stack needs to connect to the SQL Server 2017 container."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_PROC = os.path.normpath(os.path.join(HERE, "..", "sp_QueryReproBuilder.sql"))
@@ -93,8 +106,8 @@ def pattern_check(base):
 
 def install(path, server, password, label):
     r = subprocess.run(
-        ["sqlcmd", "-S", server, "-U", "sa", "-P", password, "-d", "master",
-         "-i", path, "-b"],
+        [*_sqlcmd_prefix(), "-S", server, "-U", "sa", "-P", password,
+         "-d", "master", "-i", path, "-b"],
         capture_output=True, text=True, timeout=180)
     if r.returncode != 0:
         print("  install(%s) FAILED rc=%d: %s"
