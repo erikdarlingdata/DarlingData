@@ -176,19 +176,9 @@ jobs:
         run: |
           /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -i "sp_IndexCleanup/tests/fixture_stackoverflow2013.sql"
 
-      # Three runners: adversarial synthetic tables, the Users dedupe cases
-      # (which also EXECUTE every generated MERGE/DISABLE script), and the
-      # no-database-access preflight guard.
-      #
-      # rule_coverage_test.py is deliberately NOT run here. Several of its
-      # positive controls assert the procedure still recommends PAGE compression
-      # for small tables, and on a freshly-started instance (which the CI
-      # containers always are) those COMPRESSION SCRIPT rows are absent in the
-      # single-database (@database_name) path -- though present via
-      # @get_all_databases and present on any established instance. Whether that
-      # is a real gap in the procedure or a stats-not-yet-settled artifact needs
-      # a fresh-instance repro to root-cause; until then this runner stays a
-      # local-only test (see sp_IndexCleanup/tests/README.md).
+      # Four runners: adversarial synthetic tables, the Users dedupe cases
+      # (which also EXECUTE every generated MERGE/DISABLE script), rule coverage
+      # in its own scratch databases, and the no-database-access preflight guard.
       - name: sp_IndexCleanup assertion harness
         env:
           SA_PASSWORD: CI_Test#2026!
@@ -197,6 +187,7 @@ jobs:
         run: |
           python3 sp_IndexCleanup/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
           python3 sp_IndexCleanup/tests/fixture_cases_test.py --server localhost --password "$SA_PASSWORD"
+          python3 sp_IndexCleanup/tests/rule_coverage_test.py --server localhost --password "$SA_PASSWORD"
           python3 sp_IndexCleanup/tests/no_access_test.py --server localhost --password "$SA_PASSWORD"
 
       # ReproBuilder is fully portable: every plan is an embedded string constant

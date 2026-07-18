@@ -65,21 +65,20 @@ the index was analyzed and genuinely has zero reads first, so the absence of an
 
 ### CI
 
-`run_tests.py`, `fixture_cases_test.py`, and `no_access_test.py` run in CI on
-every 2017/2019/2022/2025 container. They need a `StackOverflow2013` with a
-`Users` table, which the containers do not have, so CI first builds a
-faithful-schema synthetic one from `fixture_stackoverflow2013.sql` (exact Users
-columns, clustered PK, the `DropIndexes` helper, ~500k varied rows). Real values
-are not needed: the harness forces its index reads and every rule is structural.
+All four runners run in CI on every 2017/2019/2022/2025 container. Three of them
+(`run_tests.py`, `fixture_cases_test.py`, `no_access_test.py`) need a
+`StackOverflow2013` with a `Users` table, which the containers do not have, so CI
+first builds a faithful-schema synthetic one from `fixture_stackoverflow2013.sql`
+(exact Users columns, clustered PK, the `DropIndexes` helper, ~500k varied rows).
+Real values are not needed: the harness forces its index reads and every rule is
+structural.
 
-`rule_coverage_test.py` is **local only**, not in CI. Several of its positive
-controls assert the procedure still recommends PAGE compression for small tables,
-and on a freshly-started instance -- which the CI containers always are -- those
-`COMPRESSION SCRIPT` rows are absent in the single-database (`@database_name`)
-path, though present via `@get_all_databases` (groups F/G) and present on any
-established instance. Whether that is a real gap or a stats-not-yet-settled
-artifact is unresolved; until it is, run this one by hand on a long-lived
-instance. Green CI does **not** mean `rule_coverage_test.py` passed.
+`rule_coverage_test.py` creates its own scratch `Crap`/`CrapA`/`CrapB`
+databases. It used to assume `Crap` already existed -- true on a long-lived box
+where it persists between runs, false on a fresh CI container -- and the missing
+database failed silently (the `-d Crap` connection error is Msg 4060, Level 11,
+below the Level-16 error check). It now creates `Crap` if absent and treats Msg
+4060/911 as fatal, so it runs cleanly on a fresh instance.
 
 ## Fixtures (manual)
 
