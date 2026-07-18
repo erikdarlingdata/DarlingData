@@ -22,10 +22,11 @@ are controllable or structurally invariant:
   * Forced-condition (the high-value core): conditions this harness can safely
     create and reset, proven BIDIRECTIONALLY (finding absent when the condition
     is not present, finding present when it is):
-      - Server config: the "Non-Default Configuration" check (check_id 1000)
-        reads sys.configurations. For a small set of SAFE options the harness
-        forces each to a non-default value and back, and names the option in the
-        details. Every option's original value_in_use is captured first and
+      - Server config: the "Cost Threshold for Parallelism Too Low" check
+        (check_id 1004) reads sys.configurations. The harness forces CTFP to a
+        sane value (absent), the default of 5 (present, High), and a low-but-
+        not-default value (present, Low), proving both the finding and its
+        severity escalation. The original value_in_use is captured first and
         restored precisely in a finally block that runs even on assertion
         failure. The instance is never left reconfigured.
       - Database config: Auto-Shrink Enabled (7001) and Auto Update Statistics
@@ -54,18 +55,15 @@ import subprocess
 import sys
 
 
-# The "Non-Default Configuration" check (check_id 1000) fires when an option's
-# value_in_use differs from the listed default. These three are SAFE to flip on
-# a test instance: none require a restart, none are dangerous (no max server
-# memory, no affinity), and nothing the CI does depends on them. Each is:
-#   (option name, default value, forced non-default value)
-# All three are "advanced" options, so 'show advanced options' must be 1 while
-# they are configured; the harness sets it and restores it.
-FORCED_OPTIONS = [
-    ("cost threshold for parallelism", 5, 55),
-    ("optimize for ad hoc workloads", 0, 1),
-    ("access check cache bucket count", 0, 256),
-]
+# The Cost Threshold for Parallelism check (check_id 1004) fires when CTFP is
+# set below 50, escalating to High (priority 20) at or below the default of 5
+# and staying Low (priority 40) between 6 and 49. CTFP is an advanced option
+# that needs no restart, so it is safe to flip on a test instance; the harness
+# sets 'show advanced options' while configuring it and restores both.
+CTFP = "cost threshold for parallelism"
+CTFP_SANE = 55     # >= 50: no finding
+CTFP_DEFAULT = 5   # bad, and at the default: finding at High priority (20)
+CTFP_LOW = 25      # bad, below 50 but above the default: finding at Low (40)
 
 # Column names expected in the #results header (shape-regression guard).
 RESULTS_COLUMNS = [
@@ -209,13 +207,11 @@ def parse_result_rows(stdout):
     return rows
 
 
-def find_config_finding(rows, option_name):
-    """Return the #results row for a Non-Default Configuration finding on the
-    given option, or None. finding is a stable label; the option name lives in
-    object_name (column 6), so matching here also proves that convention holds."""
+def find_ctfp_finding(rows):
+    """Return the #results row for the Cost Threshold for Parallelism Too Low
+    finding (check_id 1004), or None."""
     for r in rows:
-        if (r[4] == "Non-Default Configuration"
-                and len(r) > 6 and r[6] == option_name):
+        if r[4] == "Cost Threshold for Parallelism Too Low":
             return r
     return None
 
@@ -314,8 +310,10 @@ def structural_tests(server, password, R):
 
 
 def forced_condition_tests(server, password, R):
-    """Bidirectional forced-condition assertions on the check_id 1000
-    Non-Default Configuration check. Captures and restores exact originals."""
+    """Bidirectional forced-condition assertions on the check_id 1004 Cost
+    Threshold for Parallelism check: ABSENT when CTFP is sane (>= 50), PRESENT
+    and High at the default of 5, PRESENT but only Low between 6 and 49.
+    Captures and restores the original value."""
     # Flush any pre-existing pending config change (value <> value_in_use) before
     # baselining. Some images ship one: the SQL Server 2017 CI container has
     # 'clr strict security' configured on but not yet in use. The harness's own
@@ -327,82 +325,82 @@ def forced_condition_tests(server, password, R):
     # Snapshot the entire config before touching anything.
     before = snapshot_config(server, password)
 
-    # Capture originals: 'show advanced options' plus every forced option.
     saw_advanced = get_value_in_use(server, password, "show advanced options")
-    originals = {}
-    for (name, _default, _forced) in FORCED_OPTIONS:
-        originals[name] = get_value_in_use(server, password, name)
+    original_ctfp = get_value_in_use(server, password, CTFP)
 
     def restore_all():
-        # Restore every touched option to its captured original, then restore
-        # 'show advanced options'. One RECONFIGURE at the end promotes them all.
-        for (name, _d, _f) in FORCED_OPTIONS:
-            _sqlcmd(server, password,
-                    "SET NOCOUNT ON; EXECUTE sys.sp_configure '%s', %d; RECONFIGURE;"
-                    % (_esc(name), originals[name]))
+        # Restore CTFP, then 'show advanced options'. RECONFIGURE promotes both.
+        _sqlcmd(server, password,
+                "SET NOCOUNT ON; EXECUTE sys.sp_configure '%s', %d; RECONFIGURE;"
+                % (_esc(CTFP), original_ctfp))
         _sqlcmd(server, password,
                 "SET NOCOUNT ON; EXECUTE sys.sp_configure 'show advanced options', %d; RECONFIGURE;"
                 % saw_advanced)
 
+    grp = "Config[cost threshold for parallelism]"
     try:
-        # All chosen options are advanced; make sure they are configurable.
         err = set_option(server, password, "show advanced options", 1)
         R.check("Config", "setup: 'show advanced options' configurable",
                 not err, str(err))
 
-        for (name, default_value, forced_value) in FORCED_OPTIONS:
-            grp = "Config[%s]" % name
+        # ---- ABSENT when CTFP is sane (>= 50) -------------------------------
+        out, e = run_perfcheck_with_option(server, password, CTFP, CTFP_SANE)
+        combined = out + "\n" + e
+        R.check(grp, "no severe error on sane-value run",
+                not find_sql_errors(combined), str(find_sql_errors(combined)))
+        # positive control: the check machinery ran and produced output, so
+        # "absent" is not a vacuous pass.
+        R.check(grp, "positive control: #server_info populated at sane value",
+                SERVER_INFO_MARKER in out, "Run Date not found")
+        rows = parse_result_rows(out)
+        R.check(grp, "finding ABSENT when CTFP >= 50 (%d)" % CTFP_SANE,
+                find_ctfp_finding(rows) is None,
+                "unexpected CTFP finding at a sane value")
 
-            # ---- ABSENT at the default value ----------------------------
-            out, e = run_perfcheck_with_option(server, password, name, default_value)
-            combined = out + "\n" + e
-            R.check(grp, "no severe error on default-value run",
-                    not find_sql_errors(combined), str(find_sql_errors(combined)))
-            # positive control: the check machinery actually ran and produced
-            # output, so "absent" is not a vacuous pass.
-            R.check(grp, "positive control: #server_info populated at default",
-                    SERVER_INFO_MARKER in out, "Run Date not found")
-            rows = parse_result_rows(out)
-            R.check(grp, "finding ABSENT when option = default (%d)" % default_value,
-                    find_config_finding(rows, name) is None,
-                    "unexpected finding present at default")
+        # ---- PRESENT and HIGH at the default of 5 --------------------------
+        out, e = run_perfcheck_with_option(server, password, CTFP, CTFP_DEFAULT)
+        combined = out + "\n" + e
+        R.check(grp, "no severe error on default-value run",
+                not find_sql_errors(combined), str(find_sql_errors(combined)))
+        rows = parse_result_rows(out)
+        row = find_ctfp_finding(rows)
+        R.check(grp, "finding PRESENT when CTFP = default (%d)" % CTFP_DEFAULT,
+                row is not None, "finding not emitted at the default")
+        if row is not None:
+            well_formed = (row[0] == "1004" and row[1] == "20"
+                           and row[3] == "Server Configuration"
+                           and row[4] == "Cost Threshold for Parallelism Too Low")
+            R.check(grp, "default finding well-formed "
+                    "(check_id 1004, High priority 20, Server Configuration)",
+                    well_formed,
+                    "check_id=%s priority=%s finding=%r"
+                    % (row[0], row[1], row[4]))
+            details = row[7] if len(row) > 7 else ""
+            R.check(grp, "default finding details name the value",
+                    ("set to %d" % CTFP_DEFAULT) in details,
+                    "details=%r" % details[:160])
+        else:
+            R.check(grp, "default finding well-formed "
+                    "(check_id 1004, High priority 20, Server Configuration)",
+                    False, "no row to inspect")
+            R.check(grp, "default finding details name the value",
+                    False, "no row to inspect")
 
-            # ---- PRESENT when forced to a non-default value -------------
-            out, e = run_perfcheck_with_option(server, password, name, forced_value)
-            combined = out + "\n" + e
-            R.check(grp, "no severe error on forced-value run",
-                    not find_sql_errors(combined), str(find_sql_errors(combined)))
-            rows = parse_result_rows(out)
-            row = find_config_finding(rows, name)
-            R.check(grp, "finding PRESENT when option = forced (%d)" % forced_value,
-                    row is not None, "finding not emitted when forced")
-            if row is not None:
-                well_formed = (row[0] == "1000" and row[1] == "50"
-                               and row[3] == "Server Configuration"
-                               and row[4] == "Non-Default Configuration"
-                               and row[6] == name)
-                R.check(grp, "forced finding row well-formed "
-                        "(stable finding, setting name in object_name)",
-                        well_formed,
-                        "check_id=%s finding=%r object_name=%r"
-                        % (row[0], row[4], row[6]))
-                details = row[7] if len(row) > 7 else ""
-                names_option = (name in details
-                                and ("Current: %d" % forced_value) in details)
-                R.check(grp, "forced finding details names the option and value",
-                        names_option, "details=%r" % details[:160])
-            else:
-                R.check(grp, "forced finding row well-formed "
-                        "(check_id 1000, priority 50, Server Configuration)",
-                        False, "no row to inspect")
-                R.check(grp, "forced finding details names the option and value",
-                        False, "no row to inspect")
+        # ---- PRESENT but only LOW between 6 and 49 -------------------------
+        out, e = run_perfcheck_with_option(server, password, CTFP, CTFP_LOW)
+        rows = parse_result_rows(out)
+        row = find_ctfp_finding(rows)
+        R.check(grp, "finding PRESENT when CTFP low-but-not-default (%d)" % CTFP_LOW,
+                row is not None, "finding not emitted at a low value")
+        R.check(grp, "priority is Low (40), not High, when CTFP is 6-49",
+                row is not None and row[1] == "40",
+                "priority=%s" % (row[1] if row else "no row"))
 
-            # ---- Restore THIS option to its exact original --------------
-            set_option(server, password, name, originals[name])
-            now = get_value_in_use(server, password, name)
-            R.check(grp, "option restored to original value_in_use (%d)" % originals[name],
-                    now == originals[name], "value_in_use is now %d" % now)
+        # ---- Restore CTFP to its exact original ----------------------------
+        set_option(server, password, CTFP, original_ctfp)
+        now = get_value_in_use(server, password, CTFP)
+        R.check(grp, "option restored to original value_in_use (%d)" % original_ctfp,
+                now == original_ctfp, "value_in_use is now %d" % now)
     finally:
         # Safety net: restore everything even if an exception was raised.
         restore_all()
