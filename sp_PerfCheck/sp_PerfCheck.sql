@@ -283,8 +283,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @has_percent_growth bit,
         @has_fixed_growth bit,
         /* Storage performance variables */
-        @slow_read_ms decimal(10, 2) = 500.0, /* Threshold for slow reads (ms) */
-        @slow_write_ms decimal(10, 2) = 500.0, /* Threshold for slow writes (ms) */
+        @slow_read_ms decimal(10, 2) = 20.0, /* Slow read threshold (ms); data-file reads should be under 20ms */
+        @slow_write_ms decimal(10, 2) = 20.0, /* Slow write threshold (ms); data-file writes should be under 20ms */
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
@@ -972,14 +972,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4101,
-            priority = 20, /* High: active memory spills */
+            priority =
+                CASE
+                    WHEN MAX(ders.forced_grant_count) > 10000
+                    THEN 20 /* High: heavy, sustained memory pressure */
+                    WHEN MAX(ders.forced_grant_count) > 100
+                    THEN 30 /* Medium */
+                    ELSE 40 /* Low: a handful since startup, likely transient */
+                END,
             category = N'Memory Pressure',
             finding = N'Memory-Starved Queries: Forced Grants',
             details =
-                N'dm_exec_query_resource_semaphores has ' +
+                N'dm_exec_query_resource_semaphores reports ' +
                 CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
-                N' forced memory grants. ' +
-                N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
+                N' forced memory grants since startup. Queries ran with less memory than they asked for and spilled to tempdb. ' +
+                N'Review oversized grants (large sorts and hashes), query tuning, and max server memory.',
             url = N'https://erikdarling.com/sp_perfcheck/#MemoryStarved'
         FROM sys.dm_exec_query_resource_semaphores AS ders
         WHERE ders.forced_grant_count > 0
@@ -999,14 +1006,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4103,
-            priority = 20, /* High: queries can't get memory */
+            priority =
+                CASE
+                    WHEN MAX(ders.timeout_error_count) > 100
+                    THEN 20 /* High: queries repeatedly failing to get memory */
+                    WHEN MAX(ders.timeout_error_count) > 10
+                    THEN 30 /* Medium */
+                    ELSE 40 /* Low: a few since startup, likely transient */
+                END,
             category = N'Memory Pressure',
             finding = N'Memory-Starved Queries: Grant Timeouts',
             details =
-                N'dm_exec_query_resource_semaphores has ' +
+                N'dm_exec_query_resource_semaphores reports ' +
                 CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
-                N' memory grant timeouts. ' +
-                N'Queries are waiting for memory for a long time and giving up.',
+                N' memory grant timeouts since startup. Queries waited a long time for a memory grant and gave up (error 8645). ' +
+                N'Review oversized grants, RESOURCE_SEMAPHORE waits, and max server memory.',
             url = N'https://erikdarling.com/sp_perfcheck/#MemoryStarved'
         FROM sys.dm_exec_query_resource_semaphores AS ders
         WHERE ders.timeout_error_count > 0
@@ -1403,6 +1417,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N''
                 );
         END;
+
+        /*
+        Flag notable global trace flags with interpretation. The complete list
+        is in #server_info; here we call out the ones that change behavior
+        server-wide or are redundant on modern versions, with severity by how
+        much they matter. Benign flags (backup-message suppression, lightweight
+        profiling, deadlock logging) are left in the server-info list only.
+        */
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            object_name,
+            details,
+            url
+        )
+        SELECT
+            check_id = 1012,
+            priority =
+                CASE tf.trace_flag
+                    WHEN 1211 THEN 20 /* High: disables lock escalation entirely */
+                    WHEN 3608 THEN 20 /* High: startup-only flag set globally */
+                    WHEN 3609 THEN 20 /* High: startup-only flag set globally */
+                    WHEN 1224 THEN 30 /* Medium */
+                    WHEN 834  THEN 30 /* Medium */
+                    ELSE 40 /* Low: notable but not dangerous */
+                END,
+            category = N'Server Configuration',
+            finding = N'Notable Global Trace Flag',
+            object_name = N'TF ' + CONVERT(nvarchar(10), tf.trace_flag),
+            details =
+                N'Global trace flag ' +
+                CONVERT(nvarchar(10), tf.trace_flag) +
+                N' is enabled. ' +
+                CASE tf.trace_flag
+                    WHEN 1211 THEN N'Disables lock escalation entirely, which can bloat lock memory and hurt concurrency. Almost never recommended; prefer 1224 if you truly must.'
+                    WHEN 1224 THEN N'Disables count-based lock escalation (escalation still happens under memory pressure). Rarely necessary.'
+                    WHEN 3608 THEN N'A startup-only flag (recover master only) that should not be set on a running production server.'
+                    WHEN 3609 THEN N'A startup-only flag (skip tempdb creation) that should not be set on a running production server.'
+                    WHEN 834  THEN N'Uses large-page allocations for the buffer pool. Can slow or block startup and interacts badly with columnstore; use deliberately.'
+                    WHEN 4199 THEN N'Enables all query optimizer hotfixes globally, which can change plans server-wide. On 2016+ prefer the database-scoped QUERY_OPTIMIZER_HOTFIXES option.'
+                    WHEN 8048 THEN N'Partitions memory objects per CPU to reduce spinlock contention. Only relevant on high-core NUMA servers.'
+                    WHEN 1117 THEN N'Grows all files in a filegroup together. Redundant for tempdb on 2016+, where this is already the default.'
+                    WHEN 1118 THEN N'Forces full-extent allocation. Redundant on 2016+, where this is already the default for tempdb.'
+                    WHEN 2371 THEN N'Lowers the auto-update-statistics threshold. Redundant on 2016+ at compatibility level 130+.'
+                    ELSE N'Review whether it is still needed.'
+                END,
+            url = N'https://erikdarling.com/sp_perfcheck/#TraceFlags'
+        FROM #trace_flags AS tf
+        WHERE tf.global = 1
+        AND   tf.trace_flag IN (1211, 1224, 3608, 3609, 834, 4199, 8048, 1117, 1118, 2371);
     END;
 
     /* Memory information - works on all platforms */
@@ -2068,7 +2136,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #wait_stats.wait_time_percent_of_uptime =
                 (wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0));
 
-        /* Add only waits that represent >=10% of server uptime */
+        /*
+        Surface the significant waits as a health-check diagnosis rather than a
+        flat list. Name each finding by what the wait means for the server
+        (Storage / Lock / Memory / TempDB / CPU / Log / Parallelism ...), put the
+        specific wait type and its plain-English meaning in object_name, and
+        calibrate severity by category: resource-pressure waits (locking, memory,
+        storage, tempdb, log, CPU) earn High by dominating uptime OR by long
+        average waits; parallelism is usually a cost threshold / MAXDOP symptom,
+        so it takes a very high share just to reach Medium; everything else stays
+        Low. SLEEP_TASK is collected for context but not surfaced as a finding.
+        */
         INSERT INTO
             #results
         (
@@ -2080,41 +2158,85 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             details,
             url
         )
-        SELECT TOP (10) /* Limit to top 10 most significant waits */
+        SELECT TOP (10) /* the ten most significant waits */
             6001,
             priority =
                 CASE
-                    WHEN ws.wait_time_percent_of_uptime > 100
-                    THEN 20 /* High: >100% of uptime */
-                    WHEN ws.wait_time_percent_of_uptime > 75
-                    THEN 20 /* High: >75% of uptime */
-                    WHEN ws.wait_time_percent_of_uptime >= 50
-                    THEN 30 /* Medium: >=50% of uptime */
-                    ELSE 40 /* Low: >=10% of uptime */
+                    WHEN ws.category IN (N'Locking', N'Memory', N'I/O', N'TempDB Contention', N'Transaction Log', N'CPU')
+                    THEN
+                        CASE
+                            WHEN ws.wait_time_percent_of_uptime >= 50.0
+                            OR   ws.avg_wait_ms >= 1000.0
+                            THEN 20 /* High: dominates uptime, or each wait is very long */
+                            WHEN ws.wait_time_percent_of_uptime >= 20.0
+                            OR   ws.avg_wait_ms >= 250.0
+                            THEN 30 /* Medium */
+                            ELSE 40 /* Low */
+                        END
+                    WHEN ws.category = N'Parallelism'
+                    THEN
+                        CASE
+                            WHEN ws.wait_time_percent_of_uptime >= 100.0
+                            THEN 30 /* Medium at most: usually a cost threshold / MAXDOP symptom */
+                            ELSE 40 /* Low */
+                        END
+                    ELSE 40 /* Low: network, query execution, stats, AG, throttling, other */
                 END,
             category = N'Wait Statistics',
-            finding = N'High Impact Wait Type',
+            finding =
+                CASE ws.category
+                    WHEN N'I/O'                THEN N'Storage-Related Waits'
+                    WHEN N'Memory'             THEN N'Memory-Related Waits'
+                    WHEN N'Parallelism'        THEN N'Parallelism Waits'
+                    WHEN N'CPU'                THEN N'CPU / Scheduling Waits'
+                    WHEN N'TempDB Contention'  THEN N'TempDB Contention Waits'
+                    WHEN N'Locking'            THEN N'Lock / Blocking Waits'
+                    WHEN N'Transaction Log'    THEN N'Transaction Log Waits'
+                    WHEN N'Query Execution'    THEN N'Query Execution Waits'
+                    WHEN N'Network'            THEN N'Network / Client Waits'
+                    WHEN N'Availability Groups' THEN N'Availability Group Waits'
+                    WHEN N'Azure SQL Throttling' THEN N'Azure SQL Throttling Waits'
+                    WHEN N'Index Management'    THEN N'Index Maintenance Waits'
+                    WHEN N'Statistics'         THEN N'Statistics Update Waits'
+                    ELSE N'Other Significant Waits'
+                END,
             object_name =
                 ws.wait_type +
                 N' (' +
-                ws.category +
+                ws.description +
                 N')',
             details =
-                N'Wait type: ' +
+                N'Wait type ' +
                 ws.wait_type +
-                N' represents ' +
+                N' accounts for ' +
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.wait_time_percent_of_uptime)) +
                 N'% of server uptime (' +
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ws.wait_time_minutes)) +
-                N' minutes). ' +
-                N'Average wait: ' +
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ws.wait_time_hours)) +
+                N' hours), averaging ' +
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.avg_wait_ms)) +
                 N' ms per wait. ' +
-                N'Description: ' +
-                ws.description,
+                CASE ws.category
+                    WHEN N'Locking'
+                    THEN N'Time lost to blocking. Investigate long-running transactions and blocking chains; sp_PressureDetector shows live blockers.'
+                    WHEN N'Memory'
+                    THEN N'Queries are waiting on memory. Review max server memory and query memory grants; oversized grants force RESOURCE_SEMAPHORE waits.'
+                    WHEN N'I/O'
+                    THEN N'Reads are waiting on storage. Check the per-file latency findings and whether the working set fits in the buffer pool.'
+                    WHEN N'TempDB Contention'
+                    THEN N'Allocation-page contention in tempdb. Use equal-sized tempdb data files, and memory-optimized tempdb metadata on 2019+.'
+                    WHEN N'Transaction Log'
+                    THEN N'Commits are waiting on the log. Check log storage latency, transaction sizes, and log backup frequency.'
+                    WHEN N'CPU'
+                    THEN N'Scheduling pressure. Review parallelism settings and plan quality; THREADPOOL specifically means worker-thread exhaustion.'
+                    WHEN N'Parallelism'
+                    THEN N'Usually a cost threshold for parallelism / MAXDOP tuning issue rather than a problem in itself.'
+                    WHEN N'Network'
+                    THEN N'Usually client-side: the application consuming results slowly or a slow network, not the server.'
+                    ELSE N'Description: ' + ws.description + N'.'
+                END,
             url = N'https://erikdarling.com/sp_perfcheck/#WaitStats'
         FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include waits that are at least 10% of uptime */
+        WHERE ws.wait_time_percent_of_uptime >= 10.0
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
@@ -2840,9 +2962,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 3001,
         priority =
             CASE
-                WHEN i.avg_read_latency_ms > @slow_read_ms * 2
-                THEN 20 /* High: >1000ms is severe */
-                ELSE 30 /* Medium: >500ms is significant */
+                WHEN i.avg_read_latency_ms > @slow_read_ms * 5
+                THEN 20 /* High: >100ms average reads (5x threshold) is bad storage */
+                ELSE 30 /* Medium: over the 20ms threshold, worth investigating */
             END,
         category = N'Storage Performance',
         finding = N'Slow Read Latency',
@@ -2902,9 +3024,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 3002,
         priority =
             CASE
-                WHEN i.avg_write_latency_ms > @slow_write_ms * 2
-                THEN 20 /* High: >1000ms is severe */
-                ELSE 30 /* Medium: >500ms is significant */
+                WHEN i.avg_write_latency_ms > @slow_write_ms * 5
+                THEN 20 /* High: >100ms average writes (5x threshold) is bad storage */
+                ELSE 30 /* Medium: over the 20ms threshold, worth investigating */
             END,
         category = N'Storage Performance',
         finding = N'Slow Write Latency',
