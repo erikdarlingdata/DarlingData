@@ -2844,7 +2844,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         finding = N'Slow Read Latency',
         database_name = i.database_name,
         object_name =
-            i.file_name +
+            /*
+            Drive/volume plus the physical file name on disk. This makes a file
+            finding self-contained, tells apart every file (logical names repeat
+            across databases and don't say where the file lives), and lines up
+            with the drive-level rollup (check_id 3003), which shows the same
+            drive. For blob storage drive_location already holds the whole URL, so
+            use it as-is; otherwise take the last path segment after the final
+            separator.
+            */
+            CASE
+                WHEN i.drive_location = i.physical_name
+                THEN i.physical_name
+                ELSE
+                    ISNULL(i.drive_location + N' ', N'') +
+                    RIGHT
+                    (
+                        i.physical_name,
+                        CHARINDEX(N'\', REVERSE(i.physical_name) + N'\') - 1
+                    )
+            END +
             N' (' +
             i.type_desc +
             N')',
@@ -2887,7 +2906,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         finding = N'Slow Write Latency',
         database_name = i.database_name,
         object_name =
-            i.file_name +
+            /*
+            Drive/volume plus the physical file name on disk. This makes a file
+            finding self-contained, tells apart every file (logical names repeat
+            across databases and don't say where the file lives), and lines up
+            with the drive-level rollup (check_id 3003), which shows the same
+            drive. For blob storage drive_location already holds the whole URL, so
+            use it as-is; otherwise take the last path segment after the final
+            separator.
+            */
+            CASE
+                WHEN i.drive_location = i.physical_name
+                THEN i.physical_name
+                ELSE
+                    ISNULL(i.drive_location + N' ', N'') +
+                    RIGHT
+                    (
+                        i.physical_name,
+                        CHARINDEX(N'\', REVERSE(i.physical_name) + N'\') - 1
+                    )
+            END +
             N' (' +
             i.type_desc +
             N')',
@@ -2913,6 +2951,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         priority,
         category,
         finding,
+        object_name,
         details,
         url
     )
@@ -2920,9 +2959,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 3003,
         priority = 20, /* High: systemic storage problem */
         category = N'Storage Performance',
-        finding =
-            N'Multiple Slow Files on Storage Location ' +
-            i.drive_location,
+        /*
+        Stable label; the drive/volume that varies per row goes in object_name so
+        this finding groups and the identity lives in a column, not the sentence.
+        */
+        finding = N'Multiple Slow Files on Storage Location',
+        object_name = i.drive_location,
         details =
             N'Storage location ' +
             i.drive_location +
