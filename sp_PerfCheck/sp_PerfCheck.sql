@@ -50,6 +50,13 @@ ALTER PROCEDURE
     dbo.sp_PerfCheck
 (
     @database_name sysname = NULL, /* Database to check, NULL for all user databases */
+    @slow_read_ms decimal(10, 2) = 20.0, /* Flag data-file reads slower than this (ms); High at 5x */
+    @slow_write_ms decimal(10, 2) = 20.0, /* Flag data-file writes slower than this (ms); High at 5x */
+    @significant_wait_threshold_pct decimal(5, 2) = 10.0, /* Minimum % of uptime for a wait to be reported */
+    @wait_high_pct decimal(5, 2) = 50.0, /* Resource wait at/above this % of uptime is High */
+    @wait_medium_pct decimal(5, 2) = 20.0, /* Resource wait at/above this % of uptime is Medium */
+    @memory_grant_warning integer = 100, /* Forced grants at/above this count are Medium */
+    @memory_grant_critical integer = 10000, /* Forced grants at/above this count are High */
     @help bit = 0, /*For helpfulness*/
     @debug bit = 0, /* Print diagnostic messages */
     @version varchar(30) = NULL OUTPUT, /* Returns version */
@@ -103,6 +110,13 @@ BEGIN
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
                     WHEN N'@version_date' THEN 'returns the date this version was released'
+                    WHEN N'@slow_read_ms' THEN 'flag data-file reads slower than this many ms (High at 5x)'
+                    WHEN N'@slow_write_ms' THEN 'flag data-file writes slower than this many ms (High at 5x)'
+                    WHEN N'@significant_wait_threshold_pct' THEN 'minimum percent of uptime for a wait to be reported'
+                    WHEN N'@wait_high_pct' THEN 'a resource wait at or above this percent of uptime is High priority'
+                    WHEN N'@wait_medium_pct' THEN 'a resource wait at or above this percent of uptime is Medium priority'
+                    WHEN N'@memory_grant_warning' THEN 'forced memory grants at or above this cumulative count are Medium'
+                    WHEN N'@memory_grant_critical' THEN 'forced memory grants at or above this cumulative count are High'
                     ELSE NULL
                 END,
             valid_inputs =
@@ -113,6 +127,13 @@ BEGIN
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
                     WHEN N'@version_date' THEN 'OUTPUT parameter'
+                    WHEN N'@slow_read_ms' THEN 'any positive number of milliseconds'
+                    WHEN N'@slow_write_ms' THEN 'any positive number of milliseconds'
+                    WHEN N'@significant_wait_threshold_pct' THEN 'any positive percentage'
+                    WHEN N'@wait_high_pct' THEN 'any positive percentage'
+                    WHEN N'@wait_medium_pct' THEN 'any positive percentage'
+                    WHEN N'@memory_grant_warning' THEN 'any positive integer'
+                    WHEN N'@memory_grant_critical' THEN 'any positive integer'
                     ELSE NULL
                 END,
             defaults =
@@ -123,6 +144,13 @@ BEGIN
                     WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
                     WHEN N'@version_date' THEN 'NULL'
+                    WHEN N'@slow_read_ms' THEN '20.0'
+                    WHEN N'@slow_write_ms' THEN '20.0'
+                    WHEN N'@significant_wait_threshold_pct' THEN '10.0'
+                    WHEN N'@wait_high_pct' THEN '50.0'
+                    WHEN N'@wait_medium_pct' THEN '20.0'
+                    WHEN N'@memory_grant_warning' THEN '100'
+                    WHEN N'@memory_grant_critical' THEN '10000'
                     ELSE NULL
                 END
         FROM sys.all_parameters AS ap
@@ -166,6 +194,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         RETURN;
     END;
+
+    /*
+    Default any tuning threshold left NULL or negative back to its documented
+    value, so a caller can override only the ones they care about. A CASE on
+    ">= 0" catches both NULL (UNKNOWN) and negative in one shot.
+    */
+    SELECT
+        @slow_read_ms =
+            CASE WHEN @slow_read_ms >= 0 THEN @slow_read_ms ELSE 20.0 END,
+        @slow_write_ms =
+            CASE WHEN @slow_write_ms >= 0 THEN @slow_write_ms ELSE 20.0 END,
+        @significant_wait_threshold_pct =
+            CASE WHEN @significant_wait_threshold_pct >= 0 THEN @significant_wait_threshold_pct ELSE 10.0 END,
+        @wait_high_pct =
+            CASE WHEN @wait_high_pct >= 0 THEN @wait_high_pct ELSE 50.0 END,
+        @wait_medium_pct =
+            CASE WHEN @wait_medium_pct >= 0 THEN @wait_medium_pct ELSE 20.0 END,
+        @memory_grant_warning =
+            CASE WHEN @memory_grant_warning >= 0 THEN @memory_grant_warning ELSE 100 END,
+        @memory_grant_critical =
+            CASE WHEN @memory_grant_critical >= 0 THEN @memory_grant_critical ELSE 10000 END;
 
     /*
     Variable Declarations
@@ -282,9 +331,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @size_difference_pct decimal(18, 2),
         @has_percent_growth bit,
         @has_fixed_growth bit,
-        /* Storage performance variables */
-        @slow_read_ms decimal(10, 2) = 20.0, /* Slow read threshold (ms); data-file reads should be under 20ms */
-        @slow_write_ms decimal(10, 2) = 20.0, /* Slow write threshold (ms); data-file writes should be under 20ms */
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
@@ -292,7 +338,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
         @uptime_ms bigint,
-        @significant_wait_threshold_pct decimal(5, 2) = 10.0, /* Only waits above 10% */
         @significant_wait_threshold_avg decimal(10, 2) = 10.0, /* Or avg wait time > 10ms */
         /* Threshold settings for stolen memory alert */
         @buffer_pool_size_gb decimal(38, 2),
@@ -974,9 +1019,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 4101,
             priority =
                 CASE
-                    WHEN MAX(ders.forced_grant_count) > 10000
+                    WHEN MAX(ders.forced_grant_count) >= @memory_grant_critical
                     THEN 20 /* High: heavy, sustained memory pressure */
-                    WHEN MAX(ders.forced_grant_count) > 100
+                    WHEN MAX(ders.forced_grant_count) >= @memory_grant_warning
                     THEN 30 /* Medium */
                     ELSE 40 /* Low: a handful since startup, likely transient */
                 END,
@@ -2165,10 +2210,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN ws.category IN (N'Locking', N'Memory', N'I/O', N'TempDB Contention', N'Transaction Log', N'CPU')
                     THEN
                         CASE
-                            WHEN ws.wait_time_percent_of_uptime >= 50.0
+                            WHEN ws.wait_time_percent_of_uptime >= @wait_high_pct
                             OR   ws.avg_wait_ms >= 1000.0
                             THEN 20 /* High: dominates uptime, or each wait is very long */
-                            WHEN ws.wait_time_percent_of_uptime >= 20.0
+                            WHEN ws.wait_time_percent_of_uptime >= @wait_medium_pct
                             OR   ws.avg_wait_ms >= 250.0
                             THEN 30 /* Medium */
                             ELSE 40 /* Low */
@@ -2236,7 +2281,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             url = N'https://erikdarling.com/sp_perfcheck/#WaitStats'
         FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= 10.0
+        WHERE ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
