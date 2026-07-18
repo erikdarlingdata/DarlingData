@@ -901,8 +901,14 @@ def sql_errors(stdout, stderr):
     stderr only, which is how adversarial_test.sql managed to fail on every run
     for months while the suite stayed green.
     """
-    return (re.findall(r"Msg \d+, Level 1[6-9][^\n]*", stdout or "") +
-            re.findall(r"Msg \d+, Level 1[6-9][^\n]*", stderr or ""))
+    # Level 16-19 are the usual "this statement failed" errors. Msg 4060 and
+    # Msg 911 ("Cannot open database") are only Level 11, but they mean the
+    # script never ran at all -- a missing scratch database, exactly the failure
+    # that once left this suite silently green on a fresh instance. Catch those
+    # explicitly so they fail loudly too.
+    pattern = r"Msg (?:\d+, Level 1[6-9]|4060|911)[^\n]*"
+    return (re.findall(pattern, stdout or "") +
+            re.findall(pattern, stderr or ""))
 
 
 def parse_output(stdout):
@@ -1540,6 +1546,18 @@ def main():
         print("auto-enabled and that no index is recommended as unused. This is a")
         print("verification, not a skip.")
     print()
+
+    # Create the scratch database if it is not already there. On an established
+    # instance it persists between runs (nothing drops it), but a fresh instance
+    # -- every CI container -- has never had it. run_sql_script below connects
+    # with -d Crap, so without this the setup connection fails with Msg 4060
+    # ("Cannot open database"), which is Level 11 and slips past the Level-16
+    # error check, silently leaving the fixture unbuilt and every Crap-scoped
+    # assertion to fail with "found 0". CrapA/CrapB are already created this way.
+    print("Ensuring the %s database exists..." % TEST_DATABASE)
+    run_sqlcmd(server, password, database="master",
+               query="IF DB_ID('%s') IS NULL CREATE DATABASE %s;"
+                     % (TEST_DATABASE, TEST_DATABASE))
 
     print("Building synthetic fixture in %s..." % TEST_DATABASE)
     stdout, stderr = run_sql_script(server, password, SETUP_SQL)
