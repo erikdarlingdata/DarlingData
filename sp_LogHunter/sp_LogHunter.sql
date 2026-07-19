@@ -378,14 +378,42 @@ BEGIN
         id integer
            IDENTITY
            PRIMARY KEY CLUSTERED,
-        search_string nvarchar(4000) DEFAULT N'""',
+        /*
+        Every argument below is emitted as an N-prefixed single-quoted
+        literal: N'like this'. Both halves of that matter.
+
+        NOT double quotes: under QUOTED_IDENTIFIER ON a double-quoted argument
+        parses as an IDENTIFIER, and SQL Server caps identifiers at 128
+        characters - so a @custom_message longer than that failed with
+        "Msg 103 ... The identifier that starts with ... is too long", was
+        swallowed by the CATCH below into #errors, and handed the caller an
+        empty result set that reads exactly like a clean bill of health.
+
+        NOT a bare single-quoted literal either: xp_readerrorlog is an
+        extended stored procedure and will not implicitly convert, so a
+        varchar argument fails with "Msg 22004 ... Invalid Parameter Type" -
+        at severity 12, quiet enough to look like simply finding nothing.
+        Double quotes happened to satisfy this because quoted identifiers are
+        inherently Unicode; N'...' satisfies it deliberately, and without the
+        length limit.
+
+        The wrapping reads awkwardly because a literal quote must be doubled:
+        N'N''' opens the argument (emitting N') and N'''' closes it
+        (emitting ').
+        */
+        search_string nvarchar(4000) DEFAULT N'N''''',
         days_back nvarchar(30) NULL,
         start_date nvarchar(30) NULL,
         end_date nvarchar(30) NULL,
-        [current_date] nvarchar(10)
-            DEFAULT N'"' + CONVERT(nvarchar(10), DATEADD(DAY, 1, SYSDATETIME()), 112) + N'"',
+        /*
+        Widened from 10: the value is now N'20260720', which is 11 characters
+        rather than 10. At the old width it truncated to N'20260720 - an
+        unterminated literal that broke every generated command.
+        */
+        [current_date] nvarchar(12)
+            DEFAULT N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, 1, SYSDATETIME()), 112) + N'''',
         search_order nvarchar(10)
-            DEFAULT N'"DESC"',
+            DEFAULT N'N''DESC''',
         command AS
             CONVERT
             (
@@ -539,10 +567,10 @@ BEGIN
     FROM
     (
         VALUES
-            (N'"Microsoft SQL Server"'),
-            (N'"detected"'),
-            (N'"SQL Server has encountered"'),
-            (N'"Warning: Enterprise Server/CAL license used for this instance"')
+            (N'N''Microsoft SQL Server'''),
+            (N'N''detected'''),
+            (N'N''SQL Server has encountered'''),
+            (N'N''Warning: Enterprise Server/CAL license used for this instance''')
     ) AS x (search_string)
     CROSS JOIN
     (
@@ -558,17 +586,17 @@ BEGIN
             date-range mode so the canary has a concrete floor.
             */
             days_back =
-                N'"' +
+                N'N''' +
                 CASE
                     WHEN @days_back IS NOT NULL
                     THEN CONVERT(nvarchar(10), DATEADD(DAY, CASE WHEN @days_back > -90 THEN -90 ELSE @days_back END, SYSDATETIME()), 112)
                     ELSE CONVERT(nvarchar(10), @start_date, 112)
                 END +
-                N'"',
+                N'''',
             start_date =
-                N'"' + CONVERT(nvarchar(30), @start_date, 121) + N'"',
+                N'N''' + CONVERT(nvarchar(30), @start_date, 121) + N'''',
             end_date =
-                N'"' + CONVERT(nvarchar(30), @end_date, 121) + N'"'
+                N'N''' + CONVERT(nvarchar(30), @end_date, 121) + N''''
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
@@ -584,9 +612,9 @@ BEGIN
     )
     SELECT
         search_string =
-            N'"' +
-            v.search_string +
-            N'"',
+            N'N''' +
+            REPLACE(v.search_string, N'''', N'''''') +
+            N'''',
         c.days_back,
         c.start_date,
         c.end_date
@@ -615,11 +643,11 @@ BEGIN
     (
         SELECT
             days_back =
-                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'"',
+                N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'''',
             start_date =
-                N'"' + CONVERT(nvarchar(30), @start_date, 121) + N'"',
+                N'N''' + CONVERT(nvarchar(30), @start_date, 121) + N'''',
             end_date =
-                N'"' + CONVERT(nvarchar(30), @end_date, 121) + N'"'
+                N'N''' + CONVERT(nvarchar(30), @end_date, 121) + N''''
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
@@ -642,16 +670,19 @@ BEGIN
     (
         VALUES
            (
-                /* xp_readerrorlog search strings are wrapped in double quotes
-                   (see the #search.command computed column), so any literal "
+                /* xp_readerrorlog search strings are wrapped in single quotes
+                   (see the #search.command computed column), so any literal '
                    inside the user-supplied @custom_message must be doubled to
-                   avoid closing the argument early and producing an
-                   "Incorrect syntax near '+'" error when sp_executesql parses
-                   the generated batch. */
-                N'"' + REPLACE(@custom_message, N'"', N'""') + N'"',
-                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'"',
-                N'"' + CONVERT(nvarchar(30), @start_date, 121) + N'"',
-                N'"' + CONVERT(nvarchar(30), @end_date, 121) + N'"'
+                   avoid closing the argument early and producing a syntax
+                   error when sys.sp_executesql parses the generated batch. A
+                   literal " needs no handling at all now that it is not a
+                   delimiter, and the search string is no longer subject to the
+                   128-character identifier limit that silently dropped long
+                   messages into #errors. */
+                N'N''' + REPLACE(@custom_message, N'''', N'''''') + N'''',
+                N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'''',
+                N'N''' + CONVERT(nvarchar(30), @start_date, 121) + N'''',
+                N'N''' + CONVERT(nvarchar(30), @end_date, 121) + N''''
            )
     ) AS x (search_string, days_back, start_date, end_date)
     WHERE @custom_message LIKE N'_%'
