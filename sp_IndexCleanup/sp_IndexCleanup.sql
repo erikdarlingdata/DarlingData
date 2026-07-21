@@ -1360,6 +1360,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 RETURN;
             END;
 
+            /*
+            Resolve the database_id locally with DB_ID() rather than trusting
+            sys.databases. On Azure SQL DB, sys.databases.database_id is scoped
+            to the logical server while DB_ID(), DB_NAME(), and the database_id
+            column in every DMV are scoped to the database/elastic pool, and the
+            two id spaces do not have to agree. Carrying the sys.databases id
+            made DB_NAME(@database_id) return NULL (Msg 515 on NOT NULL
+            database_name columns) and made DMV database_id joins match nothing.
+            DB_ID(d.name) returns the same value as d.database_id everywhere
+            except Azure, where it returns the id the DMVs actually use.
+            */
             INSERT INTO
                 #databases
             WITH
@@ -1370,7 +1381,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             SELECT
                 d.name,
-                d.database_id
+                database_id =
+                    ISNULL
+                    (
+                        DB_ID(d.name),
+                        d.database_id
+                    )
             FROM sys.databases AS d
             WHERE d.name = @database_name
             AND   d.state = 0
@@ -1404,7 +1420,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             d.name,
-            d.database_id
+            /* DB_ID(d.name) rather than d.database_id: see the single-database insert above */
+            database_id =
+                ISNULL
+                (
+                    DB_ID(d.name),
+                    d.database_id
+                )
         FROM sys.databases AS d
         WHERE d.database_id > 4 /* Skip system databases */
         AND   d.state = 0
@@ -1717,7 +1739,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         SELECT DISTINCT
             @database_id,
-            database_name = DB_NAME(@database_id),
+            /*
+            @database_name, never DB_NAME(@database_id): on Azure SQL DB the id
+            spaces differ and DB_NAME() of a foreign-space id returns NULL
+            */
+            database_name = @database_name,
             schema_id = s.schema_id,
             schema_name = s.name,
             object_id = i.object_id,
@@ -1889,6 +1915,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
+        @database_name sysname,
         @min_reads bigint,
         @min_writes bigint,
         @min_size_gb decimal(10,2),
@@ -1896,6 +1923,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @object_id integer,
         @schema_name sysname',
         @current_database_id,
+        @current_database_name,
         @min_reads,
         @min_writes,
         @min_size_gb,
@@ -2298,7 +2326,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         os.database_id,
-        database_name = DB_NAME(os.database_id),
+        database_name = @database_name,
         schema_id = s.schema_id,
         schema_name = s.name,
         os.object_id,
@@ -2359,7 +2387,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     GROUP BY
         os.database_id,
-        DB_NAME(os.database_id),
         s.schema_id,
         s.name,
         os.object_id,
@@ -2421,8 +2448,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
+        @database_name sysname,
         @object_id integer',
         @current_database_id,
+        @current_database_name,
         @object_id;
 
     SET @rc = ROWCOUNT_BIG();
@@ -2549,7 +2578,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         database_id = @database_id,
-        database_name = DB_NAME(@database_id),
+        database_name = @database_name,
         i.object_id,
         i.index_id,
         s.schema_id,
@@ -2765,9 +2794,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
+        @database_name sysname,
         @object_id integer,
         @min_rows bigint',
         @current_database_id,
+        @current_database_name,
         @object_id,
         @min_rows;
 
@@ -2797,7 +2828,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         database_id = @database_id,
-        database_name = DB_NAME(@database_id),
+        database_name = @database_name,
         x.object_id,
         x.index_id,
         x.schema_id,
@@ -2965,8 +2996,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
+        @database_name sysname,
         @object_id integer',
         @current_database_id,
+        @current_database_name,
         @object_id;
 
     SET @rc = ROWCOUNT_BIG();
@@ -3011,7 +3044,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     SELECT
         @current_database_id,
-        database_name = DB_NAME(@current_database_id),
+        database_name = @current_database_name,
         id1.schema_id,
         id1.schema_name,
         id1.table_name,
@@ -3089,7 +3122,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN id1.is_unique_constraint = 1
                 THEN
                     N'ALTER TABLE ' +
-                    QUOTENAME(DB_NAME(@current_database_id)) +
+                    QUOTENAME(@current_database_name) +
                     N'.' +
                     QUOTENAME(id1.schema_name) +
                     N'.' +
@@ -3115,7 +3148,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'INDEX ' +
                     QUOTENAME(id1.index_name) +
                     N' ON ' +
-                    QUOTENAME(DB_NAME(@current_database_id)) +
+                    QUOTENAME(@current_database_name) +
                     N'.' +
                     QUOTENAME(id1.schema_name) +
                     N'.' +
