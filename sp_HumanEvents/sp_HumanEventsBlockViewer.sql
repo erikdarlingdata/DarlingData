@@ -2478,7 +2478,11 @@ SELECT
     kheb.currentdbname,
     kheb.currentdbid,
     kheb.blocked_process_report,
-    kheb.sort_order
+    kheb.sort_order,
+    /* chain identity keys - the contentious-object inheritance UPDATE self-joins #blocks on these */
+    kheb.monitor_loop,
+    kheb.blocking_desc,
+    kheb.blocked_desc
 INTO #blocks
 FROM
 (
