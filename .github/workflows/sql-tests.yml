@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install sqlcmd
+      - name: Install sqlcmd tools
         run: |
           # Ubuntu 24.04 runners have Microsoft repo pre-configured; avoid Signed-By conflicts
           if ! grep -rql 'packages.microsoft.com' /etc/apt/sources.list.d/ 2>/dev/null; then
@@ -51,6 +51,29 @@ jobs:
           fi
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18
+
+      - name: Install go-sqlcmd (for the assertion harnesses)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The Python assertion harnesses were written and validated against the
+          # go-based sqlcmd, not mssql-tools18, so install that to avoid
+          # output-parsing differences. It is not in the apt repo for these
+          # runners, so pull the latest linux-amd64 release binary.
+          set -euxo pipefail
+          assets=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/microsoft/go-sqlcmd/releases/latest \
+            | grep -oE 'https://[^"]+' | grep -iE 'linux[-_]amd64.*\.tar\.(bz2|gz)$')
+          echo "$assets"
+          url=$(echo "$assets" | head -1)
+          test -n "$url"
+          mkdir -p /tmp/gosqlcmd
+          curl -fsSL -o /tmp/gosqlcmd.tar "$url"
+          tar -xf /tmp/gosqlcmd.tar -C /tmp/gosqlcmd
+          bin=$(find /tmp/gosqlcmd -type f -name sqlcmd | head -1)
+          test -n "$bin"
+          sudo install "$bin" /usr/local/bin/sqlcmd
+          /usr/local/bin/sqlcmd --version
 
       - name: Create test database
         env:
@@ -105,3 +128,102 @@ jobs:
           SA_PASSWORD: CI_Test#2026!
         run: |
           /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -i ".github/sql/test_basic_execution.sql"
+
+      # The harnesses connect to master and run EXECUTE dbo.sp_... there (as they
+      # do on a local box, where these procs live in master), so install the
+      # bundle into master too. The smoke tests above use DarlingData_CI_Test.
+      - name: Install procedures into master (for the assertion harnesses)
+        env:
+          SA_PASSWORD: CI_Test#2026!
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d master -i "Install-All/DarlingData.sql"
+
+      # Assertion harnesses. These EXECUTE the output the procedures generate
+      # (findings, session DDL) rather than just running them, which is what
+      # catches the "reads correctly but is wrong when run" bugs the smoke tests
+      # above cannot. They are self-contained (build and drop their own scratch
+      # databases, sessions, and config), except sp_IndexCleanup, which needs a
+      # StackOverflow2013.dbo.Users table that the fixture step below creates.
+      # They use the go-based sqlcmd via the SQLCMD_* environment overrides.
+      # Encryption is disabled (-N disable): the modern Go TLS stack rejects the
+      # SQL Server 2017 container's self-signed certificate outright, and -C
+      # (trust cert) does not bypass that; there is nothing to secure on a
+      # localhost throwaway container.
+      - name: sp_PerfCheck assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_PerfCheck/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      - name: sp_HumanEvents assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_HumanEvents/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      # sp_IndexCleanup's harness needs a StackOverflow2013 with a Users table.
+      # The containers have no such database, so build a faithful-schema
+      # synthetic stand-in. Real values are irrelevant: the harness forces its
+      # index reads and every rule is structural (dedupe / overlap / usage
+      # floor). See sp_IndexCleanup/tests/fixture_stackoverflow2013.sql.
+      - name: Create StackOverflow2013 fixture (for the sp_IndexCleanup harness)
+        env:
+          SA_PASSWORD: CI_Test#2026!
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -i "sp_IndexCleanup/tests/fixture_stackoverflow2013.sql"
+
+      # Four runners: adversarial synthetic tables, the Users dedupe cases
+      # (which also EXECUTE every generated MERGE/DISABLE script), rule coverage
+      # in its own scratch databases, and the no-database-access preflight guard.
+      - name: sp_IndexCleanup assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_IndexCleanup/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+          python3 sp_IndexCleanup/tests/fixture_cases_test.py --server localhost --password "$SA_PASSWORD"
+          python3 sp_IndexCleanup/tests/rule_coverage_test.py --server localhost --password "$SA_PASSWORD"
+          python3 sp_IndexCleanup/tests/no_access_test.py --server localhost --password "$SA_PASSWORD"
+
+      # ReproBuilder is fully portable: every plan is an embedded string constant
+      # and its one table-dependent case builds a fixture in tempdb. No user
+      # database needed.
+      - name: sp_QueryReproBuilder assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_QueryReproBuilder/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      # sp_LogHunter builds an xp_readerrorlog command string per search term
+      # and executes each one, swallowing any that throw into #errors rather
+      # than raising them -- so a broken generated command looks like a clean,
+      # empty result set. The harness asserts #errors stays empty across the
+      # matrix, and writes a marker to the error log via RAISERROR ... WITH LOG
+      # as a positive control so the absence assertions cannot pass vacuously.
+      - name: sp_LogHunter assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_LogHunter/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      # sp_QuickieStore is ~16k lines of dynamic SQL whose shape changes with
+      # almost every parameter, so this is a parameter matrix: all 39 sort
+      # orders, the wait filters, execution types, query types and the
+      # expert/format grid, each of which executes the statement it just built.
+      # It creates and drops its own Query Store scratch database.
+      - name: sp_QuickieStore assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_QuickieStore/tests/run_tests.py --server localhost --password "$SA_PASSWORD"

@@ -23,6 +23,7 @@
 | Parameter | Data Type | Default | Description |
 |-----------|-----------|---------|-------------|
 | @database_name | sysname | NULL | Specific database to check; NULL checks all accessible user databases |
+| @help | bit | 0 | Displays this help information |
 | @debug | bit | 0 | Print diagnostic messages and intermediate query results |
 | @version | varchar(30) | NULL OUTPUT | Returns version number |
 | @version_date | datetime | NULL OUTPUT | Returns version date |

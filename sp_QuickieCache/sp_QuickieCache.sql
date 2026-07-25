@@ -571,6 +571,204 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /*
     ╔══════════════════════════════════════════════════╗
+    ║  Step 0: Materialize the query stats DMV         ║
+    ╚══════════════════════════════════════════════════╝
+
+    sys.dm_exec_query_stats is a streaming view over the plan cache,
+    not a table. There is nothing in it to seek, so every reference to
+    it is a full scan of the cache stores, and the optimizer costs it
+    with a fixed row guess no matter how many plans are really cached.
+
+    Every consumer below used to read it directly: one full cache scan
+    for the plan age distribution, one for the duplicate hash summary,
+    two more for the duplicate plan detail, one for the statement
+    aggregation, and then — worst of all — a correlated CROSS APPLY
+    back into it to pick each collected hash's sample handles. Nothing
+    in the DMV is seekable, so that apply nested-loops: the optimizer
+    spools the whole thing and then rewinds, refilters, and re-sorts
+    every cached statement once per collected query_hash. The work grew
+    with (hashes × cached statements) rather than with the cache.
+
+    Read it once into a temp table instead: one pass over the cache,
+    one sys.dm_exec_plan_attributes call per row, and every query below
+    then runs against real cardinality and real statistics.
+
+    Only the database filters are applied here, because they are the
+    only ones every consumer shares. The query_hash, date, and
+    execution count filters stay with the queries that want them; the
+    health checks deliberately measure the whole cache rather than the
+    filtered slice of it.
+
+    The memory grant and spill columns are the only reason any of this
+    needs dynamic SQL. Version-gating them once, here, is what lets
+    every query below be static: on versions without them we store
+    NULL, so SUM() and MAX() produce the same zeros and NULLs that the
+    old version-gated column lists produced by omitting them.
+    */
+    DECLARE
+        @sql nvarchar(max) = N'';
+
+    CREATE TABLE
+        #dm_exec_query_stats
+    (
+        database_id integer NULL,
+        query_hash binary(8) NULL,
+        plan_handle varbinary(64) NULL,
+        sql_handle varbinary(64) NULL,
+        statement_start_offset integer NULL,
+        statement_end_offset integer NULL,
+        execution_count bigint NULL,
+        total_worker_time bigint NULL,
+        total_elapsed_time bigint NULL,
+        total_logical_reads bigint NULL,
+        total_logical_writes bigint NULL,
+        total_physical_reads bigint NULL,
+        total_rows bigint NULL,
+        min_rows bigint NULL,
+        max_rows bigint NULL,
+        min_worker_time bigint NULL,
+        max_worker_time bigint NULL,
+        min_physical_reads bigint NULL,
+        max_physical_reads bigint NULL,
+        min_elapsed_time bigint NULL,
+        max_elapsed_time bigint NULL,
+        max_dop bigint NULL,
+        max_grant_kb bigint NULL,
+        max_used_grant_kb bigint NULL,
+        total_spills bigint NULL,
+        max_spills bigint NULL,
+        creation_time datetime NULL,
+        last_execution_time datetime NULL
+    );
+
+    SELECT
+        @sql = N'
+INSERT
+    #dm_exec_query_stats
+WITH
+    (TABLOCK)
+(
+    database_id,
+    query_hash,
+    plan_handle,
+    sql_handle,
+    statement_start_offset,
+    statement_end_offset,
+    execution_count,
+    total_worker_time,
+    total_elapsed_time,
+    total_logical_reads,
+    total_logical_writes,
+    total_physical_reads,
+    total_rows,
+    min_rows,
+    max_rows,
+    min_worker_time,
+    max_worker_time,
+    min_physical_reads,
+    max_physical_reads,
+    min_elapsed_time,
+    max_elapsed_time,
+    max_dop,
+    max_grant_kb,
+    max_used_grant_kb,
+    total_spills,
+    max_spills,
+    creation_time,
+    last_execution_time
+)
+SELECT
+    database_id =
+        CONVERT(integer, pa.value),
+    qs.query_hash,
+    qs.plan_handle,
+    qs.sql_handle,
+    qs.statement_start_offset,
+    qs.statement_end_offset,
+    qs.execution_count,
+    qs.total_worker_time,
+    qs.total_elapsed_time,
+    qs.total_logical_reads,
+    qs.total_logical_writes,
+    qs.total_physical_reads,
+    qs.total_rows,
+    qs.min_rows,
+    qs.max_rows,
+    qs.min_worker_time,
+    qs.max_worker_time,
+    qs.min_physical_reads,
+    qs.max_physical_reads,
+    qs.min_elapsed_time,
+    qs.max_elapsed_time,
+    qs.max_dop,' +
+    CASE
+        WHEN @has_memory_grants = 1
+        THEN N'
+    max_grant_kb = ISNULL(qs.max_grant_kb, 0),
+    max_used_grant_kb = ISNULL(qs.max_used_grant_kb, 0),'
+        ELSE N'
+    max_grant_kb = NULL,
+    max_used_grant_kb = NULL,'
+    END +
+    CASE
+        WHEN @has_spills = 1
+        THEN N'
+    total_spills = ISNULL(qs.total_spills, 0),
+    max_spills = ISNULL(qs.max_spills, 0),'
+        ELSE N'
+    total_spills = NULL,
+    max_spills = NULL,'
+    END + N'
+    qs.creation_time,
+    qs.last_execution_time
+FROM sys.dm_exec_query_stats AS qs
+CROSS APPLY
+(
+    SELECT TOP (1)
+        value = pa.value
+    FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
+    WHERE pa.attribute = N''dbid''
+) AS pa
+WHERE ISNULL(CONVERT(integer, pa.value), 0) < 32761' +
+    CASE
+        WHEN @ignore_system_databases = 1
+        THEN N'
+AND   ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4)'
+        ELSE N''
+    END +
+    CASE
+        WHEN @database_id IS NOT NULL
+        THEN N'
+AND   CONVERT(integer, pa.value) = @database_id'
+        ELSE N''
+    END + N'
+OPTION(RECOMPILE, MAXDOP 1);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR(N'Plan cache materialization SQL:', 0, 1) WITH NOWAIT;
+        RAISERROR(N'%s', 0, 1, @sql) WITH NOWAIT;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@database_id integer',
+        @database_id;
+
+    IF @debug = 1
+    BEGIN
+        DECLARE
+            @dmv_rows bigint;
+
+        SELECT
+            @dmv_rows = COUNT_BIG(*)
+        FROM #dm_exec_query_stats AS s;
+
+        RAISERROR(N'Plan cache rows materialized: %I64d', 0, 1, @dmv_rows) WITH NOWAIT;
+    END;
+
+    /*
+    ╔══════════════════════════════════════════════════╗
     ║  Plan cache health analysis                      ║
     ╚══════════════════════════════════════════════════╝
 
@@ -597,11 +795,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     sys.dm_exec_cached_plans — the number the user actually sees in the
     cache — so the finding reconciles with what they observe. The age
     buckets are computed at plan grain (DISTINCT plan_handle) from
-    sys.dm_exec_query_stats, the only source with per-plan compile
+    #dm_exec_query_stats, the only source with per-plan compile
     times. Counting raw query_stats rows (statement grain) inflated
     every number, because a multi-statement plan contributes one row
     per statement; @total_plans is now distinct plans with execution
     stats, the consistent denominator for the recency percentages.
+
+    The database filters were already applied when #dm_exec_query_stats
+    was populated, so there is nothing left to filter here. The date
+    filters are deliberately NOT applied: this measures the health of
+    the whole cache, not of the slice the caller asked to analyze.
     */
     DECLARE
         @total_plans bigint = 0,
@@ -631,47 +834,92 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
     OPTION(RECOMPILE);
 
+    /*
+    The buckets are counted by first collapsing the statement-grained
+    rows down to one row per plan, then adding up the plans that fall in
+    each window.
+
+    The obvious way to write this is
+    COUNT_BIG(DISTINCT CASE WHEN ... THEN plan_handle END), and that is
+    what it used to be. Every plan OUTSIDE the window makes that CASE
+    return NULL, COUNT ignores it, and SQL Server says so: "Null value
+    is eliminated by an aggregate or other SET operation" — printed on
+    every run against any cache holding plans older than an hour, which
+    is every real cache. Counting 1s and 0s over a pre-deduplicated set
+    gets the same answers without ever handing an aggregate a NULL.
+
+    Bucket on the NEWEST compile, and ONLY on the newest compile.
+
+    creation_time is a property of the STATEMENT, not of the plan: when
+    a single statement inside a batch recompiles, it restamps its own
+    creation_time (and its own plan_generation_num) while the batch
+    keeps its plan_handle. So rows sharing a plan_handle routinely carry
+    different creation_times — days apart, on a cache with any recompile
+    activity at all.
+
+    That makes the choice of MIN vs MAX load-bearing rather than
+    cosmetic. COUNT_BIG(DISTINCT CASE ...) counted a plan as recent if
+    ANY of its rows landed in the window, which is MAX semantics.
+    Collapsing on MIN instead would ask whether the plan's OLDEST
+    statement is recent, silently under-reporting every bucket and
+    letting a cache that churns through statement-level recompiles —
+    exactly what this check exists to catch — report as healthy.
+
+    @oldest_plan_date still wants the true minimum, so the derived table
+    carries both ends.
+    */
     SELECT
-        @total_plans = COUNT_BIG(DISTINCT qs.plan_handle),
+        @total_plans = COUNT_BIG(*),
         @plans_24h =
-            COUNT_BIG
+            ISNULL
             (
-                DISTINCT
-                CASE
-                    WHEN DATEDIFF(HOUR, qs.creation_time, GETDATE()) <= 24
-                    THEN qs.plan_handle
-                END
+                SUM
+                (
+                    CASE
+                        WHEN DATEDIFF(HOUR, p.newest_compile, GETDATE()) <= 24
+                        THEN 1
+                        ELSE 0
+                    END
+                ),
+                0
             ),
         @plans_4h =
-            COUNT_BIG
+            ISNULL
             (
-                DISTINCT
-                CASE
-                    WHEN DATEDIFF(HOUR, qs.creation_time, GETDATE()) <= 4
-                    THEN qs.plan_handle
-                END
+                SUM
+                (
+                    CASE
+                        WHEN DATEDIFF(HOUR, p.newest_compile, GETDATE()) <= 4
+                        THEN 1
+                        ELSE 0
+                    END
+                ),
+                0
             ),
         @plans_1h =
-            COUNT_BIG
+            ISNULL
             (
-                DISTINCT
-                CASE
-                    WHEN DATEDIFF(HOUR, qs.creation_time, GETDATE()) <= 1
-                    THEN qs.plan_handle
-                END
+                SUM
+                (
+                    CASE
+                        WHEN DATEDIFF(HOUR, p.newest_compile, GETDATE()) <= 1
+                        THEN 1
+                        ELSE 0
+                    END
+                ),
+                0
             ),
-        @oldest_plan_date = MIN(qs.creation_time)
-    FROM sys.dm_exec_query_stats AS qs
-    CROSS APPLY
+        @oldest_plan_date = MIN(p.oldest_compile)
+    FROM
     (
-        SELECT TOP (1)
-            value = pa.value
-        FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
-        WHERE pa.attribute = N'dbid'
-    ) AS pa
-    WHERE (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
-    AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
-    AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+        SELECT
+            s.plan_handle,
+            newest_compile = MAX(s.creation_time),
+            oldest_compile = MIN(s.creation_time)
+        FROM #dm_exec_query_stats AS s
+        GROUP BY
+            s.plan_handle
+    ) AS p
     OPTION(RECOMPILE);
 
     IF @total_plans > 0
@@ -736,9 +984,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Single-use plan bloat per database:
     A high percentage of single-use adhoc/prepared plans suggests an
     unparameterized ad hoc workload that bloats the plan cache and may
-    benefit from Optimize for Ad Hoc Workloads and/or Forced
-    Parameterization. Only surfaces databases where single-use plans
-    exceed 10% of that database's cached compiled plans.
+    benefit from Forced Parameterization. Only surfaces databases where
+    single-use plans exceed 10% of that database's cached compiled plans.
 
     Sourced from sys.dm_exec_cached_plans on purpose, NOT
     sys.dm_exec_query_stats. query_stats is statement-grained and only
@@ -785,7 +1032,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N' of ' + FORMAT(x.total_count, N'N0') +
             N' cached plans (' +
             CONVERT(nvarchar(10), x.single_use_pct) +
-            N'%) are single-use adhoc or prepared plans. Consider Optimize for Ad Hoc Workloads, and Forced Parameterization if these are unparameterized ad hoc queries.'
+            N'%) are single-use adhoc or prepared plans. Consider Forced Parameterization if these are unparameterized ad hoc queries.'
     FROM
     (
         SELECT
@@ -854,23 +1101,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM
     (
         SELECT
-            plan_count = COUNT_BIG(DISTINCT qs.plan_handle)
-        FROM sys.dm_exec_query_stats AS qs
-        CROSS APPLY
-        (
-            SELECT TOP (1)
-                value = pa.value
-            FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
-            WHERE pa.attribute = N'dbid'
-        ) AS pa
-        WHERE qs.query_hash <> 0x0000000000000000
-        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
-        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
-        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+            plan_count = COUNT_BIG(DISTINCT s.plan_handle)
+        FROM #dm_exec_query_stats AS s
+        WHERE s.query_hash <> 0x0000000000000000
         GROUP BY
-            qs.query_hash
+            s.query_hash
         HAVING
-            COUNT_BIG(DISTINCT qs.plan_handle) > 5
+            COUNT_BIG(DISTINCT s.plan_handle) > 5
     ) AS x
     OPTION(RECOMPILE);
 
@@ -905,7 +1142,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN N'Massive duplicate plan compilation'
                     ELSE N'Notable duplicate plan compilation'
                 END,
-            database_name = DB_NAME(CONVERT(integer, pa.value)),
+            database_name = DB_NAME(s2.database_id),
             priority =
                 CASE
                     WHEN @pct_duplicate > 75
@@ -913,38 +1150,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ELSE 254
                 END,
             details =
-                FORMAT(COUNT_BIG(DISTINCT qs2.query_hash), N'N0') +
+                FORMAT(COUNT_BIG(DISTINCT s2.query_hash), N'N0') +
                 N' query hashes with 5+ plans, totaling ' +
-                FORMAT(COUNT_BIG(DISTINCT qs2.plan_handle), N'N0') + N' plans. ' +
+                FORMAT(COUNT_BIG(DISTINCT s2.plan_handle), N'N0') + N' plans. ' +
                 N'Most likely unparameterized queries. SET option differences between sessions can also cause this. Consider Forced Parameterization.'
+        /*
+        Both sides now read the same filtered set, so the hashes counted
+        here are the same hashes @duplicate_hashes and @duplicate_plans
+        were computed from. The inner query used to scan the DMV with no
+        database predicate at all while the outer one was filtered, which
+        let a hash qualify on the strength of plans in databases the
+        caller had excluded.
+        */
         FROM
         (
             SELECT
-                qs.query_hash
-            FROM sys.dm_exec_query_stats AS qs
-            WHERE qs.query_hash <> 0x0000000000000000
+                s.query_hash
+            FROM #dm_exec_query_stats AS s
+            WHERE s.query_hash <> 0x0000000000000000
             GROUP BY
-                qs.query_hash
+                s.query_hash
             HAVING
-                COUNT_BIG(DISTINCT qs.plan_handle) > 5
+                COUNT_BIG(DISTINCT s.plan_handle) > 5
         ) AS x
-        JOIN sys.dm_exec_query_stats AS qs2
-          ON qs2.query_hash = x.query_hash
-        CROSS APPLY
-        (
-            SELECT TOP (1)
-                value = pa.value
-            FROM sys.dm_exec_plan_attributes(qs2.plan_handle) AS pa
-            WHERE pa.attribute = N'dbid'
-        ) AS pa
-        WHERE pa.value IS NOT NULL
-        AND   (@ignore_system_databases = 0 OR CONVERT(integer, pa.value) NOT IN (1, 2, 3, 4))
-        AND   CONVERT(integer, pa.value) < 32761
-        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+        JOIN #dm_exec_query_stats AS s2
+          ON s2.query_hash = x.query_hash
+        WHERE s2.database_id IS NOT NULL
         GROUP BY
-            pa.value
+            s2.database_id
         ORDER BY
-            COUNT_BIG(DISTINCT qs2.plan_handle) DESC
+            COUNT_BIG(DISTINCT s2.plan_handle) DESC
         OPTION(RECOMPILE);
     END;
 
@@ -1085,170 +1320,238 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         sample_statement_end integer NULL
     );
 
-    DECLARE
-        @sql nvarchar(max) = N'';
-
     /*
     ╔══════════════════════════════════════════════════╗
     ║  Step 1a: Collect statement-level stats          ║
-    ║  (sys.dm_exec_query_stats, grouped by hash)      ║
+    ║  (#dm_exec_query_stats, grouped by hash)         ║
     ╚══════════════════════════════════════════════════╝
+
+    Two things happen here, and they are deliberately kept apart.
+
+    "totals" rolls the hash group up. "winner" picks the single plan
+    that represents it — the most-executed one — and that one row
+    supplies the database, both handles, and both offsets, so the text,
+    the offsets, and the plan always describe the same plan instead of
+    being MAX()'d independently out of different ones.
+
+    The winner could instead be folded into the aggregate as
+    MAX(CASE WHEN n = 1 THEN ... END). Don't. Every row that isn't the
+    winner feeds a NULL into those MAX()es, and SQL Server answers with
+    "Null value is eliminated by an aggregate or other SET operation" on
+    every run. Joining to the winner asks the same question without ever
+    handing an aggregate a NULL. The object path in Step 1b does the
+    same thing for the same reason.
+
+    Reading #dm_exec_query_stats twice — once for totals, once for the
+    winner — is safe precisely BECAUSE it is a temp table. It holds
+    still between the two reads. Do not repoint either side of this join
+    at sys.dm_exec_query_stats directly: a DMV gets no statement-level
+    snapshot, so the two sides would see two different plan caches and
+    the inner join would silently drop any hash that got evicted in
+    between.
+
+    This all used to be a second pass — an UPDATE that CROSS APPLY'd
+    sys.dm_exec_query_stats per collected query_hash to go find those
+    handles. Nothing in the DMV is seekable, so the apply nested-loops
+    over it: spool the whole cache, then rewind, refilter, and re-sort
+    it once per hash. It also carried none of the database or date
+    predicates, so with @database_name set it could hand back the
+    handles of a plan from a database the caller had explicitly
+    filtered out, and then show its text and its plan.
     */
+    INSERT
+        #query_stats
+    WITH
+        (TABLOCK)
+    (
+        query_type,
+        database_name,
+        query_hash,
+        plan_count,
+        total_executions,
+        total_cpu_ms,
+        total_duration_ms,
+        total_logical_reads,
+        total_logical_writes,
+        total_physical_reads,
+        total_rows,
+        total_grant_mb,
+        total_used_grant_mb,
+        total_spills,
+        max_grant_mb,
+        max_used_grant_mb,
+        max_spills,
+        max_dop,
+        min_rows,
+        max_rows,
+        min_cpu_ms,
+        max_cpu_ms,
+        min_physical_reads,
+        max_physical_reads,
+        min_duration_ms,
+        max_duration_ms,
+        oldest_plan_creation,
+        newest_plan_creation,
+        last_execution_time,
+        sample_sql_handle,
+        sample_plan_handle,
+        sample_statement_start,
+        sample_statement_end
+    )
     SELECT
-        @sql = N'
-INSERT
-    #query_stats
-WITH
-    (TABLOCK)
-(
-    query_type,
-    database_name,
-    query_hash,
-    plan_count,
-    total_executions,
-    total_cpu_ms,
-    total_duration_ms,
-    total_logical_reads,
-    total_logical_writes,
-    total_physical_reads,
-    total_rows,' +
-    CASE
-        WHEN @has_memory_grants = 1
-        THEN N'
-    total_grant_mb,
-    total_used_grant_mb,
-    max_grant_mb,
-    max_used_grant_mb,'
-        ELSE N''
-    END +
-    CASE
-        WHEN @has_spills = 1
-        THEN N'
-    total_spills,
-    max_spills,'
-        ELSE N''
-    END + N'
-    max_dop,
-    min_rows,
-    max_rows,
-    min_cpu_ms,
-    max_cpu_ms,
-    min_physical_reads,
-    max_physical_reads,
-    min_duration_ms,
-    max_duration_ms,
-    oldest_plan_creation,
-    newest_plan_creation,
-    last_execution_time
-)
-SELECT
-    query_type = ''Statement'',
-    database_name =
-        DB_NAME
-        (
-            CONVERT
-            (
-                integer,
-                MAX(pa.value)
-            )
-        ),
-    query_hash = qs.query_hash,
-    plan_count = COUNT_BIG(DISTINCT qs.plan_handle),
-    total_executions = SUM(qs.execution_count),
-    total_cpu_ms = SUM(qs.total_worker_time) / 1000.0,
-    total_duration_ms = SUM(qs.total_elapsed_time) / 1000.0,
-    total_logical_reads = SUM(qs.total_logical_reads),
-    total_logical_writes = SUM(qs.total_logical_writes),
-    total_physical_reads = SUM(qs.total_physical_reads),
-    total_rows = SUM(qs.total_rows),' +
-    CASE
-        WHEN @has_memory_grants = 1
-        THEN N'
-    total_grant_mb = SUM(ISNULL(qs.max_grant_kb, 0)) / 1024.0,
-    total_used_grant_mb = SUM(ISNULL(qs.max_used_grant_kb, 0)) / 1024.0,
-    max_grant_mb = MAX(ISNULL(qs.max_grant_kb, 0)) / 1024.0,
-    max_used_grant_mb = MAX(ISNULL(qs.max_used_grant_kb, 0)) / 1024.0,'
-        ELSE N''
-    END +
-    CASE
-        WHEN @has_spills = 1
-        THEN N'
-    total_spills = SUM(ISNULL(qs.total_spills, 0)),
-    max_spills = MAX(ISNULL(qs.max_spills, 0)),'
-        ELSE N''
-    END + N'
-    max_dop = MAX(qs.max_dop),
-    min_rows = MIN(qs.min_rows),
-    max_rows = MAX(qs.max_rows),
-    min_cpu_ms = MIN(qs.min_worker_time) / 1000.0,
-    max_cpu_ms = MAX(qs.max_worker_time) / 1000.0,
-    min_physical_reads = MIN(qs.min_physical_reads),
-    max_physical_reads = MAX(qs.max_physical_reads),
-    min_duration_ms = MIN(qs.min_elapsed_time) / 1000.0,
-    max_duration_ms = MAX(qs.max_elapsed_time) / 1000.0,
-    oldest_plan_creation = MIN(qs.creation_time),
-    newest_plan_creation = MAX(qs.creation_time),
-    last_execution_time = MAX(qs.last_execution_time)
-FROM sys.dm_exec_query_stats AS qs
-CROSS APPLY
-(
-    SELECT TOP (1)
-        value = pa.value
-    FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
-    WHERE pa.attribute = N''dbid''
-) AS pa
-WHERE qs.query_hash <> 0x0000000000000000' +
-    /* @minimum_execution_count is enforced ONLY in the HAVING
-       SUM(execution_count) below — applying it per-row here
-       filtered out individual plans whose single-plan execution_count
-       was below the floor but whose group total was above it
-       (think: a recompile-heavy query with many plans each run a
-       few times that add up to a lot). Same reasoning applies to
-       the procedure / function / trigger paths further down. */
-    CASE
-        WHEN @ignore_system_databases = 1
-        THEN N'
-AND   ISNULL(pa.value, 0) NOT IN (1, 2, 3, 4)
-AND   ISNULL(pa.value, 0) < 32761'
-        ELSE N''
-    END +
-    CASE
-        WHEN @database_id IS NOT NULL
-        THEN N'
-AND   CONVERT(integer, pa.value) = @database_id'
-        ELSE N''
-    END +
-    CASE
-        WHEN @start_date IS NOT NULL
-        THEN N'
-AND   qs.creation_time >= @start_date'
-        ELSE N''
-    END +
-    CASE
-        WHEN @end_date IS NOT NULL
-        THEN N'
-AND   qs.creation_time < @end_date'
-        ELSE N''
-    END + N'
-GROUP BY
-    qs.query_hash
-HAVING
-    SUM(qs.execution_count) >= @minimum_execution_count
-OPTION(RECOMPILE, MAXDOP 1);';
+        query_type = 'Statement',
+        database_name = DB_NAME(winner.database_id),
+        query_hash = totals.query_hash,
+        plan_count = totals.plan_count,
+        total_executions = totals.total_executions,
+        total_cpu_ms = totals.total_cpu_ms,
+        total_duration_ms = totals.total_duration_ms,
+        total_logical_reads = totals.total_logical_reads,
+        total_logical_writes = totals.total_logical_writes,
+        total_physical_reads = totals.total_physical_reads,
+        total_rows = totals.total_rows,
+        total_grant_mb = totals.total_grant_mb,
+        total_used_grant_mb = totals.total_used_grant_mb,
+        total_spills = totals.total_spills,
+        max_grant_mb = totals.max_grant_mb,
+        max_used_grant_mb = totals.max_used_grant_mb,
+        max_spills = totals.max_spills,
+        max_dop = totals.max_dop,
+        min_rows = totals.min_rows,
+        max_rows = totals.max_rows,
+        min_cpu_ms = totals.min_cpu_ms,
+        max_cpu_ms = totals.max_cpu_ms,
+        min_physical_reads = totals.min_physical_reads,
+        max_physical_reads = totals.max_physical_reads,
+        min_duration_ms = totals.min_duration_ms,
+        max_duration_ms = totals.max_duration_ms,
+        oldest_plan_creation = totals.oldest_plan_creation,
+        newest_plan_creation = totals.newest_plan_creation,
+        last_execution_time = totals.last_execution_time,
+        sample_sql_handle = winner.sql_handle,
+        sample_plan_handle = winner.plan_handle,
+        sample_statement_start = winner.statement_start_offset,
+        sample_statement_end = winner.statement_end_offset
+    FROM
+    (
+        SELECT
+            s.query_hash,
+            plan_count = COUNT_BIG(DISTINCT s.plan_handle),
+            total_executions = SUM(s.execution_count),
+            total_cpu_ms = SUM(s.total_worker_time) / 1000.0,
+            total_duration_ms = SUM(s.total_elapsed_time) / 1000.0,
+            total_logical_reads = SUM(s.total_logical_reads),
+            total_logical_writes = SUM(s.total_logical_writes),
+            total_physical_reads = SUM(s.total_physical_reads),
+            total_rows = SUM(s.total_rows),
+            /*
+            On versions without the memory grant and spill columns these
+            are NULL for every row, and the CASE hands back the same 0s
+            and NULLs the old version-gated column lists produced by
+            omitting them: the totals are NOT NULL columns that defaulted
+            to 0, the maxes are nullable and stayed NULL.
 
-    IF @debug = 1
-    BEGIN
-        RAISERROR(N'Statement aggregation SQL:', 0, 1) WITH NOWAIT;
-        RAISERROR(N'%s', 0, 1, @sql) WITH NOWAIT;
-    END;
-
-    EXECUTE sys.sp_executesql
-        @sql,
-        N'@minimum_execution_count bigint, @database_id integer, @start_date datetime, @end_date datetime',
-        @minimum_execution_count,
-        @database_id,
-        @start_date,
-        @end_date;
+            The ISNULL inside each aggregate is not decoration. Without
+            it, SUM() and MAX() would skip NULLs on those versions and
+            SQL Server would warn about it on every run. Feeding them
+            zeros keeps them quiet, and the CASE — not the aggregate —
+            decides whether the answer is a value or a NULL.
+            */
+            total_grant_mb =
+                CASE
+                    WHEN @has_memory_grants = 1
+                    THEN SUM(ISNULL(s.max_grant_kb, 0)) / 1024.0
+                    ELSE 0
+                END,
+            total_used_grant_mb =
+                CASE
+                    WHEN @has_memory_grants = 1
+                    THEN SUM(ISNULL(s.max_used_grant_kb, 0)) / 1024.0
+                    ELSE 0
+                END,
+            total_spills =
+                CASE
+                    WHEN @has_spills = 1
+                    THEN SUM(ISNULL(s.total_spills, 0))
+                    ELSE 0
+                END,
+            max_grant_mb =
+                CASE
+                    WHEN @has_memory_grants = 1
+                    THEN MAX(ISNULL(s.max_grant_kb, 0)) / 1024.0
+                END,
+            max_used_grant_mb =
+                CASE
+                    WHEN @has_memory_grants = 1
+                    THEN MAX(ISNULL(s.max_used_grant_kb, 0)) / 1024.0
+                END,
+            max_spills =
+                CASE
+                    WHEN @has_spills = 1
+                    THEN MAX(ISNULL(s.max_spills, 0))
+                END,
+            max_dop = MAX(s.max_dop),
+            min_rows = MIN(s.min_rows),
+            max_rows = MAX(s.max_rows),
+            min_cpu_ms = MIN(s.min_worker_time) / 1000.0,
+            max_cpu_ms = MAX(s.max_worker_time) / 1000.0,
+            min_physical_reads = MIN(s.min_physical_reads),
+            max_physical_reads = MAX(s.max_physical_reads),
+            min_duration_ms = MIN(s.min_elapsed_time) / 1000.0,
+            max_duration_ms = MAX(s.max_elapsed_time) / 1000.0,
+            oldest_plan_creation = MIN(s.creation_time),
+            newest_plan_creation = MAX(s.creation_time),
+            last_execution_time = MAX(s.last_execution_time)
+        FROM #dm_exec_query_stats AS s
+        /* @minimum_execution_count is enforced ONLY in the HAVING
+           SUM(execution_count) below — applying it per-row here
+           filtered out individual plans whose single-plan execution_count
+           was below the floor but whose group total was above it
+           (think: a recompile-heavy query with many plans each run a
+           few times that add up to a lot). Same reasoning applies to
+           the procedure / function / trigger paths further down.
+           The database filters were already applied when
+           #dm_exec_query_stats was populated. */
+        WHERE s.query_hash <> 0x0000000000000000
+        AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
+        AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
+        GROUP BY
+            s.query_hash
+        HAVING
+            SUM(s.execution_count) >= @minimum_execution_count
+    ) AS totals
+    JOIN
+    (
+        SELECT
+            s.query_hash,
+            s.database_id,
+            s.sql_handle,
+            s.plan_handle,
+            s.statement_start_offset,
+            s.statement_end_offset,
+            /*
+            Ranked after the WHERE clause, so the winner is the most
+            executed plan among the rows the caller actually asked for,
+            not the most executed plan in the entire cache. The filters
+            below have to stay in step with the ones above, or the winner
+            could come from a row the totals never counted.
+            */
+            n =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        s.query_hash
+                    ORDER BY
+                        s.execution_count DESC
+                )
+        FROM #dm_exec_query_stats AS s
+        WHERE s.query_hash <> 0x0000000000000000
+        AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
+        AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
+    ) AS winner
+      ON  winner.query_hash = totals.query_hash
+      AND winner.n = 1
+    OPTION(RECOMPILE, MAXDOP 1);
 
     IF @debug = 1
     BEGIN
@@ -1262,35 +1565,6 @@ OPTION(RECOMPILE, MAXDOP 1);';
 
         RAISERROR(N'Statement query_hash groups collected: %I64d', 0, 1, @stmt_count) WITH NOWAIT;
     END;
-
-    /*
-    Fix up sample handles and offsets so they come from
-    the same plan row. MAX() in the GROUP BY can mismatch
-    a sql_handle from one plan with offsets from another,
-    producing clipped or blank query text.
-    */
-    UPDATE
-        qs
-    SET
-        qs.sample_sql_handle = x.sql_handle,
-        qs.sample_plan_handle = x.plan_handle,
-        qs.sample_statement_start = x.statement_start_offset,
-        qs.sample_statement_end = x.statement_end_offset
-    FROM #query_stats AS qs
-    CROSS APPLY
-    (
-        SELECT TOP (1)
-            dqs.sql_handle,
-            dqs.plan_handle,
-            dqs.statement_start_offset,
-            dqs.statement_end_offset
-        FROM sys.dm_exec_query_stats AS dqs
-        WHERE dqs.query_hash = qs.query_hash
-        ORDER BY
-            dqs.execution_count DESC
-    ) AS x
-    WHERE qs.query_type = 'Statement'
-    OPTION(RECOMPILE);
 
     /*
     Link statement-level rows to their parent procedure
@@ -1312,120 +1586,106 @@ OPTION(RECOMPILE, MAXDOP 1);';
 
     /*
     ╔══════════════════════════════════════════════════╗
-    ║  Step 1b: Collect procedure-level stats          ║
-    ║  (sys.dm_exec_procedure_stats)                   ║
+    ║  Step 1b: Collect object-level stats             ║
+    ║  (procedures, functions, and triggers)           ║
     ╚══════════════════════════════════════════════════╝
+
+    These three DMVs are materialized for the same reason
+    sys.dm_exec_query_stats is, plus one that is specific to the
+    totals + winner shape below.
+
+    A DMV is not a table and gets no statement-level snapshot. Reading
+    one twice in a single statement is two independent reads of live
+    plan cache memory, and the optimizer does exactly that here: the
+    totals side and the winner side each get their own scan operator.
+    If a plan is evicted between the two reads — on a churning cache,
+    which is the situation this proc exists to diagnose — the object
+    appears in totals, is missing from winner, and the inner join drops
+    it from the report entirely. No error, no warning, just a
+    stored procedure that quietly stops existing.
+
+    A temp table can be read twice safely, because it holds still. So
+    read each DMV exactly once, up front, and let both sides of the
+    join work from the same snapshot.
+
+    The three DMVs are shaped identically across every column used here,
+    so one staging table and one aggregate serve all of them; query_type
+    keeps them apart. The row filters are applied on the way in, which
+    is also why the totals and winner queries below need no WHERE clause
+    of their own — there is no pair of predicate lists that can drift
+    apart.
+    */
+    CREATE TABLE
+        #dm_exec_object_stats
+    (
+        query_type varchar(20) NOT NULL,
+        database_id integer NULL,
+        object_id integer NULL,
+        plan_handle varbinary(64) NULL,
+        sql_handle varbinary(64) NULL,
+        execution_count bigint NULL,
+        total_worker_time bigint NULL,
+        total_elapsed_time bigint NULL,
+        total_logical_reads bigint NULL,
+        total_logical_writes bigint NULL,
+        total_physical_reads bigint NULL,
+        cached_time datetime NULL,
+        last_execution_time datetime NULL
+    );
+
+    /*
+    @minimum_execution_count is enforced ONLY in the HAVING
+    SUM(execution_count) below, never as a per-row filter here —
+    applying it per row would drop individual plans whose single-plan
+    execution_count was below the floor but whose group total was above
+    it (a recompile-heavy object with many plans, each run a few times,
+    that add up to a lot). Same reasoning as the statement path.
     */
     INSERT
-        #query_stats
+        #dm_exec_object_stats
     WITH
         (TABLOCK)
     (
         query_type,
-        database_name,
-        object_name,
-        plan_count,
-        total_executions,
-        total_cpu_ms,
-        total_duration_ms,
+        database_id,
+        object_id,
+        plan_handle,
+        sql_handle,
+        execution_count,
+        total_worker_time,
+        total_elapsed_time,
         total_logical_reads,
         total_logical_writes,
         total_physical_reads,
-        oldest_plan_creation,
-        newest_plan_creation,
-        last_execution_time,
-        sample_sql_handle,
-        sample_plan_handle
+        cached_time,
+        last_execution_time
     )
-    /*
-    sample_sql_handle and sample_plan_handle previously used
-    MAX(ps.sql_handle) and MAX(ps.plan_handle) — each picked the
-    lexicographic max independently, so the two values could come
-    from different plan rows and produce a mismatched text/plan
-    pair when retrieved downstream. ROW_NUMBER() OVER
-    (PARTITION BY database_id, object_id ORDER BY execution_count
-    DESC) in a derived table, then MAX(CASE WHEN n = 1 THEN ...)
-    in the outer aggregate, pulls both handles from the SAME winner
-    row. Single DMV scan + one sort + one aggregate — much lighter
-    than CROSS APPLY-ing the DMV per group, which nested-loops
-    poorly on busy servers.
-    */
     SELECT
         query_type = 'Procedure',
-        database_name = DB_NAME(r.database_id),
-        object_name = OBJECT_SCHEMA_NAME(r.object_id, r.database_id) + N'.' + OBJECT_NAME(r.object_id, r.database_id),
-        plan_count = COUNT_BIG(DISTINCT r.plan_handle),
-        total_executions = SUM(r.execution_count),
-        total_cpu_ms = SUM(r.total_worker_time) / 1000.0,
-        total_duration_ms = SUM(r.total_elapsed_time) / 1000.0,
-        total_logical_reads = SUM(r.total_logical_reads),
-        total_logical_writes = SUM(r.total_logical_writes),
-        total_physical_reads = SUM(r.total_physical_reads),
-        oldest_plan_creation = MIN(r.cached_time),
-        newest_plan_creation = MAX(r.cached_time),
-        last_execution_time = MAX(r.last_execution_time),
-        sample_sql_handle = MAX(CASE WHEN r.n = 1 THEN r.sql_handle END),
-        sample_plan_handle = MAX(CASE WHEN r.n = 1 THEN r.plan_handle END)
-    FROM
-    (
-        SELECT
-            ps.database_id,
-            ps.object_id,
-            ps.plan_handle,
-            ps.sql_handle,
-            ps.execution_count,
-            ps.total_worker_time,
-            ps.total_elapsed_time,
-            ps.total_logical_reads,
-            ps.total_logical_writes,
-            ps.total_physical_reads,
-            ps.cached_time,
-            ps.last_execution_time,
-            n =
-                ROW_NUMBER() OVER
-                (
-                    PARTITION BY
-                        ps.database_id,
-                        ps.object_id
-                    ORDER BY
-                        ps.execution_count DESC
-                )
-        FROM sys.dm_exec_procedure_stats AS ps
-        /* See Statement path comment re: why @minimum_execution_count
-           is HAVING-only rather than a per-row pre-filter. */
-        WHERE ps.database_id > CASE WHEN @ignore_system_databases = 1 THEN 4 ELSE 0 END
-        AND   ps.database_id < 32761
-        AND   ps.database_id = ISNULL(@database_id, ps.database_id)
-        AND   ps.cached_time >= ISNULL(@start_date, ps.cached_time)
-        AND   ps.cached_time < ISNULL(@end_date, DATEADD(DAY, 1, ps.cached_time))
-    ) AS r
-    GROUP BY
-        r.database_id,
-        r.object_id
-    HAVING
-        SUM(r.execution_count) >= @minimum_execution_count
+        ps.database_id,
+        ps.object_id,
+        ps.plan_handle,
+        ps.sql_handle,
+        ps.execution_count,
+        ps.total_worker_time,
+        ps.total_elapsed_time,
+        ps.total_logical_reads,
+        ps.total_logical_writes,
+        ps.total_physical_reads,
+        ps.cached_time,
+        ps.last_execution_time
+    FROM sys.dm_exec_procedure_stats AS ps
+    WHERE ps.database_id > CASE WHEN @ignore_system_databases = 1 THEN 4 ELSE 0 END
+    AND   ps.database_id < 32761
+    AND   ps.database_id = ISNULL(@database_id, ps.database_id)
+    AND   ps.cached_time >= ISNULL(@start_date, ps.cached_time)
+    AND   ps.cached_time < ISNULL(@end_date, DATEADD(DAY, 1, ps.cached_time))
     OPTION(RECOMPILE, MAXDOP 1);
 
-    IF @debug = 1
-    BEGIN
-        DECLARE
-            @proc_count bigint;
-
-        SELECT
-            @proc_count = COUNT_BIG(*)
-        FROM #query_stats AS qs
-        WHERE qs.query_type = 'Procedure';
-
-        RAISERROR(N'Procedure objects collected: %I64d', 0, 1, @proc_count) WITH NOWAIT;
-    END;
-
     /*
-    ╔══════════════════════════════════════════════════╗
-    ║  Step 1c: Collect function-level stats           ║
-    ║  (sys.dm_exec_function_stats)                    ║
-    ╚══════════════════════════════════════════════════╝
-
-    dm_exec_function_stats is available starting SQL Server 2016.
+    sys.dm_exec_function_stats is available starting SQL Server 2016, so
+    it has to be referenced from dynamic SQL to keep this procedure
+    compiling on older builds.
     */
     IF EXISTS
     (
@@ -1439,111 +1699,107 @@ OPTION(RECOMPILE, MAXDOP 1);';
         SELECT
             @sql = N'
 INSERT
-    #query_stats
+    #dm_exec_object_stats
 WITH
     (TABLOCK)
 (
     query_type,
-    database_name,
-    object_name,
-    plan_count,
-    total_executions,
-    total_cpu_ms,
-    total_duration_ms,
+    database_id,
+    object_id,
+    plan_handle,
+    sql_handle,
+    execution_count,
+    total_worker_time,
+    total_elapsed_time,
     total_logical_reads,
     total_logical_writes,
     total_physical_reads,
-    oldest_plan_creation,
-    newest_plan_creation,
-    last_execution_time,
-    sample_sql_handle,
-    sample_plan_handle
+    cached_time,
+    last_execution_time
 )
-/* Same ROW_NUMBER + derived-table pattern as procedure path. */
 SELECT
     query_type = ''Function'',
-    database_name = DB_NAME(r.database_id),
-    object_name = OBJECT_SCHEMA_NAME(r.object_id, r.database_id) + N''.'' + OBJECT_NAME(r.object_id, r.database_id),
-    plan_count = COUNT_BIG(DISTINCT r.plan_handle),
-    total_executions = SUM(r.execution_count),
-    total_cpu_ms = SUM(r.total_worker_time) / 1000.0,
-    total_duration_ms = SUM(r.total_elapsed_time) / 1000.0,
-    total_logical_reads = SUM(r.total_logical_reads),
-    total_logical_writes = SUM(r.total_logical_writes),
-    total_physical_reads = SUM(r.total_physical_reads),
-    oldest_plan_creation = MIN(r.cached_time),
-    newest_plan_creation = MAX(r.cached_time),
-    last_execution_time = MAX(r.last_execution_time),
-    sample_sql_handle = MAX(CASE WHEN r.n = 1 THEN r.sql_handle END),
-    sample_plan_handle = MAX(CASE WHEN r.n = 1 THEN r.plan_handle END)
-FROM
-(
-    SELECT
-        fs.database_id,
-        fs.object_id,
-        fs.plan_handle,
-        fs.sql_handle,
-        fs.execution_count,
-        fs.total_worker_time,
-        fs.total_elapsed_time,
-        fs.total_logical_reads,
-        fs.total_logical_writes,
-        fs.total_physical_reads,
-        fs.cached_time,
-        fs.last_execution_time,
-        n =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    fs.database_id,
-                    fs.object_id
-                ORDER BY
-                    fs.execution_count DESC
-            )
-    FROM sys.dm_exec_function_stats AS fs
-    /* See Statement path comment re: why @minimum_execution_count
-       is HAVING-only rather than a per-row pre-filter. */
-    WHERE fs.database_id > CASE WHEN @ignore_system_databases = 1 THEN 4 ELSE 0 END
-    AND   fs.database_id < 32761
-    AND   fs.database_id = ISNULL(@database_id, fs.database_id)
-    AND   fs.cached_time >= ISNULL(@start_date, fs.cached_time)
-    AND   fs.cached_time < ISNULL(@end_date, DATEADD(DAY, 1, fs.cached_time))
-) AS r
-GROUP BY
-    r.database_id,
-    r.object_id
-HAVING
-    SUM(r.execution_count) >= @minimum_execution_count
+    fs.database_id,
+    fs.object_id,
+    fs.plan_handle,
+    fs.sql_handle,
+    fs.execution_count,
+    fs.total_worker_time,
+    fs.total_elapsed_time,
+    fs.total_logical_reads,
+    fs.total_logical_writes,
+    fs.total_physical_reads,
+    fs.cached_time,
+    fs.last_execution_time
+FROM sys.dm_exec_function_stats AS fs
+WHERE fs.database_id > CASE WHEN @ignore_system_databases = 1 THEN 4 ELSE 0 END
+AND   fs.database_id < 32761
+AND   fs.database_id = ISNULL(@database_id, fs.database_id)
+AND   fs.cached_time >= ISNULL(@start_date, fs.cached_time)
+AND   fs.cached_time < ISNULL(@end_date, DATEADD(DAY, 1, fs.cached_time))
 OPTION(RECOMPILE, MAXDOP 1);';
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR(N'Function stats materialization SQL:', 0, 1) WITH NOWAIT;
+            RAISERROR(N'%s', 0, 1, @sql) WITH NOWAIT;
+        END;
 
         EXECUTE sys.sp_executesql
             @sql,
-            N'@minimum_execution_count bigint, @database_id integer, @ignore_system_databases bit, @start_date datetime, @end_date datetime',
-            @minimum_execution_count,
+            N'@database_id integer, @ignore_system_databases bit, @start_date datetime, @end_date datetime',
             @database_id,
             @ignore_system_databases,
             @start_date,
             @end_date;
-
-        IF @debug = 1
-        BEGIN
-            DECLARE
-                @func_count bigint;
-
-            SELECT
-                @func_count = COUNT_BIG(*)
-            FROM #query_stats AS qs
-            WHERE qs.query_type = 'Function';
-
-            RAISERROR(N'Function objects collected: %I64d', 0, 1, @func_count) WITH NOWAIT;
-        END;
     END;
 
+    INSERT
+        #dm_exec_object_stats
+    WITH
+        (TABLOCK)
+    (
+        query_type,
+        database_id,
+        object_id,
+        plan_handle,
+        sql_handle,
+        execution_count,
+        total_worker_time,
+        total_elapsed_time,
+        total_logical_reads,
+        total_logical_writes,
+        total_physical_reads,
+        cached_time,
+        last_execution_time
+    )
+    SELECT
+        query_type = 'Trigger',
+        ts.database_id,
+        ts.object_id,
+        ts.plan_handle,
+        ts.sql_handle,
+        ts.execution_count,
+        ts.total_worker_time,
+        ts.total_elapsed_time,
+        ts.total_logical_reads,
+        ts.total_logical_writes,
+        ts.total_physical_reads,
+        ts.cached_time,
+        ts.last_execution_time
+    FROM sys.dm_exec_trigger_stats AS ts
+    WHERE ts.database_id > CASE WHEN @ignore_system_databases = 1 THEN 4 ELSE 0 END
+    AND   ts.database_id < 32761
+    AND   ts.database_id = ISNULL(@database_id, ts.database_id)
+    AND   ts.cached_time >= ISNULL(@start_date, ts.cached_time)
+    AND   ts.cached_time < ISNULL(@end_date, DATEADD(DAY, 1, ts.cached_time))
+    OPTION(RECOMPILE, MAXDOP 1);
+
     /*
-    ╔══════════════════════════════════════════════════╗
-    ║  Step 1d: Collect trigger-level stats            ║
-    ║  (sys.dm_exec_trigger_stats)                     ║
-    ╚══════════════════════════════════════════════════╝
+    One aggregate for all three object types. Same shape as the
+    statement path: totals rolls the object up, winner picks the
+    most-executed plan to represent it, and both handles come from that
+    one row so the text and the plan always describe the same plan.
     */
     INSERT
         #query_stats
@@ -1566,73 +1822,100 @@ OPTION(RECOMPILE, MAXDOP 1);';
         sample_sql_handle,
         sample_plan_handle
     )
-    /* Same ROW_NUMBER + derived-table pattern as procedure/function paths. */
     SELECT
-        query_type = 'Trigger',
-        database_name = DB_NAME(r.database_id),
-        object_name = OBJECT_SCHEMA_NAME(r.object_id, r.database_id) + N'.' + OBJECT_NAME(r.object_id, r.database_id),
-        plan_count = COUNT_BIG(DISTINCT r.plan_handle),
-        total_executions = SUM(r.execution_count),
-        total_cpu_ms = SUM(r.total_worker_time) / 1000.0,
-        total_duration_ms = SUM(r.total_elapsed_time) / 1000.0,
-        total_logical_reads = SUM(r.total_logical_reads),
-        total_logical_writes = SUM(r.total_logical_writes),
-        total_physical_reads = SUM(r.total_physical_reads),
-        oldest_plan_creation = MIN(r.cached_time),
-        newest_plan_creation = MAX(r.cached_time),
-        last_execution_time = MAX(r.last_execution_time),
-        sample_sql_handle = MAX(CASE WHEN r.n = 1 THEN r.sql_handle END),
-        sample_plan_handle = MAX(CASE WHEN r.n = 1 THEN r.plan_handle END)
+        query_type = totals.query_type,
+        database_name = DB_NAME(totals.database_id),
+        object_name =
+            OBJECT_SCHEMA_NAME(totals.object_id, totals.database_id) +
+            N'.' +
+            OBJECT_NAME(totals.object_id, totals.database_id),
+        plan_count = totals.plan_count,
+        total_executions = totals.total_executions,
+        total_cpu_ms = totals.total_cpu_ms,
+        total_duration_ms = totals.total_duration_ms,
+        total_logical_reads = totals.total_logical_reads,
+        total_logical_writes = totals.total_logical_writes,
+        total_physical_reads = totals.total_physical_reads,
+        oldest_plan_creation = totals.oldest_plan_creation,
+        newest_plan_creation = totals.newest_plan_creation,
+        last_execution_time = totals.last_execution_time,
+        sample_sql_handle = winner.sql_handle,
+        sample_plan_handle = winner.plan_handle
     FROM
     (
         SELECT
-            ts.database_id,
-            ts.object_id,
-            ts.plan_handle,
-            ts.sql_handle,
-            ts.execution_count,
-            ts.total_worker_time,
-            ts.total_elapsed_time,
-            ts.total_logical_reads,
-            ts.total_logical_writes,
-            ts.total_physical_reads,
-            ts.cached_time,
-            ts.last_execution_time,
+            os.query_type,
+            os.database_id,
+            os.object_id,
+            plan_count = COUNT_BIG(DISTINCT os.plan_handle),
+            total_executions = SUM(os.execution_count),
+            total_cpu_ms = SUM(os.total_worker_time) / 1000.0,
+            total_duration_ms = SUM(os.total_elapsed_time) / 1000.0,
+            total_logical_reads = SUM(os.total_logical_reads),
+            total_logical_writes = SUM(os.total_logical_writes),
+            total_physical_reads = SUM(os.total_physical_reads),
+            oldest_plan_creation = MIN(os.cached_time),
+            newest_plan_creation = MAX(os.cached_time),
+            last_execution_time = MAX(os.last_execution_time)
+        FROM #dm_exec_object_stats AS os
+        GROUP BY
+            os.query_type,
+            os.database_id,
+            os.object_id
+        HAVING
+            SUM(os.execution_count) >= @minimum_execution_count
+    ) AS totals
+    JOIN
+    (
+        SELECT
+            os.query_type,
+            os.database_id,
+            os.object_id,
+            os.sql_handle,
+            os.plan_handle,
             n =
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
-                        ts.database_id,
-                        ts.object_id
+                        os.query_type,
+                        os.database_id,
+                        os.object_id
                     ORDER BY
-                        ts.execution_count DESC
+                        os.execution_count DESC
                 )
-        FROM sys.dm_exec_trigger_stats AS ts
-        /* See Statement path comment re: why @minimum_execution_count
-           is HAVING-only rather than a per-row pre-filter. */
-        WHERE ts.database_id > CASE WHEN @ignore_system_databases = 1 THEN 4 ELSE 0 END
-        AND   ts.database_id < 32761
-        AND   ts.database_id = ISNULL(@database_id, ts.database_id)
-        AND   ts.cached_time >= ISNULL(@start_date, ts.cached_time)
-        AND   ts.cached_time < ISNULL(@end_date, DATEADD(DAY, 1, ts.cached_time))
-    ) AS r
-    GROUP BY
-        r.database_id,
-        r.object_id
-    HAVING
-        SUM(r.execution_count) >= @minimum_execution_count
+        FROM #dm_exec_object_stats AS os
+    ) AS winner
+      ON  winner.query_type = totals.query_type
+      AND winner.database_id = totals.database_id
+      AND winner.object_id = totals.object_id
+      AND winner.n = 1
     OPTION(RECOMPILE, MAXDOP 1);
 
     IF @debug = 1
     BEGIN
         DECLARE
+            @proc_count bigint,
+            @func_count bigint,
             @trig_count bigint;
 
+        /*
+        ISNULL because SUM over ZERO rows returns NULL, not 0 — the
+        ELSE 0 only guards against NULL inputs, not against #query_stats
+        being empty, which it is whenever the filters match nothing.
+        Without this these print "(null)" where the three separate
+        COUNT_BIG(*) reads they replaced printed "0".
+        */
         SELECT
-            @trig_count = COUNT_BIG(*)
-        FROM #query_stats AS qs
-        WHERE qs.query_type = 'Trigger';
+            @proc_count =
+                ISNULL(SUM(CASE WHEN qs.query_type = 'Procedure' THEN 1 ELSE 0 END), 0),
+            @func_count =
+                ISNULL(SUM(CASE WHEN qs.query_type = 'Function' THEN 1 ELSE 0 END), 0),
+            @trig_count =
+                ISNULL(SUM(CASE WHEN qs.query_type = 'Trigger' THEN 1 ELSE 0 END), 0)
+        FROM #query_stats AS qs;
 
+        RAISERROR(N'Procedure objects collected: %I64d', 0, 1, @proc_count) WITH NOWAIT;
+        RAISERROR(N'Function objects collected: %I64d', 0, 1, @func_count) WITH NOWAIT;
         RAISERROR(N'Trigger objects collected: %I64d', 0, 1, @trig_count) WITH NOWAIT;
     END;
 

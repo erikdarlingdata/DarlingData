@@ -12,10 +12,10 @@ It is **not** a general-purpose blocking killer; it watches exactly one session 
 
 | parameter_name                  | data_type     | description                                                                              | valid_inputs                | defaults             |
 |---------------------------------|---------------|------------------------------------------------------------------------------------------|-----------------------------|----------------------|
-| @protected_session_id           | integer       | the session_id to keep alive                                                             | a session_id of another spid | NULL (required)      |
+| @protected_session_id           | integer       | the session_id you want kept alive (watched, not run from)                               | a session_id of another spid | NULL (required)      |
 | @block_threshold_seconds        | integer       | how long the protected session must wait on an LCK before any action                     | a positive integer           | 5                    |
 | @check_interval_seconds         | integer       | how often each cycle samples and acts                                                    | a positive integer           | 1                    |
-| @abort_on_modification_block    | bit           | when blocked by a permanent-data modification, kill the protected session instead        | 0 or 1                       | 0                    |
+| @abort_on_modification_block    | bit           | when blocked by a permanent-data modification, kill the protected session instead of the blocker | 0 or 1                       | 0                    |
 | @kill_modification_blockers     | bit           | kill permanent-data modification blockers too (rolls back their work)                    | 0 or 1                       | 0                    |
 | @abort_reason                   | nvarchar(2048)| free-text reason printed when the protected session is aborted                           | any string or NULL           | NULL                 |
 | @debug                          | bit           | print each cycle's `#blockers` contents                                                  | 0 or 1                       | 0                    |

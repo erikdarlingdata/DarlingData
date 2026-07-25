@@ -253,21 +253,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @temp_table sysname,
         @insert_list sysname,
         @collection_sql nvarchar(MAX),
-        /*Log to table stuff*/
-        @log_table_significant_waits sysname,
-        @log_table_waits_by_count sysname,
-        @log_table_waits_by_duration sysname,
-        @log_table_io_issues sysname,
-        @log_table_cpu_tasks sysname,
-        @log_table_memory_conditions sysname,
-        @log_table_memory_broker sysname,
-        @log_table_memory_node_oom sysname,
-        @log_table_system_health sysname,
-        @log_table_scheduler_issues sysname,
-        @log_table_severe_errors sysname,
-        @log_table_pending_tasks sysname,
-        @log_table_blocking sysname,
-        @log_table_deadlocks sysname,
+        /*
+        Log to table stuff.
+
+        These hold fully-qualified, QUOTENAME'd three-part names, not
+        single identifiers — each part can quote out to 258 characters
+        (128 doubled brackets plus delimiters), so three parts and two
+        dots need 776. sysname silently truncated long-but-legal names
+        and the resulting CREATE TABLE failed.
+        */
+        @log_table_significant_waits nvarchar(776),
+        @log_table_waits_by_count nvarchar(776),
+        @log_table_waits_by_duration nvarchar(776),
+        @log_table_io_issues nvarchar(776),
+        @log_table_cpu_tasks nvarchar(776),
+        @log_table_memory_conditions nvarchar(776),
+        @log_table_memory_broker nvarchar(776),
+        @log_table_memory_node_oom nvarchar(776),
+        @log_table_system_health nvarchar(776),
+        @log_table_scheduler_issues nvarchar(776),
+        @log_table_severe_errors nvarchar(776),
+        @log_table_pending_tasks nvarchar(776),
+        @log_table_blocking nvarchar(776),
+        @log_table_deadlocks nvarchar(776),
         @cleanup_date datetime2(7),
         @check_sql nvarchar(MAX) = N'',
         @create_sql nvarchar(MAX) = N'',
@@ -391,8 +399,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     {cross_apply}
     OPTION(RECOMPILE);
 ',
+        /*
+        {table_check_literal} and {table_check} carry the same table
+        name, but one lands inside a quoted string and the other is an
+        identifier. A name containing a single quote (legal in delimited
+        identifiers) is fine in the identifier position and fatal in the
+        literal one unless its quotes are doubled — so the literal
+        placeholder gets the quote-doubled value at every substitution
+        site, and they cannot share a placeholder.
+        */
         @mdsql_template = N'
-    IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
+    IF OBJECT_ID(''{table_check_literal}'', ''U'') IS NOT NULL
     BEGIN
         SELECT
             @max_event_time =
@@ -522,6 +539,19 @@ AND   ca.utc_timestamp < @end_date';
                     ELSE @log_retention_days
                 END;
 
+        /*
+        QUOTENAME returns NULL for any input over 128 characters, and a
+        NULL name turns @create_sql NULL, which sys.sp_executesql runs
+        as a silent no-op — no table, no error, no logging. The longest
+        suffix appended to the prefix is _SignificantWaits (17), so the
+        prefix must leave room for it. Fail loudly up front instead.
+        */
+        IF LEN(@log_table_name_prefix) > 111
+        BEGIN
+            RAISERROR('@log_table_name_prefix is limited to 111 characters, so the longest table name suffix (_SignificantWaits) still fits in an identifier. Logging will be disabled.', 11, 1) WITH NOWAIT;
+            RETURN;
+        END;
+
         /* Validate database exists */
         IF NOT EXISTS
         (
@@ -638,7 +668,7 @@ AND   ca.utc_timestamp < @end_date';
                     session_id integer NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for significant waits logging.'', 0, 1, ''' + @log_table_significant_waits + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for significant waits logging.'', 0, 1, ''' + REPLACE(@log_table_significant_waits, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -674,7 +704,7 @@ AND   ca.utc_timestamp < @end_date';
                     max_wait_time_ms nvarchar(30) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for waits by count logging.'', 0, 1, ''' + @log_table_waits_by_count + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for waits by count logging.'', 0, 1, ''' + REPLACE(@log_table_waits_by_count, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -709,7 +739,7 @@ AND   ca.utc_timestamp < @end_date';
                     max_wait_time_ms nvarchar(30) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for waits by duration logging.'', 0, 1, ''' + @log_table_waits_by_duration + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for waits by duration logging.'', 0, 1, ''' + REPLACE(@log_table_waits_by_duration, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -747,7 +777,7 @@ AND   ca.utc_timestamp < @end_date';
                     longestPendingRequests_filePath nvarchar(500) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for IO issues logging.'', 0, 1, ''' + @log_table_io_issues + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for IO issues logging.'', 0, 1, ''' + REPLACE(@log_table_io_issues, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -789,7 +819,7 @@ AND   ca.utc_timestamp < @end_date';
                     didBlockingOccur bit NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU tasks logging.'', 0, 1, ''' + @log_table_cpu_tasks + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU tasks logging.'', 0, 1, ''' + REPLACE(@log_table_cpu_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -852,7 +882,7 @@ AND   ca.utc_timestamp < @end_date';
                     last_os_error bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory conditions logging.'', 0, 1, ''' + @log_table_memory_conditions + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory conditions logging.'', 0, 1, ''' + REPLACE(@log_table_memory_conditions, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -896,7 +926,7 @@ AND   ca.utc_timestamp < @end_date';
                     notification nvarchar(256) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory broker logging.'', 0, 1, ''' + @log_table_memory_broker + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory broker logging.'', 0, 1, ''' + REPLACE(@log_table_memory_broker, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -955,7 +985,7 @@ AND   ca.utc_timestamp < @end_date';
                     is_process_virtual_memory_low nvarchar(10) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory node OOM logging.'', 0, 1, ''' + @log_table_memory_node_oom + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory node OOM logging.'', 0, 1, ''' + REPLACE(@log_table_memory_node_oom, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1002,7 +1032,7 @@ AND   ca.utc_timestamp < @end_date';
                     BadPagesFixed bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for system health logging.'', 0, 1, ''' + @log_table_system_health + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for system health logging.'', 0, 1, ''' + REPLACE(@log_table_system_health, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1016,6 +1046,31 @@ AND   ca.utc_timestamp < @end_date';
 
         /* Create SchedulerIssues table if it doesn't exist */
         SET @create_sql = N'
+            /*
+            Old versions of this table were shaped around per-scheduler
+            columns (scheduler_id, status, ...) that the scheduler event
+            never actually carried, so nothing was ever inserted into
+            them — the collection filtered on an event name that does
+            not exist. That makes dropping an old-shape table lossless,
+            and it has to happen or the reshaped INSERT fails against it.
+            */
+            IF EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON s.schema_id = t.schema_id
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+                  ON c.object_id = t.object_id
+                WHERE t.name = @table_name + N''_SchedulerIssues''
+                AND   s.name = @schema_name
+                AND   c.name = N''scheduler_id''
+            )
+            BEGIN
+                DROP TABLE ' + @log_table_scheduler_issues + N';
+            END;
+
             IF NOT EXISTS
             (
                 SELECT
@@ -1032,17 +1087,15 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    scheduler_id integer NULL,
-                    cpu_id integer NULL,
-                    status nvarchar(256) NULL,
-                    is_online bit NULL,
-                    is_runnable bit NULL,
-                    is_running bit NULL,
-                    non_yielding_time_ms nvarchar(30) NULL,
-                    thread_quantum_ms nvarchar(30) NULL,
+                    sql_cpu_utilization integer NULL,
+                    other_process_cpu integer NULL,
+                    system_idle integer NULL,
+                    memory_utilization integer NULL,
+                    page_faults nvarchar(30) NULL,
+                    working_set_delta_mb decimal(19, 2) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for scheduler issues logging.'', 0, 1, ''' + @log_table_scheduler_issues + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for scheduler issues logging.'', 0, 1, ''' + REPLACE(@log_table_scheduler_issues, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1080,7 +1133,7 @@ AND   ca.utc_timestamp < @end_date';
                     database_id integer NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for severe errors logging.'', 0, 1, ''' + @log_table_severe_errors + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for severe errors logging.'', 0, 1, ''' + REPLACE(@log_table_severe_errors, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1119,7 +1172,7 @@ AND   ca.utc_timestamp < @end_date';
                     entry_point_count bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for pending tasks logging.'', 0, 1, ''' + @log_table_pending_tasks + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for pending tasks logging.'', 0, 1, ''' + REPLACE(@log_table_pending_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1186,7 +1239,7 @@ AND   ca.utc_timestamp < @end_date';
                     blocked_process_report xml NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for blocking logging.'', 0, 1, ''' + @log_table_blocking + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for blocking logging.'', 0, 1, ''' + REPLACE(@log_table_blocking, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1240,7 +1293,7 @@ AND   ca.utc_timestamp < @end_date';
                     deadlock_graph xml NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for deadlocks logging.'', 0, 1, ''' + @log_table_deadlocks + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for deadlocks logging.'', 0, 1, ''' + REPLACE(@log_table_deadlocks, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1380,15 +1433,35 @@ AND   ca.utc_timestamp < @end_date';
             END
     FROM
     (
+    /*
+    Every area an output section reads under must have a row here for
+    every event that section consumes, or that section silently returns
+    nothing for that @what_to_check value — the readers do not collect
+    for themselves. Multiple rows may share a temp_table safely: the
+    collection cursor marks the whole table collected after its first
+    pass, so it is still read exactly once.
+
+    The scheduler event's real name is
+    scheduler_monitor_system_health_ring_buffer_recorded — the short
+    name this used to filter on matches nothing, on any version, so the
+    scheduler section had never returned a single row. The scheduler
+    output runs under 'system' and 'cpu', and the CPU worker-thread,
+    pending-task, and memory sections all read
+    sp_server_diagnostics_component_result, so 'cpu' and 'memory' need
+    rows for it too.
+    */
     VALUES
-        ('cpu', 'scheduler_monitor_system_health', '#scheduler_monitor', 'scheduler_monitor'),
+        ('cpu', 'scheduler_monitor_system_health_ring_buffer_recorded', '#scheduler_monitor', 'scheduler_monitor'),
+        ('cpu', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('disk', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('locking', 'xml_deadlock_report', '#xml_deadlock_report', 'xml_deadlock_report'),
         ('locking', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('waits', 'wait_info', '#wait_info', 'wait_info'),
         ('waits', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
+        ('system', 'scheduler_monitor_system_health_ring_buffer_recorded', '#scheduler_monitor', 'scheduler_monitor'),
         ('system', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('system', 'error_reported', '#error_reported', 'error_reported'),
+        ('memory', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('memory', 'memory_broker_ring_buffer_recorded', '#memory_broker', 'memory_broker'),
         ('memory', 'memory_node_oom_ring_buffer_recorded', '#memory_node_oom', 'memory_node_oom')
     ) AS v(area_name, object_name, temp_table, insert_list);
@@ -1736,7 +1809,15 @@ AND   ca.utc_timestamp < @end_date';
             WHERE e.x.exist('@name[.= "wait_info"]') = 1
             OPTION(RECOMPILE);
         END;
-        IF @what_to_check IN ('all', 'disk', 'locking', 'system', 'memory')
+        /*
+        'cpu' and 'waits' belong here too: the worker-thread and
+        pending-task sections read this table under 'cpu', and the
+        waits-by-count/duration sections read it under 'waits' — the
+        file-target routing table collects it for both, and this guard
+        has to stay in step or the ring-buffer path silently returns
+        nothing for those checks.
+        */
+        IF @what_to_check IN ('all', 'cpu', 'disk', 'locking', 'system', 'memory', 'waits')
         BEGIN
             IF @debug = 1
             BEGIN
@@ -1806,7 +1887,7 @@ AND   ca.utc_timestamp < @end_date';
                 e.x.query('.')
             FROM #ring_buffer AS rb
             CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "scheduler_monitor_system_health"]') = 1
+            WHERE e.x.exist('@name[.= "scheduler_monitor_system_health_ring_buffer_recorded"]') = 1
             OPTION(RECOMPILE);
         END;
 
@@ -2092,7 +2173,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_significant_waits, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_significant_waits
                         ),
@@ -2363,7 +2449,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_waits_by_count, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_waits_by_count
                         ),
@@ -2653,7 +2744,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_waits_by_duration, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_waits_by_duration
                         ),
@@ -2864,7 +2960,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_io_issues, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_io_issues
                         ),
@@ -3063,7 +3164,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_cpu_tasks, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_cpu_tasks
                         ),
@@ -3289,7 +3395,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_pending_tasks, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_pending_tasks
                         ),
@@ -3514,7 +3625,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_memory_conditions, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_memory_conditions
                         ),
@@ -3814,7 +3930,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_memory_broker, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_memory_broker
                         ),
@@ -4209,7 +4330,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_memory_node_oom, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_memory_node_oom
                         ),
@@ -4424,7 +4550,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_system_health, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_system_health
                         ),
@@ -4512,6 +4643,23 @@ AND   ca.utc_timestamp < @end_date';
             RAISERROR('Parsing scheduler monitor data', 0, 0) WITH NOWAIT;
         END;
 
+        /*
+        The scheduler_monitor_system_health_ring_buffer_recorded event
+        is a utilization sample, not a per-scheduler status record. Its
+        data fields are process_utilization (SQL Server's CPU%),
+        system_idle (idle CPU%), memory_utilization (percent of
+        committed memory in the working set — 100 is healthy, low means
+        the working set got trimmed), page_faults, and
+        working_set_delta (bytes). The previous version of this section
+        parsed scheduler_id / status / is_online and friends, which
+        this event has never carried — every column came back NULL,
+        and its WARNING filter matched nothing, ever.
+
+        A sample is a warning when SQL Server's CPU is pinned, when
+        other processes are eating half the box, or when the working
+        set has been cut down — the classic external memory pressure
+        signal.
+        */
         SELECT
             event_time =
                 DATEADD
@@ -4525,19 +4673,38 @@ AND   ca.utc_timestamp < @end_date';
                     ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
-            scheduler_id = w.x.value('(data[@name="scheduler_id"]/value)[1]', 'integer'),
-            cpu_id = w.x.value('(data[@name="cpu_id"]/value)[1]', 'integer'),
-            status = w.x.value('(data[@name="status"]/text)[1]', 'nvarchar(256)'),
-            is_online = w.x.value('(data[@name="is_online"]/value)[1]', 'bit'),
-            is_runnable = w.x.value('(data[@name="is_runnable"]/value)[1]', 'bit'),
-            is_running = w.x.value('(data[@name="is_running"]/value)[1]', 'bit'),
-            non_yielding_time_ms = w.x.value('(data[@name="non_yielding_time"]/value)[1]', 'bigint'),
-            thread_quantum_ms = w.x.value('(data[@name="thread_quantum"]/value)[1]', 'bigint'),
+            sql_cpu_utilization = v.sql_cpu_utilization,
+            other_process_cpu =
+                (100 - v.sql_cpu_utilization - v.system_idle),
+            system_idle = v.system_idle,
+            memory_utilization = v.memory_utilization,
+            page_faults = v.page_faults,
+            working_set_delta_mb = v.working_set_delta_mb,
             xml = w.x.query('.')
         INTO #scheduler_issues
         FROM #scheduler_monitor AS sm
         CROSS APPLY sm.scheduler_monitor.nodes('//event') AS w(x)
-        WHERE (w.x.exist('(data[@name="status"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        CROSS APPLY
+        (
+            SELECT
+                sql_cpu_utilization = w.x.value('(data[@name="process_utilization"]/value)[1]', 'integer'),
+                system_idle = w.x.value('(data[@name="system_idle"]/value)[1]', 'integer'),
+                memory_utilization = w.x.value('(data[@name="memory_utilization"]/value)[1]', 'integer'),
+                page_faults = w.x.value('(data[@name="page_faults"]/value)[1]', 'bigint'),
+                working_set_delta_mb =
+                    CONVERT
+                    (
+                        decimal(19, 2),
+                        w.x.value('(data[@name="working_set_delta"]/value)[1]', 'bigint') / 1048576.
+                    )
+        ) AS v
+        WHERE
+        (
+             @warnings_only = 0
+          OR v.sql_cpu_utilization >= 90
+          OR (100 - v.sql_cpu_utilization - v.system_idle) >= 50
+          OR v.memory_utilization <= 50
+        )
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -4589,17 +4756,15 @@ AND   ca.utc_timestamp < @end_date';
                 ' + CASE
                         WHEN @log_to_table = 1
                         THEN N''
-                        ELSE N'finding = ''scheduler monitor issues'','
+                        ELSE N'finding = ''scheduler monitor health'','
                     END +
               N'
                 si.event_time,
-                si.scheduler_id,
-                si.cpu_id,
-                si.status,
-                si.is_online,
-                si.is_runnable,
-                si.is_running,
-                non_yielding_time_ms =
+                si.sql_cpu_utilization,
+                si.other_process_cpu,
+                si.system_idle,
+                si.memory_utilization,
+                page_faults =
                     REPLACE
                     (
                         CONVERT
@@ -4608,29 +4773,14 @@ AND   ca.utc_timestamp < @end_date';
                             CONVERT
                             (
                                 money,
-                                si.non_yielding_time_ms
+                                si.page_faults
                             ),
                             1
                         ),
                     N''.00'',
                     N''''
                     ),
-                thread_quantum_ms =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                si.thread_quantum_ms
-                            ),
-                            1
-                        ),
-                    N''.00'',
-                    N''''
-                    )
+                si.working_set_delta_mb
             FROM #scheduler_issues AS si';
 
             /* Add the WHERE clause only for table logging */
@@ -4642,7 +4792,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_scheduler_issues, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_scheduler_issues
                         ),
@@ -4679,14 +4834,12 @@ AND   ca.utc_timestamp < @end_date';
                 ' + @log_table_scheduler_issues + N'
             (
                 event_time,
-                scheduler_id,
-                cpu_id,
-                status,
-                is_online,
-                is_runnable,
-                is_running,
-                non_yielding_time_ms,
-                thread_quantum_ms
+                sql_cpu_utilization,
+                other_process_cpu,
+                system_idle,
+                memory_utilization,
+                page_faults,
+                working_set_delta_mb
             )' +
                 @dsql;
 
@@ -4750,8 +4903,15 @@ AND   ca.utc_timestamp < @end_date';
             severity = w.x.value('(data[@name="severity"]/value)[1]', 'integer'),
             state = w.x.value('(data[@name="state"]/value)[1]', 'integer'),
             message = w.x.value('(data[@name="message"]/value)[1]', 'nvarchar(max)'),
-            database_name = DB_NAME(w.x.value('(data[@name="database_id"]/value)[1]', 'integer')),
-            database_id = w.x.value('(data[@name="database_id"]/value)[1]', 'integer'),
+            /*
+            database_id rides on error_reported as an ACTION, not a
+            data element — reading the data axis returns NULL for every
+            event, which blanked these two columns for all severe
+            errors. session_id further up reads the action axis the
+            same way.
+            */
+            database_name = DB_NAME(w.x.value('(action[@name="database_id"]/value)[1]', 'integer')),
+            database_id = w.x.value('(action[@name="database_id"]/value)[1]', 'integer'),
             xml = w.x.query('.')
         INTO #error_info
         FROM #error_reported AS er
@@ -4837,7 +4997,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_severe_errors, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_severe_errors
                         ),
@@ -5226,39 +5391,53 @@ AND   ca.utc_timestamp < @end_date';
                     THEN
                         (
                             SELECT
+                                /*
+                                ISNULL because either metadata function
+                                returns NULL when the database or object
+                                no longer resolves (dropped, offline,
+                                detached since the event fired) — and a
+                                NULL here nulls the whole concatenation,
+                                rendering the query column blank. The
+                                raw text still carries the database and
+                                object ids, which beats an empty cell.
+                                */
                                 [processing-instruction(query)] =
-                                    OBJECT_SCHEMA_NAME
+                                    ISNULL
                                     (
-                                            SUBSTRING
-                                            (
-                                                kheb.query_text,
-                                                CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                                LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                                            )
-                                            ,
-                                            SUBSTRING
-                                            (
-                                                kheb.query_text,
-                                                CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
-                                                CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
-                                            )
-                                    ) +
-                                    N'.' +
-                                    OBJECT_NAME
-                                    (
-                                         SUBSTRING
-                                         (
-                                             kheb.query_text,
-                                             CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                             LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                                         )
-                                         ,
-                                         SUBSTRING
-                                         (
-                                             kheb.query_text,
-                                             CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
-                                             CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
-                                         )
+                                        OBJECT_SCHEMA_NAME
+                                        (
+                                                SUBSTRING
+                                                (
+                                                    kheb.query_text,
+                                                    CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                                    LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                                )
+                                                ,
+                                                SUBSTRING
+                                                (
+                                                    kheb.query_text,
+                                                    CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
+                                                    CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                                )
+                                        ) +
+                                        N'.' +
+                                        OBJECT_NAME
+                                        (
+                                             SUBSTRING
+                                             (
+                                                 kheb.query_text,
+                                                 CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                                 LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                             )
+                                             ,
+                                             SUBSTRING
+                                             (
+                                                 kheb.query_text,
+                                                 CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
+                                                 CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                             )
+                                        ),
+                                        kheb.query_text
                                     )
                             FOR XML
                                 PATH(N''),
@@ -5438,7 +5617,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_blocking, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_blocking
                         ),
@@ -5543,21 +5727,29 @@ AND   ca.utc_timestamp < @end_date';
         END;
         ELSE
         BEGIN
-            SELECT
-                finding = CASE
-                    WHEN @what_to_check NOT IN ('all', 'locking')
-                    THEN 'blocking skipped, @what_to_check set to ' + @what_to_check
-                    WHEN @skip_locks = 1
-                    THEN 'blocking skipped, @skip_locks set to 1'
-                    WHEN @what_to_check IN ('all', 'locking')
-                    THEN 'no blocking found between ' +
-                         RTRIM(CONVERT(date, @start_date)) +
-                         ' and ' +
-                         RTRIM(CONVERT(date, @end_date)) +
-                         ' with @warnings_only set to ' +
-                         RTRIM(@warnings_only)
-                    ELSE 'no blocking found!'
-                END;
+            /*
+            No-results messages are client output, and @log_to_table
+            documents itself as log-instead-of-return — same guard the
+            populated path above already uses.
+            */
+            IF @log_to_table = 0
+            BEGIN
+                SELECT
+                    finding = CASE
+                        WHEN @what_to_check NOT IN ('all', 'locking')
+                        THEN 'blocking skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @skip_locks = 1
+                        THEN 'blocking skipped, @skip_locks set to 1'
+                        WHEN @what_to_check IN ('all', 'locking')
+                        THEN 'no blocking found between ' +
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with @warnings_only set to ' +
+                             RTRIM(@warnings_only)
+                        ELSE 'no blocking found!'
+                    END;
+            END;
         END;
 
         /*Grab available plans from the cache*/
@@ -5825,39 +6017,51 @@ AND   ca.utc_timestamp < @end_date';
                             THEN
                                 (
                                     SELECT
+                                        /*
+                                        Same ISNULL guard as the blocking
+                                        twin above: a dropped or offline
+                                        database/object NULLs the metadata
+                                        functions, and the concatenation
+                                        with them — falling back to the
+                                        raw text keeps the ids visible.
+                                        */
                                         [processing-instruction(query)] =
-                                            OBJECT_SCHEMA_NAME
+                                            ISNULL
                                             (
-                                                    SUBSTRING
-                                                    (
-                                                        dp.query_text,
-                                                        CHARINDEX(N''Object Id = '', dp.query_text) + 12,
-                                                        LEN(dp.query_text) - (CHARINDEX(N''Object Id = '', dp.query_text) + 12)
-                                                    )
-                                                    ,
-                                                    SUBSTRING
-                                                    (
-                                                        dp.query_text,
-                                                        CHARINDEX(N''Database Id = '', dp.query_text) + 14,
-                                                        CHARINDEX(N''Object Id'', dp.query_text) - (CHARINDEX(N''Database Id = '', dp.query_text) + 14)
-                                                    )
-                                            ) +
-                                            N''.'' +
-                                            OBJECT_NAME
-                                            (
-                                                 SUBSTRING
-                                                 (
-                                                     dp.query_text,
-                                                     CHARINDEX(N''Object Id = '', dp.query_text) + 12,
-                                                     LEN(dp.query_text) - (CHARINDEX(N''Object Id = '', dp.query_text) + 12)
-                                                 )
-                                                 ,
-                                                 SUBSTRING
-                                                 (
-                                                     dp.query_text,
-                                                     CHARINDEX(N''Database Id = '', dp.query_text) + 14,
-                                                     CHARINDEX(N''Object Id'', dp.query_text) - (CHARINDEX(N''Database Id = '', dp.query_text) + 14)
-                                                 )
+                                                OBJECT_SCHEMA_NAME
+                                                (
+                                                        SUBSTRING
+                                                        (
+                                                            dp.query_text,
+                                                            CHARINDEX(N''Object Id = '', dp.query_text) + 12,
+                                                            LEN(dp.query_text) - (CHARINDEX(N''Object Id = '', dp.query_text) + 12)
+                                                        )
+                                                        ,
+                                                        SUBSTRING
+                                                        (
+                                                            dp.query_text,
+                                                            CHARINDEX(N''Database Id = '', dp.query_text) + 14,
+                                                            CHARINDEX(N''Object Id'', dp.query_text) - (CHARINDEX(N''Database Id = '', dp.query_text) + 14)
+                                                        )
+                                                ) +
+                                                N''.'' +
+                                                OBJECT_NAME
+                                                (
+                                                     SUBSTRING
+                                                     (
+                                                         dp.query_text,
+                                                         CHARINDEX(N''Object Id = '', dp.query_text) + 12,
+                                                         LEN(dp.query_text) - (CHARINDEX(N''Object Id = '', dp.query_text) + 12)
+                                                     )
+                                                     ,
+                                                     SUBSTRING
+                                                     (
+                                                         dp.query_text,
+                                                         CHARINDEX(N''Database Id = '', dp.query_text) + 14,
+                                                         CHARINDEX(N''Object Id'', dp.query_text) - (CHARINDEX(N''Database Id = '', dp.query_text) + 14)
+                                                     )
+                                                ),
+                                                dp.query_text
                                             )
                                     FOR XML
                                         PATH(N''''),
@@ -5902,7 +6106,12 @@ AND   ca.utc_timestamp < @end_date';
                     (
                         REPLACE
                         (
-                            @mdsql_template,
+                            REPLACE
+                            (
+                                @mdsql_template,
+                                '{table_check_literal}',
+                                REPLACE(@log_table_deadlocks, N'''', N'''''')
+                            ),
                             '{table_check}',
                             @log_table_deadlocks
                         ),
@@ -5990,19 +6199,26 @@ AND   ca.utc_timestamp < @end_date';
         END;
         ELSE
         BEGIN
-            SELECT
-                finding = CASE
-                    WHEN @what_to_check NOT IN ('all', 'locking')
-                    THEN 'deadlocks skipped, @what_to_check set to ' + @what_to_check
-                    WHEN @skip_locks = 1
-                    THEN 'deadlocks skipped, @skip_locks set to 1'
-                    WHEN @what_to_check IN ('all', 'locking')
-                    THEN 'no deadlocks found between ' +
-                         RTRIM(CONVERT(date, @start_date)) +
-                         ' and ' +
-                         RTRIM(CONVERT(date, @end_date))
-                    ELSE 'no deadlocks found!'
-                END;
+            /*
+            Client output only — same @log_to_table guard as the
+            blocking twin above.
+            */
+            IF @log_to_table = 0
+            BEGIN
+                SELECT
+                    finding = CASE
+                        WHEN @what_to_check NOT IN ('all', 'locking')
+                        THEN 'deadlocks skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @skip_locks = 1
+                        THEN 'deadlocks skipped, @skip_locks set to 1'
+                        WHEN @what_to_check IN ('all', 'locking')
+                        THEN 'no deadlocks found between ' +
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date))
+                        ELSE 'no deadlocks found!'
+                    END;
+            END;
         END;
 
         IF @debug = 1
@@ -6209,65 +6425,74 @@ AND   ca.utc_timestamp < @end_date';
             ap.avg_worker_time_ms DESC
         OPTION(RECOMPILE, MAXDOP 1);
 
-        IF EXISTS
-        (
-            SELECT
-                1/0
-            FROM #all_available_plans AS ap
-            WHERE ap.finding = 'available plans for blocking'
-        )
+        /*
+        The available-plans grids and their no-plans messages are client
+        output with no logging counterpart, so the documented
+        log-instead-of-return contract suppresses the lot when
+        @log_to_table = 1.
+        */
+        IF @log_to_table = 0
         BEGIN
-            SELECT
-                aap.*
-            FROM #all_available_plans AS aap
-            WHERE aap.finding = 'available plans for blocking'
-            ORDER BY
-                aap.avg_worker_time_ms DESC
-            OPTION(RECOMPILE);
-        END;
-        ELSE
-        BEGIN
-            /* Only show this message if we found blocking but no plans */
             IF EXISTS
             (
                 SELECT
                     1/0
-                FROM #blocks AS b
+                FROM #all_available_plans AS ap
+                WHERE ap.finding = 'available plans for blocking'
             )
             BEGIN
                 SELECT
-                    finding = 'no cached plans found for blocking queries';
+                    aap.*
+                FROM #all_available_plans AS aap
+                WHERE aap.finding = 'available plans for blocking'
+                ORDER BY
+                    aap.avg_worker_time_ms DESC
+                OPTION(RECOMPILE);
             END;
-        END;
+            ELSE
+            BEGIN
+                /* Only show this message if we found blocking but no plans */
+                IF EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #blocks AS b
+                )
+                BEGIN
+                    SELECT
+                        finding = 'no cached plans found for blocking queries';
+                END;
+            END;
 
-        IF EXISTS
-        (
-            SELECT
-                1/0
-            FROM #all_available_plans AS ap
-            WHERE ap.finding = 'available plans for deadlocks'
-        )
-        BEGIN
-            SELECT
-                aap.*
-            FROM #all_available_plans AS aap
-            WHERE aap.finding = 'available plans for deadlocks'
-            ORDER BY
-                aap.avg_worker_time_ms DESC
-            OPTION(RECOMPILE);
-        END;
-        ELSE
-        BEGIN
-            /* Only show this message if we found deadlocks but no plans */
             IF EXISTS
             (
                 SELECT
                     1/0
-                FROM #deadlocks_parsed AS dp
+                FROM #all_available_plans AS ap
+                WHERE ap.finding = 'available plans for deadlocks'
             )
             BEGIN
                 SELECT
-                    finding = 'no cached plans found for deadlock queries';
+                    aap.*
+                FROM #all_available_plans AS aap
+                WHERE aap.finding = 'available plans for deadlocks'
+                ORDER BY
+                    aap.avg_worker_time_ms DESC
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                /* Only show this message if we found deadlocks but no plans */
+                IF EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #deadlocks_parsed AS dp
+                )
+                BEGIN
+                    SELECT
+                        finding = 'no cached plans found for deadlock queries';
+                END;
             END;
         END;
     END; /*End locks*/

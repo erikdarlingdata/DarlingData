@@ -15,7 +15,7 @@ Queries with forced plans are always protected from removal.
 | parameter_name | data_type | description | valid_inputs | defaults |
 |---|---|---|---|---|
 | @database_name | sysname | the database to clean query store in | a database name with query store enabled | NULL; current database if NULL |
-| @cleanup_targets | varchar(100) | what to target for cleanup | all, system, maintenance (or maint), custom, none | all |
+| @cleanup_targets | varchar(100) | what to target for cleanup | all, system, maintenance (or maint), custom, none, or comma-separated combination | all |
 | @custom_query_filter | nvarchar(1024) | custom LIKE pattern for query text filtering; also applied when @cleanup_targets = all | a valid LIKE pattern | NULL |
 | @dedupe_by | varchar(50) | deduplication strategy | all, query_hash, plan_hash, none | all |
 | @min_age_days | integer | only remove queries whose last execution is older than this many days | a positive integer | NULL; no age filter |

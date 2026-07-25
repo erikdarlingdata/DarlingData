@@ -21,10 +21,24 @@ Usage:
     python no_access_test.py [--server SQL2022] [--password "L!nt0044"]
 """
 
+import os
+import shlex
 import subprocess
 import sys
 import time
 import secrets
+
+
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment
+    so the harness runs both locally and in CI. Locally SQLCMD_BIN defaults to
+    'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI sets SQLCMD_BIN to the
+    go-based sqlcmd and SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    container's self-signed cert and disable encryption, which the modern Go
+    TLS stack needs to connect to the SQL Server 2017 container."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
+
 
 TEST_LOGIN = f"sp_indexcleanup_no_access_test_{secrets.token_hex(4)}"
 TEST_PASSWORD = "T3st!" + secrets.token_hex(8) + "Aa1"
@@ -34,7 +48,8 @@ TIMEOUT_SECONDS = 30
 def run_sqlcmd_as_sa(server, sa_password, sql):
     """Execute a SQL statement as sa."""
     cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", sa_password,
+        *_sqlcmd_prefix(),
+        "-S", server, "-U", "sa", "-P", sa_password,
         "-d", "master", "-b", "-Q", sql,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -46,7 +61,8 @@ def run_sqlcmd_as_sa(server, sa_password, sql):
 def run_sqlcmd_as_test_login(server, sql, timeout):
     """Execute a SQL statement as the test login, with a wall-clock timeout."""
     cmd = [
-        "sqlcmd", "-S", server, "-U", TEST_LOGIN, "-P", TEST_PASSWORD,
+        *_sqlcmd_prefix(),
+        "-S", server, "-U", TEST_LOGIN, "-P", TEST_PASSWORD,
         "-d", "master", "-Q", sql,
     ]
     start = time.monotonic()

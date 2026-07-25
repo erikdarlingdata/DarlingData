@@ -27,11 +27,11 @@ All you need to do is hit F5 to get information about:
 | @minimum_disk_latency_ms   | smallint  | low bound for reporting disk latency                                           | a reasonable number of milliseconds for disk latency | 100          |
 | @cpu_utilization_threshold | smallint  | low bound for reporting high cpu utlization                                    | a reasonable cpu utlization percentage               | 50           |
 | @skip_waits                | bit       | skips waits when you do not need them on every run                             | 0 or 1                                               | 0            |
-| @skip_perfmon              | bit       | skips perfmon counters when you do not need them on every run                  | a valid tinyint: 0-255                               | 0            |
-| @sample_seconds            | tinyint   | take a sample of your server's metrics                                         | 0 or 1                                               | 0            |
-| @log_to_table              | bit       | enable logging to permanent tables                                             | 0 or 1                                               | 0            |
-| @log_database_name         | sysname   | database to store logging tables                                               | valid database name                                  | NULL         |
-| @log_schema_name           | sysname   | schema to store logging tables                                                 | valid schema name                                    | NULL         |
+| @skip_perfmon              | bit       | skips perfmon counters when you do not need them on every run                  | 0 or 1                                               | 0            |
+| @sample_seconds            | tinyint   | take a sample of your server's metrics                                         | a valid tinyint: 0-255                               | 0            |
+| @log_to_table              | bit       | enable logging to permanent tables instead of returning results                | 0 or 1                                               | 0            |
+| @log_database_name         | sysname   | database to store logging tables                                               | valid database name                                  | NULL (current database) |
+| @log_schema_name           | sysname   | schema to store logging tables                                                 | valid schema name                                    | NULL (dbo)   |
 | @log_table_name_prefix     | sysname   | prefix for all logging tables                                                  | valid table name prefix                               | 'PressureDetector' |
 | @log_retention_days        | integer   | Number of days to keep logs, 0 = keep indefinitely                             | integer                                              | 30           |
 | @troubleshoot_blocking       | bit       | show blocking chains instead of pressure analysis                              | 0 or 1                                               | 0            |

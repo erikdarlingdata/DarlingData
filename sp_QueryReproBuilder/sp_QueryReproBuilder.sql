@@ -573,13 +573,19 @@ SELECT
         NULLIF(@query_text_search_not, '');
 
 /*
-Parse schema from procedure name if provided in schema.procedure format
+Parse schema from procedure name if provided in schema.procedure format.
+PARSENAME copes with bracketed ([dbo].[proc]) and unbracketed (dbo.proc)
+alike; the old LIKE '[[]%].[[]%]' pattern only matched the fully bracketed
+form, so an unbracketed dbo.proc fell through and was later QUOTENAME'd whole
+into a single mangled [dbo.proc] identifier that could never resolve.
+Only split when the caller didn't pass @procedure_schema separately, the name
+has a schema part, and it's exactly two parts (part 3 NULL) so a stray
+three-part name doesn't silently drop its database component here.
 */
-IF
-(
-      @procedure_name LIKE N'[[]%].[[]%]'
-  AND @procedure_schema IS NULL
-)
+IF  @procedure_name IS NOT NULL
+AND @procedure_schema IS NULL
+AND PARSENAME(@procedure_name, 2) IS NOT NULL
+AND PARSENAME(@procedure_name, 3) IS NULL
 BEGIN
     SELECT
         @procedure_schema = PARSENAME(@procedure_name, 2),
@@ -745,7 +751,7 @@ OPTION(RECOMPILE);' + @nc10;
         EXECUTE sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
-            @procedure_name_quoted sysname',
+            @procedure_name_quoted nvarchar(1024)', /* nvarchar(1024), matching the variable's own declaration; binding it as sysname truncated the quoted 3-part name to 128 chars, so OBJECT_ID failed and a valid procedure was falsely rejected */
             @procedure_exists OUTPUT,
             @procedure_name_quoted;
 
@@ -1177,6 +1183,21 @@ CREATE TABLE
 );
 
 /*
+Landing table for the raw parameter attributes shredded straight out of each
+plan's ParameterList. Reading them once here, then cleaning the values in a
+second pass over these plain-string columns, avoids re-parsing the plan XML
+several times per parameter (see the note at the parameter-extraction step).
+*/
+CREATE TABLE
+    #parameter_shred
+(
+    plan_id bigint NOT NULL,
+    param_column sysname NULL,
+    param_data_type sysname NULL,
+    param_compiled_value nvarchar(max) NULL
+);
+
+/*
 If @query_plan_xml was supplied, seed the repro pipeline with one synthetic
 plan so the parser, warnings, and repro-builder can all run without Query
 Store. Synthetic ids are -1 so they can't collide with real Query Store ids.
@@ -1203,6 +1224,20 @@ BEGIN
                   (//StmtSimple/@StatementText)[1]',
                 N'nvarchar(max)'
             );
+
+    /*
+    No StmtSimple node means this isn't a ShowPlanXML document we can build a
+    repro from (wrong XML entirely, or a plan shape with no simple statement,
+    e.g. cursor-only). Stop here rather than silently seeding a blank query and
+    handing the user an empty repro.
+    */
+    IF @synthetic_query_text IS NULL
+    BEGIN
+        RAISERROR('The supplied @query_plan_xml has no StmtSimple statement text
+Pass a valid ShowPlanXML document (the output of an actual/estimated execution plan for a single statement)',
+                   10, 1) WITH NOWAIT;
+        RETURN;
+    END;
 
     INSERT
         #query_store_plan
@@ -2116,6 +2151,12 @@ BEGIN
     SELECT
         @sql = @isolation_level;
 
+    /*
+    The shredded value must be qualified b.x, not x: inside the generated query,
+    a.x is the whole <x>..</x> document and b.x is each per-node <x> from the
+    CROSS APPLY. An unqualified x.value was ambiguous (error 209), so this ignore
+    list silently failed to compile and never filtered anything.
+    */
     SELECT
         @sql += N'
     INSERT
@@ -2131,7 +2172,7 @@ BEGIN
     (
         SELECT
             plan_id =
-                x.value
+                b.x.value
                 (
                     ''(./text())[1]'',
                     ''bigint''
@@ -2175,6 +2216,10 @@ BEGIN
     SELECT
         @sql = @isolation_level;
 
+    /*
+    Same b.x qualification as the @ignore_plan_ids block above: b.x is the
+    per-node <x> from the CROSS APPLY, and leaving it unqualified was error 209.
+    */
     SELECT
         @sql += N'
     INSERT
@@ -2190,7 +2235,7 @@ BEGIN
     (
         SELECT
             query_id =
-                x.value
+                b.x.value
                 (
                     ''(./text())[1]'',
                     ''bigint''
@@ -4134,43 +4179,23 @@ SELECT
     @current_table = N'extracting parameters from query plans';
 
 INSERT
-    #query_parameters
+    #parameter_shred
 WITH
     (TABLOCK)
 (
     plan_id,
-    parameter_name,
-    parameter_data_type,
-    parameter_compiled_value
+    param_column,
+    param_data_type,
+    param_compiled_value
 )
 SELECT
     qsp.plan_id,
-    parameter_name =
-        LTRIM(RTRIM(cr.c.value(N'@Column', N'sysname'))),
-    parameter_data_type =
-        LTRIM(RTRIM(cr.c.value(N'@ParameterDataType', N'sysname'))),
-    parameter_compiled_value =
-        CASE
-            /*Strip parentheses from values like (13)*/
-            WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'(%)'
-            THEN SUBSTRING
-                 (
-                     cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)'),
-                     2,
-                     LEN(cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')) - 2
-                 )
-            /*Strip guid wrapper from values like {guid'...'}*/
-            WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'{guid''%''}'
-            THEN N'''' +
-                 SUBSTRING
-                 (
-                     cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)'),
-                     7,
-                     LEN(cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')) - 8
-                 ) +
-                 N''''
-            ELSE cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')
-        END
+    param_column =
+        cr.c.value(N'@Column', N'sysname'),
+    param_data_type =
+        cr.c.value(N'@ParameterDataType', N'sysname'),
+    param_compiled_value =
+        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
@@ -4199,6 +4224,59 @@ CROSS APPLY
 CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
 WHERE CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
 AND   x.parameter_list_xml IS NOT NULL
+OPTION(RECOMPILE);
+
+/*
+Clean the parameter values in a second pass over the materialized columns.
+
+The earlier version read cr.c.value(N'@ParameterCompiledValue') four times in
+this one statement, plus @Column and @ParameterDataType - nine .value() calls on
+the same node. Against untyped XML the optimizer builds a separate XML Reader
+table-valued function per call, ten of them stacked in nested-loop joins, and
+each one re-parses the plan from scratch. That made this the procedure's single
+largest cost on many-plan workloads (measured 13x slower on 500 plans than the
+shred-once form below). Reading each attribute once into #parameter_shred and
+applying the cleanup here on plain strings produces identical values.
+*/
+INSERT
+    #query_parameters
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    parameter_name,
+    parameter_data_type,
+    parameter_compiled_value
+)
+SELECT
+    ps.plan_id,
+    parameter_name =
+        LTRIM(RTRIM(ps.param_column)),
+    parameter_data_type =
+        LTRIM(RTRIM(ps.param_data_type)),
+    parameter_compiled_value =
+        CASE
+            /*Strip parentheses from values like (13)*/
+            WHEN ps.param_compiled_value LIKE N'(%)'
+            THEN SUBSTRING
+                 (
+                     ps.param_compiled_value,
+                     2,
+                     LEN(ps.param_compiled_value) - 2
+                 )
+            /*Strip guid wrapper from values like {guid'...'}*/
+            WHEN ps.param_compiled_value LIKE N'{guid''%''}'
+            THEN N'''' +
+                 SUBSTRING
+                 (
+                     ps.param_compiled_value,
+                     7,
+                     LEN(ps.param_compiled_value) - 8
+                 ) +
+                 N''''
+            ELSE ps.param_compiled_value
+        END
+FROM #parameter_shred AS ps
 OPTION(RECOMPILE);
 
 /*
@@ -4285,8 +4363,18 @@ CROSS APPLY
         param_xml =
             TRY_CAST
             (
+                /*
+                Split on ',@' (the parameter boundary), not every comma.
+                A scaled type carries its own comma (numeric(10,2),
+                decimal(38,6)), always followed by a digit; the separator
+                between parameters is always a comma immediately followed by
+                the next parameter's @name. Splitting on every comma tore
+                numeric(10,2) in half, and the malformed fragment blew up
+                LEFT with error 537, aborting the whole procedure for any
+                query with a scaled-type parameter.
+                */
                 N'<p>' +
-                REPLACE(prefix.param_prefix, N',', N'</p><p>') +
+                REPLACE(prefix.param_prefix, N',@', N'</p><p>@') +
                 N'</p>' AS xml
             )
 ) AS px
@@ -4865,6 +4953,18 @@ WHERE NOT EXISTS
 OPTION(RECOMPILE);
 
 
+/*
+Match sp_QuickieStore: when nothing landed in the search window there is no
+repro to build, so tell the caller which table came back empty instead of
+returning a silent, unexplained empty result set.
+*/
+IF EXISTS
+(
+    SELECT
+        1/0
+    FROM #repro_queries AS rq
+)
+BEGIN
 SELECT
     table_name =
         N'results',
@@ -5055,6 +5155,13 @@ OUTER APPLY
 ORDER BY
     qsrs.last_execution_time DESC
 OPTION(RECOMPILE);
+END;
+ELSE
+BEGIN
+    SELECT
+        result =
+            N'#repro_queries is empty';
+END;
 
 END TRY
 
@@ -5070,11 +5177,16 @@ BEGIN CATCH
         RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
     END;
 
-    IF @@TRANCOUNT > 0
-    BEGIN
-        ROLLBACK;
-    END;
-
+    /*
+    No ROLLBACK here on purpose. This procedure only reads Query Store and builds
+    strings - it opens no transaction of its own (there is no BEGIN TRANSACTION
+    anywhere in it), so a ROLLBACK could only ever unwind the CALLER's
+    transaction. That is the standard error-handling template misapplied to a
+    read-only procedure: on any internal error it would silently destroy work the
+    caller was in the middle of. It also broke INSERT ... EXECUTE against this
+    proc, where the ROLLBACK raised Msg 3915 instead of surfacing the real error.
+    sp_QuickieStore, which this was built from, carries no ROLLBACK either.
+    */
     THROW;
 END CATCH;
 
