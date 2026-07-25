@@ -213,18 +213,6 @@ BEGIN
        RETURN;
     END;
 
-    /*
-    Say so, rather than pretending. @language_id is validated and then
-    never used: every search string below is an English literal matched
-    against the error log's raw text, so pointing this at a non-English
-    server finds nothing and says nothing about why. Warn instead of
-    quietly handing back an empty result set that reads like good news.
-    */
-    IF @language_id <> 1033
-    BEGIN
-        RAISERROR(N'The search strings are English literals, so @language_id = %i will not translate them. Expect few or no results on a non-English server; use @custom_message to search in your own language.', 10, 1, @language_id) WITH NOWAIT;
-    END;
-
     /*Fix days back a little bit*/
     IF @days_back = 0
     BEGIN
@@ -238,30 +226,12 @@ BEGIN
             @days_back *= -1;
     END;
 
-    /*
-    A NULL @days_back with no date range is fatal, and silently so: it
-    makes DATEADD return NULL, which makes every generated command NULL,
-    and sys.sp_executesql runs a NULL batch as a no-op. The procedure
-    reads nothing, finds nothing, and reports a clean bill of health on a
-    server that may be on fire. Put it back on the documented default.
-    */
-    IF  @days_back IS NULL
-    AND @start_date IS NULL
-    AND @end_date IS NULL
+    IF  @start_date IS NOT NULL
+    AND @end_date   IS NOT NULL
+    AND @days_back  IS NOT NULL
     BEGIN
         SELECT
-            @days_back = -7;
-    END;
-
-    /*
-    Clamp before DATEADD sees it. An absurd @days_back (a caller reaching
-    for "everything") overflows the datetime range and kills the run with
-    an arithmetic error instead of just searching every log we have.
-    */
-    IF @days_back < -36500
-    BEGIN
-        SELECT
-            @days_back = -36500;
+            @days_back = NULL;
     END;
 
     /*Fix custom message only if NULL*/
@@ -302,28 +272,6 @@ BEGIN
              @start_date = DATEADD(DAY, -7, @end_date);
     END;
 
-    /*
-    Retire @days_back once we are in date-range mode, and do it HERE —
-    after the two fixups above, not before them.
-
-    The check used to require BOTH dates to be present, but a caller who
-    supplies only one gets the other filled in just above. Running the
-    check first meant @days_back survived at its -7 default, and the log
-    file pruner below then deleted every archive older than a week — so
-    searching for an incident from three months ago quietly threw away
-    the only file that contained it and returned nothing.
-    */
-    IF  @days_back IS NOT NULL
-    AND
-    (
-         @start_date IS NOT NULL
-      OR @end_date IS NOT NULL
-    )
-    BEGIN
-        SELECT
-            @days_back = NULL;
-    END;
-
     /*Debuggo*/
     IF @debug = 1
     BEGIN
@@ -361,14 +309,7 @@ BEGIN
     (
         archive integer
           PRIMARY KEY CLUSTERED,
-        /*
-        datetime, not date. sp_enumerrorlogs reports each archive's last
-        write with a time component; truncating it to midnight made an
-        archive that ended this afternoon compare as if it had ended at
-        00:00, so the window bound below could rule out a file that
-        actually reaches into the window.
-        */
-        log_date datetime,
+        log_date date,
         log_size bigint
     );
 
@@ -378,42 +319,14 @@ BEGIN
         id integer
            IDENTITY
            PRIMARY KEY CLUSTERED,
-        /*
-        Every argument below is emitted as an N-prefixed single-quoted
-        literal: N'like this'. Both halves of that matter.
-
-        NOT double quotes: under QUOTED_IDENTIFIER ON a double-quoted argument
-        parses as an IDENTIFIER, and SQL Server caps identifiers at 128
-        characters - so a @custom_message longer than that failed with
-        "Msg 103 ... The identifier that starts with ... is too long", was
-        swallowed by the CATCH below into #errors, and handed the caller an
-        empty result set that reads exactly like a clean bill of health.
-
-        NOT a bare single-quoted literal either: xp_readerrorlog is an
-        extended stored procedure and will not implicitly convert, so a
-        varchar argument fails with "Msg 22004 ... Invalid Parameter Type" -
-        at severity 12, quiet enough to look like simply finding nothing.
-        Double quotes happened to satisfy this because quoted identifiers are
-        inherently Unicode; N'...' satisfies it deliberately, and without the
-        length limit.
-
-        The wrapping reads awkwardly because a literal quote must be doubled:
-        N'N''' opens the argument (emitting N') and N'''' closes it
-        (emitting ').
-        */
-        search_string nvarchar(4000) DEFAULT N'N''''',
+        search_string nvarchar(4000) DEFAULT N'""',
         days_back nvarchar(30) NULL,
         start_date nvarchar(30) NULL,
         end_date nvarchar(30) NULL,
-        /*
-        Widened from 10: the value is now N'20260720', which is 11 characters
-        rather than 10. At the old width it truncated to N'20260720 - an
-        unterminated literal that broke every generated command.
-        */
-        [current_date] nvarchar(12)
-            DEFAULT N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, 1, SYSDATETIME()), 112) + N'''',
+        [current_date] nvarchar(10)
+            DEFAULT N'"' + CONVERT(nvarchar(10), DATEADD(DAY, 1, SYSDATETIME()), 112) + N'"',
         search_order nvarchar(10)
-            DEFAULT N'N''DESC''',
+            DEFAULT N'"DESC"',
         command AS
             CONVERT
             (
@@ -421,14 +334,7 @@ BEGIN
                 N'EXECUTE master.dbo.xp_readerrorlog [@@@], 1, '
                 + search_string
                 + N', '
-                /*
-                NULL, not " ". xp_readerrorlog ANDs its second search
-                string with the first, so passing a literal space quietly
-                required every matched line to contain one - a filter
-                nobody asked for, applied to every search including
-                @custom_message.
-                */
-                + N'NULL'
+                + N'" "'
                 + N', '
                 + ISNULL(start_date, days_back)
                 + N', '
@@ -466,85 +372,31 @@ BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        /*
-        The one-minute grace is not slop. sp_enumerrorlogs reports each
-        archive's last write truncated to the MINUTE, and the file's real
-        final entry lands somewhere in the following 59 seconds - so the
-        reported stamp always understates when the file actually ends.
-        Comparing it exactly prunes archives that really do reach into
-        the window. (HEAD hid this by typing the column as `date`, which
-        floored everything to midnight and bought a full day of slack by
-        accident.) Since enum <= true_end < enum + 60s, one minute is
-        exactly enough.
-        */
-        WHERE DATEADD(MINUTE, 1, e.log_date) < DATEADD(DAY, @days_back, SYSDATETIME())
+        WHERE e.log_date < DATEADD(DAY, @days_back, SYSDATETIME())
         AND   e.archive > 0
         OPTION(RECOMPILE);
     END;
 
-    /*
-    Filter out log files we won't use, if @start_date and @end_date are set.
-
-    Only the START of the window can rule a log file out, and that is the
-    whole subtlety here. sp_enumerrorlogs reports each archive's LAST
-    write, not its first, so a file stamped "March 10" holds entries
-    reaching back to whenever the previous archive ended. The old
-    predicate also deleted anything stamped AFTER @end_date — which threw
-    away precisely the file that straddles the end of the window, i.e.
-    the one most likely to contain the incident being investigated.
-
-    A file whose last write predates the window truly cannot contain it,
-    so that is the only safe exclusion. Keeping the newer files costs a
-    little extra reading and nothing else: xp_readerrorlog filters by
-    date again on the way out, so no out-of-window rows survive.
-    */
+    /*filter out log files we won't use, if @start_date and @end_date are set*/
     IF  @start_date IS NOT NULL
     AND @end_date IS NOT NULL
     BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        /*
-        A file's last write is where it ENDS; where it STARTS is the last
-        write of the archive before it (the one rotated out to make room).
-        Archives count upward into the past, so that is the next-higher
-        number. The oldest file has no predecessor and reaches back
-        indefinitely, which a NULL here handles by never matching.
-        */
-        OUTER APPLY
-        (
-            SELECT TOP (1)
-                starts_at = e2.log_date
-            FROM #enum AS e2
-            WHERE e2.archive > e.archive
-            ORDER BY
-                e2.archive
-        ) AS prior
-        WHERE e.archive > 0
-        AND
-        (
-              /*
-              Ended before we started looking. The +1 minute is the same
-              truncation grace as above: sp_enumerrorlogs rounds each
-              archive's last write DOWN to the minute.
-              */
-              DATEADD(MINUTE, 1, e.log_date) < @start_date
-              /*Or did not begin until after we stopped*/
-           OR prior.starts_at > @end_date
-        )
+        WHERE (e.log_date < CONVERT(date, @start_date)
+        OR     e.log_date > CONVERT(date, @end_date))
+        AND   e.archive > 0
         OPTION(RECOMPILE);
     END;
 
-    /*
-    Maybe you only want the first one anyway. Archive 0 IS the current
-    log, so keeping "archive > 1" kept two files, not one.
-    */
+    /*maybe you only want the first one anyway*/
     IF @first_log_only = 1
     BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        WHERE e.archive > 0
+        WHERE e.archive > 1
         OPTION(RECOMPILE);
     END;
 
@@ -567,10 +419,10 @@ BEGIN
     FROM
     (
         VALUES
-            (N'N''Microsoft SQL Server'''),
-            (N'N''detected'''),
-            (N'N''SQL Server has encountered'''),
-            (N'N''Warning: Enterprise Server/CAL license used for this instance''')
+            (N'"Microsoft SQL Server"'),
+            (N'"detected"'),
+            (N'"SQL Server has encountered"'),
+            (N'"Warning: Enterprise Server/CAL license used for this instance"')
     ) AS x (search_string)
     CROSS JOIN
     (
@@ -586,17 +438,17 @@ BEGIN
             date-range mode so the canary has a concrete floor.
             */
             days_back =
-                N'N''' +
+                N'"' +
                 CASE
                     WHEN @days_back IS NOT NULL
                     THEN CONVERT(nvarchar(10), DATEADD(DAY, CASE WHEN @days_back > -90 THEN -90 ELSE @days_back END, SYSDATETIME()), 112)
                     ELSE CONVERT(nvarchar(10), @start_date, 112)
                 END +
-                N'''',
+                N'"',
             start_date =
-                N'N''' + CONVERT(nvarchar(30), @start_date, 121) + N'''',
+                N'"' + CONVERT(nvarchar(30), @start_date) + N'"',
             end_date =
-                N'N''' + CONVERT(nvarchar(30), @end_date, 121) + N''''
+                N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
@@ -612,9 +464,9 @@ BEGIN
     )
     SELECT
         search_string =
-            N'N''' +
-            REPLACE(v.search_string, N'''', N'''''') +
-            N'''',
+            N'"' +
+            v.search_string +
+            N'"',
         c.days_back,
         c.start_date,
         c.end_date
@@ -643,11 +495,11 @@ BEGIN
     (
         SELECT
             days_back =
-                N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'''',
+                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'"',
             start_date =
-                N'N''' + CONVERT(nvarchar(30), @start_date, 121) + N'''',
+                N'"' + CONVERT(nvarchar(30), @start_date) + N'"',
             end_date =
-                N'N''' + CONVERT(nvarchar(30), @end_date, 121) + N''''
+                N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
@@ -670,19 +522,16 @@ BEGIN
     (
         VALUES
            (
-                /* xp_readerrorlog search strings are wrapped in single quotes
-                   (see the #search.command computed column), so any literal '
+                /* xp_readerrorlog search strings are wrapped in double quotes
+                   (see the #search.command computed column), so any literal "
                    inside the user-supplied @custom_message must be doubled to
-                   avoid closing the argument early and producing a syntax
-                   error when sys.sp_executesql parses the generated batch. A
-                   literal " needs no handling at all now that it is not a
-                   delimiter, and the search string is no longer subject to the
-                   128-character identifier limit that silently dropped long
-                   messages into #errors. */
-                N'N''' + REPLACE(@custom_message, N'''', N'''''') + N'''',
-                N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'''',
-                N'N''' + CONVERT(nvarchar(30), @start_date, 121) + N'''',
-                N'N''' + CONVERT(nvarchar(30), @end_date, 121) + N''''
+                   avoid closing the argument early and producing an
+                   "Incorrect syntax near '+'" error when sp_executesql parses
+                   the generated batch. */
+                N'"' + REPLACE(@custom_message, N'"', N'""') + N'"',
+                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'"',
+                N'"' + CONVERT(nvarchar(30), @start_date) + N'"',
+                N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
            )
     ) AS x (search_string, days_back, start_date, end_date)
     WHERE @custom_message LIKE N'_%'

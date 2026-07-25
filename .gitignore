@@ -8,5 +8,3 @@
 *.lock
 .DS_Store
 .claude/
-__pycache__/
-*.pyc
