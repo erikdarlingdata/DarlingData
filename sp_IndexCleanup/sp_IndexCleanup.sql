@@ -55,8 +55,8 @@ ALTER PROCEDURE
     @database_name sysname = NULL, /*focus on a single database*/
     @schema_name sysname = NULL, /*use when focusing on a single table/view, or to a single schema with no table name*/
     @table_name sysname = NULL, /*use when focusing on a single table or view*/
-    @min_reads bigint = 0, /*only dedupe indexes with a minimum number of reads; an index clears by meeting this or @min_writes*/
-    @min_writes bigint = 0, /*only dedupe indexes with a minimum number of writes; an index clears by meeting this or @min_reads*/
+    @min_reads bigint = 0, /*only look at indexes with a minimum number of reads*/
+    @min_writes bigint = 0, /*only look at indexes with a minimum number of writes*/
     @min_size_gb decimal(10,2) = 0, /*only look at indexes with a minimum size*/
     @min_rows bigint = 0, /*only look at indexes with a minimum number of rows*/
     @dedupe_only bit = 'false', /*only perform deduplication, don't mark unused indexes for removal*/
@@ -106,29 +106,6 @@ BEGIN TRY
     END;
 
     /*
-    Default the bit parameters when a caller passes NULL — an
-    uninitialized bit variable, most often. Every downstream test is
-    "= 0" or "= 1", and NULL satisfies neither.
-
-    This has to run HERE, ahead of every consumer, and @dedupe_only is
-    why. The low-uptime guard below both READS and WRITES it:
-
-        IF @uptime_days <= 7 AND @dedupe_only = 0 SET @dedupe_only = 1;
-
-    With NULL, "@dedupe_only = 0" is UNKNOWN, so that safety guard never
-    fires — and defaulting the parameter any later means the procedure
-    goes on to recommend dropping unused indexes based on a few days of
-    usage stats, with the protection silently skipped. @help and @debug
-    are consumed just below too, so a late default would be dead code
-    for them.
-    */
-    SELECT
-        @get_all_databases = ISNULL(@get_all_databases, 0),
-        @dedupe_only = ISNULL(@dedupe_only, 0),
-        @debug = ISNULL(@debug, 0),
-        @help = ISNULL(@help, 0);
-
-    /*
     Help section, for help.
     Will become more helpful when out of beta.
     */
@@ -166,8 +143,8 @@ BEGIN TRY
                     WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
                     WHEN N'@schema_name' THEN 'limits analysis to tables in the specified schema when used without @table_name'
                     WHEN N'@table_name' THEN 'the table or view name to filter indexes by, requires @schema_name if not dbo'
-                    WHEN N'@min_reads' THEN 'minimum reads for an index to be deduped; applied per table AND per index, and an index clears by meeting this or @min_writes. Does not affect unused-index detection or compression'
-                    WHEN N'@min_writes' THEN 'minimum writes for an index to be deduped; applied per table AND per index, and an index clears by meeting this or @min_reads. Does not affect unused-index detection or compression'
+                    WHEN N'@min_reads' THEN 'minimum number of reads for an index to be considered used'
+                    WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
                     WHEN N'@dedupe_only' THEN 'only perform index deduplication, do not mark unused indexes for removal'
@@ -720,15 +697,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         target_index_name sysname NULL,
         /* When this is a target, the index which points to it as a supersedes in consolidation */
         superseded_by nvarchar(4000) NULL,
-        /*
-        Whether this index cleared @min_reads / @min_writes on its own. Defaults
-        to 1 and only drops to 0 when a caller sets a floor and this index misses
-        it. The dedupe rules ignore anything marked 0; Rule 1 and compression
-        analysis deliberately do not look at it, since an index can be too cold to
-        be worth deduping while still being worth reporting as unused or worth
-        compressing.
-        */
-        meets_usage_floor bit NOT NULL DEFAULT 1,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL,
         /* Hash columns for optimized matching */
@@ -1111,35 +1079,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         N'<i>' +
                         REPLACE
                         (
-                            /*
-                            Escape the XML metacharacters before splicing
-                            the list into a document. A database name is a
-                            delimited identifier, so [Sales & Marketing] is
-                            legal, and an unescaped & < or > made the
-                            concatenated string malformed XML — CONVERT
-                            threw 9411 and killed the whole run. The
-                            ampersand MUST be escaped first: doing < first
-                            would produce &lt;, whose & would then be
-                            escaped again into &amp;lt;. .value() decodes
-                            the entities on the way back out, so the real
-                            name comes through intact.
-                            */
-                            REPLACE
-                            (
-                                REPLACE
-                                (
-                                    REPLACE
-                                    (
-                                        @include_databases,
-                                        N'&',
-                                        N'&amp;'
-                                    ),
-                                    N'<',
-                                    N'&lt;'
-                                ),
-                                N'>',
-                                N'&gt;'
-                            ),
+                            @include_databases,
                             N',',
                             N'</i><i>'
                         ) +
@@ -1183,35 +1123,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         N'<i>' +
                         REPLACE
                         (
-                            /*
-                            Escape the XML metacharacters before splicing
-                            the list into a document. A database name is a
-                            delimited identifier, so [Sales & Marketing] is
-                            legal, and an unescaped & < or > made the
-                            concatenated string malformed XML — CONVERT
-                            threw 9411 and killed the whole run. The
-                            ampersand MUST be escaped first: doing < first
-                            would produce &lt;, whose & would then be
-                            escaped again into &amp;lt;. .value() decodes
-                            the entities on the way back out, so the real
-                            name comes through intact.
-                            */
-                            REPLACE
-                            (
-                                REPLACE
-                                (
-                                    REPLACE
-                                    (
-                                        @exclude_databases,
-                                        N'&',
-                                        N'&amp;'
-                                    ),
-                                    N'<',
-                                    N'&lt;'
-                                ),
-                                N'>',
-                                N'&gt;'
-                            ),
+                            @exclude_databases,
                             N',',
                             N'</i><i>'
                         ) +
@@ -1302,31 +1214,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SET @database_name = DB_NAME();
         END;
 
-        /*
-        Strip brackets if user supplied them.
-
-        Not PARSENAME: that parses dotted multi-part names, so a real
-        database called Foo.Bar came back as just "Bar" and matched
-        nothing (or worse, the wrong database). Strip only genuine
-        surrounding brackets, and un-escape the doubled ]] that
-        QUOTENAME would have produced inside them.
-        */
-        IF  @database_name IS NOT NULL
-        AND LEFT(@database_name, 1) = N'['
-        AND RIGHT(@database_name, 1) = N']'
+        /* Strip brackets if user supplied them */
+        IF @database_name IS NOT NULL
         BEGIN
-            SET @database_name =
-                REPLACE
-                (
-                    SUBSTRING
-                    (
-                        @database_name,
-                        2,
-                        LEN(@database_name) - 2
-                    ),
-                    N']]',
-                    N']'
-                );
+            SET @database_name = PARSENAME(@database_name, 1);
         END;
 
         /* Single database mode */
@@ -1360,17 +1251,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 RETURN;
             END;
 
-            /*
-            Resolve the database_id locally with DB_ID() rather than trusting
-            sys.databases. On Azure SQL DB, sys.databases.database_id is scoped
-            to the logical server while DB_ID(), DB_NAME(), and the database_id
-            column in every DMV are scoped to the database/elastic pool, and the
-            two id spaces do not have to agree. Carrying the sys.databases id
-            made DB_NAME(@database_id) return NULL (Msg 515 on NOT NULL
-            database_name columns) and made DMV database_id joins match nothing.
-            DB_ID(d.name) returns the same value as d.database_id everywhere
-            except Azure, where it returns the id the DMVs actually use.
-            */
             INSERT INTO
                 #databases
             WITH
@@ -1381,12 +1261,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             SELECT
                 d.name,
-                database_id =
-                    ISNULL
-                    (
-                        DB_ID(d.name),
-                        d.database_id
-                    )
+                d.database_id
             FROM sys.databases AS d
             WHERE d.name = @database_name
             AND   d.state = 0
@@ -1420,13 +1295,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             d.name,
-            /* DB_ID(d.name) rather than d.database_id: see the single-database insert above */
-            database_id =
-                ISNULL
-                (
-                    DB_ID(d.name),
-                    d.database_id
-                )
+            d.database_id
         FROM sys.databases AS d
         WHERE d.database_id > 4 /* Skip system databases */
         AND   d.state = 0
@@ -1632,32 +1501,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating #filtered_object insert', 0, 0) WITH NOWAIT;
     END;
 
-    /*
-    One pass per database. Read this before touching anything inside the loop.
-
-    #index_analysis is NOT truncated between iterations - it accumulates every
-    database's rows because the final result set is built from it after the
-    cursor finishes. Every OTHER working temp table (#index_details,
-    #partition_stats, #compression_eligibility, #merged_includes and the rest,
-    reset just below) holds only the CURRENT database.
-
-    So any statement in this loop that reads or writes #index_analysis must
-    filter to ia.database_id = @current_database_id. Without it the statement
-    also processes rows for databases already handled, whose context tables have
-    since been truncated - and that produced silent, executable, WRONG DDL:
-    merge scripts stripped of their INCLUDE lists (the recompute read an empty
-    #index_details and returned NULL) and ALTER INDEX ... DISABLE against unique
-    constraints (a NOT EXISTS guard passed vacuously against the empty table).
-    Both ship a script that runs cleanly and quietly destroys index coverage or
-    referential integrity.
-
-    The scope is free in single-database runs and semantically free in general:
-    scope_hash already encodes database plus object and every rule joins on it,
-    so no rule can legitimately pair rows across databases anyway. For joins
-    between two #index_analysis aliases, scoping the driven side is enough - the
-    join carries the partner along. Statements that intentionally roll up across
-    ALL databases live AFTER the loop and are not scoped.
-    */
     WHILE @@FETCH_STATUS = 0
     BEGIN
         /*Truncate temp tables between database iterations*/
@@ -1739,11 +1582,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         SELECT DISTINCT
             @database_id,
-            /*
-            @database_name, never DB_NAME(@database_id): on Azure SQL DB the id
-            spaces differ and DB_NAME() of a foreign-space id returns NULL
-            */
-            database_name = @database_name,
+            database_name = DB_NAME(@database_id),
             schema_id = s.schema_id,
             schema_name = s.name,
             object_id = i.object_id,
@@ -1850,13 +1689,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     to analyze every index, including never-used ones (the whole point of the tool).
     @min_reads and @min_writes are validated to non-NULL, non-negative above.
     */
-    /*
-    Each term is gated on its own threshold being set. Without that gate,
-    a caller who set only @min_reads still got SUM(user_updates) >= 0 as
-    the other half of the OR - always true - so the whole filter did
-    nothing. The OR itself is intended: an index counts as used if it
-    clears EITHER floor.
-    */
     IF  @min_reads > 0
     OR  @min_writes > 0
     BEGIN
@@ -1876,15 +1708,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             GROUP BY
                 ius.object_id
             HAVING
-                (
-                    @min_reads > 0
-                    AND SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
-                )
+                SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
             OR
-                (
-                    @min_writes > 0
-                    AND SUM(ius.user_updates) >= @min_writes
-                )
+                SUM(ius.user_updates) >= @min_writes
         )';
     END;
 
@@ -1915,7 +1741,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
-        @database_name sysname,
         @min_reads bigint,
         @min_writes bigint,
         @min_size_gb decimal(10,2),
@@ -1923,7 +1748,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @object_id integer,
         @schema_name sysname',
         @current_database_id,
-        @current_database_name,
         @min_reads,
         @min_writes,
         @min_size_gb,
@@ -2326,7 +2150,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         os.database_id,
-        database_name = @database_name,
+        database_name = DB_NAME(os.database_id),
         schema_id = s.schema_id,
         schema_name = s.name,
         os.object_id,
@@ -2387,6 +2211,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     GROUP BY
         os.database_id,
+        DB_NAME(os.database_id),
         s.schema_id,
         s.name,
         os.object_id,
@@ -2448,10 +2273,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
-        @database_name sysname,
         @object_id integer',
         @current_database_id,
-        @current_database_name,
         @object_id;
 
     SET @rc = ROWCOUNT_BIG();
@@ -2535,50 +2358,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   fo.object_id = us.object_id
     );
 
-    /*
-    The @min_rows filter in this batch SUMs row_count across partitions,
-    matching the object pre-filter. Comparing each partition row on its
-    own meant a partitioned table whose TOTAL rows cleared @min_rows was
-    still analyzed by the pre-filter but then dropped here unless some
-    single partition cleared the floor alone - the two filters disagreed
-    about what "@min_rows" means.
-
-    On is_eligible_for_dedupe below: the CASE tests i.type = 1 OR
-    i.is_primary_key = 1 FIRST, and that order is load bearing. A
-    nonclustered primary key is type = 2, so testing type = 2 first matched
-    it as an ordinary nonclustered index and the is_primary_key branch could
-    never be reached for the one kind of index it was written for. That let
-    primary keys into the dedupe rules, which check only
-    is_unique_constraint - 0 for a primary key. Rule 5 then emitted
-    CREATE UNIQUE INDEX ... WITH (DROP_EXISTING = ON) against the PK
-    (Msg 1907, while the paired DISABLE of the other index still ran), and
-    Rule 2 could emit ALTER INDEX ... DISABLE against it, which does not
-    error: it succeeds, and silently disables every inbound foreign key
-    along with it.
-
-    Primary keys are ineligible for dedupe. UNIQUE constraints deliberately
-    are NOT: they stay eligible because Rule 7 and Rule 7.5 exist to replace
-    a unique constraint with an equivalent nonclustered index, and they need
-    the row to do it. A primary key has no such replacement path - nothing
-    should ever drop one - so it is excluded here instead.
-
-    Excluding a PK does not cost it its compression recommendation. The
-    insert that backfills #index_analysis for compression already selects
-    WHERE fo.index_id = 1 OR id.is_primary_key = 1, and already renders the
-    definition as ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY
-    NONCLUSTERED. That code was unreachable until this CASE was fixed.
-
-    Keep prose out of the string literal below. Everything up to the first
-    CONVERT(nvarchar(max), ...) concatenates as nvarchar(4000), so padding
-    it silently truncates the batch mid-statement instead of failing loudly.
-    */
     SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
         database_id = @database_id,
-        database_name = @database_name,
+        database_name = DB_NAME(@database_id),
         i.object_id,
         i.index_id,
         s.schema_id,
@@ -2659,14 +2445,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         us.last_user_update,
         is_eligible_for_dedupe =
             CASE
+                WHEN i.type = 2
+                THEN 1
                 WHEN
                 (
                      i.type = 1
                   OR i.is_primary_key = 1
                 )
                 THEN 0
-                WHEN i.type = 2
-                THEN 1
             END
     FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.objects AS o
@@ -2711,10 +2497,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'.sys.dm_db_partition_stats ps
         WHERE ps.object_id = i.object_id
         AND   ps.index_id IN (0, 1)
-        GROUP BY
-            ps.object_id
-        HAVING
-            SUM(ps.row_count) >= @min_rows
+        AND   ps.row_count >= @min_rows
     )'
         );
 
@@ -2794,11 +2577,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
-        @database_name sysname,
         @object_id integer,
         @min_rows bigint',
         @current_database_id,
-        @current_database_name,
         @object_id,
         @min_rows;
 
@@ -2828,7 +2609,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         database_id = @database_id,
-        database_name = @database_name,
+        database_name = DB_NAME(@database_id),
         x.object_id,
         x.index_id,
         x.schema_id,
@@ -2942,7 +2723,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   (
                     SELECT
                         N'', '' +
-                        QUOTENAME(c.name)
+                        c.name
                     FROM ' + QUOTENAME(@current_database_name) + N'.sys.index_columns AS ic
                     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                       ON c.object_id = ic.object_id
@@ -2996,10 +2777,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
-        @database_name sysname,
         @object_id integer',
         @current_database_id,
-        @current_database_name,
         @object_id;
 
     SET @rc = ROWCOUNT_BIG();
@@ -3044,7 +2823,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     SELECT
         @current_database_id,
-        database_name = @current_database_name,
+        database_name = DB_NAME(@current_database_id),
         id1.schema_id,
         id1.schema_name,
         id1.table_name,
@@ -3068,13 +2847,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2.object_id = id1.object_id
                 AND   id2.index_id = id1.index_id
                 AND   id2.is_included_column = 0
-                /*
-                   A partitioned index's partitioning column rides along at
-                   key_ordinal = 0 when it is not a real key. Without this it was
-                   emitted as a phantom LEADING key, corrupting rebuilt indexes
-                   and poisoning duplicate/subset hashing.
-                */
-                AND   id2.key_ordinal > 0
                 GROUP BY
                     id2.column_name,
                     id2.is_descending_key,
@@ -3122,7 +2894,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN id1.is_unique_constraint = 1
                 THEN
                     N'ALTER TABLE ' +
-                    QUOTENAME(@current_database_name) +
+                    QUOTENAME(DB_NAME(@current_database_id)) +
                     N'.' +
                     QUOTENAME(id1.schema_name) +
                     N'.' +
@@ -3148,7 +2920,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'INDEX ' +
                     QUOTENAME(id1.index_name) +
                     N' ON ' +
-                    QUOTENAME(@current_database_name) +
+                    QUOTENAME(DB_NAME(@current_database_id)) +
                     N'.' +
                     QUOTENAME(id1.schema_name) +
                     N'.' +
@@ -3170,13 +2942,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHERE id2.object_id = id1.object_id
                     AND   id2.index_id = id1.index_id
                     AND   id2.is_included_column = 0
-                    /*
-                       A partitioned index's partitioning column rides along at
-                       key_ordinal = 0 when it is not a real key. Without this it was
-                       emitted as a phantom LEADING key, corrupting rebuilt indexes
-                       and poisoning duplicate/subset hashing.
-                    */
-                    AND   id2.key_ordinal > 0
                     GROUP BY
                         id2.column_name,
                         id2.is_descending_key,
@@ -3484,7 +3249,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 50  /* Indexes with includes get priority over those without */
                 ELSE 0
             END /* Prefer indexes with included columns */
-    WHERE #index_analysis.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3524,7 +3288,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
         )
         AND #index_analysis.index_id <> 1 /* Don't disable clustered indexes */
-        AND #index_analysis.database_id = @current_database_id
         OPTION(RECOMPILE);
     END;
 
@@ -3535,73 +3298,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
-    END;
-
-    /*
-    Apply @min_reads / @min_writes per index, not just per object.
-
-    The filter that built #filtered_objects only asks whether a TABLE clears the
-    floors: it groups sys.dm_db_index_usage_stats by object_id, summing usage
-    across every index on the object. A table busy enough to qualify dragged in
-    all of its indexes with it, including ones nowhere near the floor the caller
-    asked for, which is not what '@min_reads: only look at indexes with a
-    minimum number of reads' promises.
-
-    This marks rather than deletes, and it sits between Rule 1 and the dedupe
-    rules. Both of those are deliberate:
-
-      - Marking keeps the row. Compression analysis reaches nonclustered indexes
-        through #index_analysis, and compression eligibility has nothing to do
-        with usage: an index can be far too cold to bother deduping and still be
-        worth compressing. Deleting the row would take its compression
-        recommendation with it.
-      - Rule 1 (unused indexes) has already run, and it does not look at this
-        flag, so a never-read index is still reported as unused. Screening ahead
-        of Rule 1 would make it unreachable: Rule 1's predicate is reads = 0,
-        which is a strict subset of everything a reads floor removes, so
-        @min_reads alone would silently switch unused-index detection off.
-
-    An index clears the screen if it meets EITHER floor, matching the object
-    filter's OR, with each term gated on its own threshold being set so that
-    passing only @min_reads doesn't leave user_updates >= 0 as an always-true
-    escape hatch on the write side.
-    */
-    IF  @min_reads > 0
-    OR  @min_writes > 0
-    BEGIN
-        UPDATE
-            ia
-        SET
-            ia.meets_usage_floor = 0
-        FROM #index_analysis AS ia
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #index_details AS id
-            WHERE id.index_hash = ia.index_hash
-            AND   NOT
-            (
-                (
-                        @min_reads > 0
-                    AND (id.user_seeks + id.user_scans + id.user_lookups) >= @min_reads
-                )
-                OR
-                (
-                        @min_writes > 0
-                    AND id.user_updates >= @min_writes
-                )
-            )
-        )
-        AND   ia.database_id = @current_database_id
-        OPTION(RECOMPILE);
-
-        SET @rc = ROWCOUNT_BIG();
-
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Index-level reads/writes filter excluded %I64d indexes from dedupe analysis', 0, 0, @rc) WITH NOWAIT;
-        END;
     END;
 
     /* Rule 2: Exact duplicates - matching key columns and includes */
@@ -3634,9 +3330,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.exact_match_hash = ia2.exact_match_hash  /* Exact match: keys + includes + filter */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    /* Both sides must have cleared @min_reads / @min_writes on their own */
-    AND   ia1.meets_usage_floor = 1
-    AND   ia2.meets_usage_floor = 1
     /* Exclude unique constraints - we'll handle those separately in Rule 7 */
     AND NOT EXISTS
     (
@@ -3682,7 +3375,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            AND id1.is_descending_key <> id2.is_descending_key
            /* Different sort direction */
     )
-    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3718,16 +3410,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2_inner.index_hash = ia2_inner.index_hash
                 AND   id2_inner.is_eligible_for_dedupe = 1
             )
-            /* Same constraint exclusion as the outer join below: a
-               unique constraint cannot serve as the merge target. */
-            AND NOT EXISTS
-            (
-                SELECT
-                    1/0
-                FROM #index_details AS id2_uc_inner
-                WHERE id2_uc_inner.index_hash = ia2_inner.index_hash
-                AND   id2_uc_inner.is_unique_constraint = 1
-            )
             AND NOT EXISTS
             (
                 SELECT
@@ -3757,10 +3439,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.is_unique = 0
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    /* Both sides must have cleared @min_reads / @min_writes on their own */
-    AND   ia1.meets_usage_floor = 1
-    AND   ia2.meets_usage_floor = 1
-    /* Don't disable unique constraints */
+    /* Don't disable unique constraints — but allow them as the wider (target) index */
     AND NOT EXISTS
     (
         SELECT
@@ -3768,23 +3447,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_details AS id1_uc
         WHERE id1_uc.index_hash = ia1.index_hash
         AND   id1_uc.is_unique_constraint = 1
-    )
-    /*
-    And don't pick one as the wider TARGET either. Merging a subset's
-    includes into a constraint-backed index emits CREATE INDEX ... WITH
-    (DROP_EXISTING = ON) against the constraint's index, which SQL
-    Server refuses outright (Msg 1907) — while the paired DISABLE of
-    the subset still runs, silently losing a covering index the
-    constraint never absorbed. Passing on the dedupe entirely is the
-    safe trade: the subset survives, the constraint stays untouched.
-    */
-    AND NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id2_uc
-        WHERE id2_uc.index_hash = ia2.index_hash
-        AND   id2_uc.is_unique_constraint = 1
     )
     AND EXISTS
     (
@@ -3813,7 +3475,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.index_hash = ia2.index_hash  /* Specific index from ia2 */
         AND   id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
     )
-    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     DECLARE @rule3_rowcount bigint = ROWCOUNT_BIG();
@@ -3849,8 +3510,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia2.consolidation_rule = N'Key Subset'
         AND   ia2.action = N'DISABLE'
         AND   ia2.target_index_name IS NOT NULL
-        AND   ia1.target_index_name <> ia2.target_index_name
-        AND   ia1.database_id = @current_database_id;
+        AND   ia1.target_index_name <> ia2.target_index_name;
 
         SET @chains_resolved = ROWCOUNT_BIG();
     END;
@@ -3889,7 +3549,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia1.consolidation_rule = N'Key Subset'
     AND   ia1.action = N'DISABLE'
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND   ia2.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3953,9 +3612,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')  /* Different includes */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    /* Both sides must have cleared @min_reads / @min_writes on their own */
-    AND   ia1.meets_usage_floor = 1
-    AND   ia2.meets_usage_floor = 1
     /* Exclude pairs where either one is a unique constraint (we'll handle those separately in Rule 7) */
     AND NOT EXISTS
     (
@@ -3989,7 +3645,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE id2.index_hash = ia2.index_hash
         AND   id2.is_eligible_for_dedupe = 1
     )
-    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     DECLARE @rule5_rowcount bigint = ROWCOUNT_BIG();
@@ -4040,67 +3695,52 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superset.scope_hash,
         superset.index_name,
         superset.key_columns,
-        /*
-        Merge the superset's own includes with those of every subset it
-        supersedes.
-
-        This reads #index_details, one row per column, instead of splitting the
-        included_columns strings on ', '. A column name may legally contain a
-        comma and a space, so that delimiter could tear [Last, First] into two
-        fragments and the DISTINCT sort could then slot another column between
-        them, emitting a broken INCLUDE list while the paired DISABLE still ran.
-        Reading the columns directly also removes the need to escape entities for
-        the XML round-trip.
-        */
         merged_includes =
             STUFF
             (
                 (
-                    SELECT
+                    SELECT DISTINCT
                         N', ' +
-                        QUOTENAME(idc.column_name)
-                    FROM #index_details AS idc
-                    WHERE idc.is_included_column = 1
-                    AND
+                        t.c.value('.', 'sysname')
+                    FROM
                     (
-                        /* The superset's own includes */
-                        idc.index_hash = superset.index_hash
-                        /* Plus those of every subset it supersedes */
-                        OR EXISTS
-                           (
-                               SELECT
-                                   1/0
-                               FROM #index_analysis AS subset
-                               WHERE subset.scope_hash = superset.scope_hash
-                               AND   subset.target_index_name = superset.index_name
-                               AND   subset.action = N'DISABLE'
-                               AND   subset.consolidation_rule = N'Key Subset'
-                               AND   subset.index_hash = idc.index_hash
-                           )
-                    )
-                    /*
-                    A column already in the superset's key doesn't need
-                    including. Matching column names exactly beats searching the
-                    key_columns string for one.
-                    */
-                    AND NOT EXISTS
-                    (
+                        /* Superset's own includes */
                         SELECT
-                            1/0
-                        FROM #index_details AS idk
-                        WHERE idk.index_hash = superset.index_hash
-                        AND   idk.is_included_column = 0
-                        AND   idk.column_name = idc.column_name
-                    )
-                    GROUP BY
-                        idc.column_name
-                    ORDER BY
-                        idc.column_name
+                            x = CONVERT
+                            (
+                                xml,
+                                N'<c>' +
+                                REPLACE(superset.included_columns, N', ', N'</c><c>') +
+                                N'</c>'
+                            )
+                        WHERE superset.included_columns IS NOT NULL
+
+                        UNION ALL
+
+                        /* ALL subsets' includes */
+                        SELECT
+                            x = CONVERT
+                            (
+                                xml,
+                                N'<c>' +
+                                REPLACE(subset.included_columns, N', ', N'</c><c>') +
+                                N'</c>'
+                            )
+                        FROM #index_analysis AS subset
+                        WHERE subset.scope_hash = superset.scope_hash
+                        AND   subset.target_index_name = superset.index_name
+                        AND   subset.action = N'DISABLE'
+                        AND   subset.consolidation_rule = N'Key Subset'
+                        AND   subset.included_columns IS NOT NULL
+                    ) AS a
+                    CROSS APPLY a.x.nodes('/c') AS t(c)
+                    /* Filter out columns already in superset's key */
+                    WHERE CHARINDEX(t.c.value('.', 'sysname'), superset.key_columns) = 0
+                    AND   LEN(t.c.value('.', 'sysname')) > 0
                     FOR
                         XML
-                        PATH(''),
-                        TYPE
-                ).value('text()[1]', 'nvarchar(max)'),
+                        PATH('')
+                ),
                 1,
                 2,
                 ''
@@ -4108,7 +3748,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS superset
     WHERE superset.action = N'MERGE INCLUDES'
     AND   superset.consolidation_rule = N'Key Superset'
-    AND   superset.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Apply the pre-computed merged includes */
@@ -4120,7 +3759,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #merged_includes AS mi
       ON  mi.scope_hash = ia.scope_hash
       AND mi.index_name = ia.index_name
-    WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4175,7 +3813,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia1_check.consolidation_rule = N'Key Subset'
         AND   ia1_check.action = N'DISABLE'
     )
-    AND   ia2.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4201,33 +3838,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
     AND   ia1.action IS NULL /* Not already processed by earlier rules */
-    /* Must have cleared @min_reads / @min_writes on its own */
-    AND   ia1.meets_usage_floor = 1
-    /*
-    A filtered index can never stand in for a unique constraint: the
-    constraint enforces uniqueness over EVERY row, the filtered index
-    only over rows matching its predicate. Promoting one and dropping
-    the constraint silently un-enforced uniqueness outside the filter.
-    */
-    AND   ia1.filter_definition IS NULL
-    /*
-    A partitioned index can only be made UNIQUE if its partitioning
-    column is part of its key — SQL Server rejects anything else with
-    Msg 1908. The key list correctly excludes a partition column that is
-    not a real key, but the ON clause still partitions by it, so
-    promoting such an index emits a CREATE UNIQUE that can never run
-    while the paired DROP CONSTRAINT runs fine: the constraint goes and
-    nothing replaces it. Pass on the recommendation entirely.
-    */
-    AND NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #partition_stats AS ps_uq
-        WHERE ps_uq.index_hash = ia1.index_hash
-        AND   ps_uq.partition_columns IS NOT NULL
-        AND   CHARINDEX(ps_uq.partition_columns, ia1.key_columns) = 0
-    )
     AND EXISTS
     (
         /* Find nonclustered indexes */
@@ -4285,7 +3895,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id2_inner.is_included_column = 0
         )
     )
-    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4313,20 +3922,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ia_nc.scope_hash = ia_uc.scope_hash  /* Same database and object */
       AND ia_nc.index_name <> ia_uc.index_name /* Different index */
       AND ia_uc.key_columns = ia_nc.key_columns  /* Verify key columns EXACT match */
-      /* A filtered index only enforces uniqueness inside its predicate;
-         it can never replace a full-table unique constraint. */
-      AND ia_nc.filter_definition IS NULL
-      /* Same Msg 1908 guard as Rule 7: a partitioned index whose
-         partition column is not in its key cannot be made unique. */
-      AND NOT EXISTS
-      (
-          SELECT
-              1/0
-          FROM #partition_stats AS ps_uq
-          WHERE ps_uq.index_hash = ia_nc.index_hash
-          AND   ps_uq.partition_columns IS NOT NULL
-          AND   CHARINDEX(ps_uq.partition_columns, ia_nc.key_columns) = 0
-      )
     WHERE NOT EXISTS
     (
         /* Don't propose replacing a unique constraint that backs an inbound
@@ -4355,7 +3950,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE id_nc.index_hash = ia_nc.index_hash
         AND   id_nc.is_unique_constraint = 1
     )
-    AND   ia_uc.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Second, mark nonclustered indexes to be made unique */
@@ -4370,35 +3964,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #index_details AS id_nc /* Join to get nonclustered index details */
       ON  id_nc.index_hash = ia_nc.index_hash
       AND id_nc.is_unique_constraint = 0 /* This is not a unique constraint */
-    /* Same filtered-index guard as the DISABLE marking above. */
-    WHERE ia_nc.filter_definition IS NULL
-    /* Same Msg 1908 guard as the DISABLE marking above. */
-    AND NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #partition_stats AS ps_uq
-        WHERE ps_uq.index_hash = ia_nc.index_hash
-        AND   ps_uq.partition_columns IS NOT NULL
-        AND   CHARINDEX(ps_uq.partition_columns, ia_nc.key_columns) = 0
-    )
-    /* Two conditions for matching:
-       1. Index key columns exactly match a unique constraint's key columns
-       2. A unique constraint is already marked for DISABLE and has this index as target */
-    AND EXISTS
-    (
-        /* Find unique constraint with matching keys that should be disabled */
-        SELECT
-            1/0
-        FROM #index_analysis AS ia_uc
-        JOIN #index_details AS id_uc
-          ON  id_uc.index_hash = ia_uc.index_hash
-          AND id_uc.is_unique_constraint = 1
-        WHERE ia_uc.scope_hash = ia_nc.scope_hash
-        /* Check that both indexes have EXACTLY the same key columns */
-        AND   ia_uc.key_columns = ia_nc.key_columns
-    )
-    AND   ia_nc.database_id = @current_database_id
+    WHERE
+        /* Two conditions for matching:
+           1. Index key columns exactly match a unique constraint's key columns
+           2. A unique constraint is already marked for DISABLE and has this index as target */
+        EXISTS
+        (
+            /* Find unique constraint with matching keys that should be disabled */
+            SELECT
+                1/0
+            FROM #index_analysis AS ia_uc
+            JOIN #index_details AS id_uc
+              ON  id_uc.index_hash = ia_uc.index_hash
+              AND id_uc.is_unique_constraint = 1
+            WHERE ia_uc.scope_hash = ia_nc.scope_hash
+                  /* Check that both indexes have EXACTLY the same key columns */
+            AND   ia_uc.key_columns = ia_nc.key_columns
+        )
     OPTION(RECOMPILE);
 
     /* CRITICAL: Ensure that only the unique constraints that exactly match get this treatment */
@@ -4422,7 +4004,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_uc.action = N'DISABLE'
         AND   ia_uc.target_index_name = ia.index_name
     )
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Make sure the nonclustered index has the superseded_by field set correctly */
@@ -4443,7 +4024,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia_uc.action = N'DISABLE'
       AND ia_uc.target_index_name = ia_nc.index_name
     WHERE ia_nc.action = N'MAKE UNIQUE'
-    AND   ia_nc.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4549,7 +4129,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id_fk.is_foreign_key_reference = 1
         AND   id_fk.is_included_column = 0
     )
-    AND   ia_loser.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4588,122 +4167,64 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE id_uc.index_hash = ia_dup.index_hash
         AND   id_uc.is_unique_constraint = 1
     )
-    /*
-    Both sides must be present in #index_details and eligible for dedupe, the
-    same check Rules 2, 3, 5 and 7 make: a row still in #index_analysis whose
-    index is a primary key or is otherwise ineligible must not be picked up here.
-    Cross-database staleness is handled by the @current_database_id scope below,
-    not by this predicate.
-    */
-    AND EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id_dup
-        WHERE id_dup.index_hash = ia_dup.index_hash
-        AND   id_dup.is_eligible_for_dedupe = 1
-    )
-    AND EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id_win
-        WHERE id_win.index_hash = ia_winner.index_hash
-        AND   id_win.is_eligible_for_dedupe = 1
-    )
-    /*
-    Only rows for the database being processed. #index_analysis accumulates
-    across the whole cursor for the final output, so without this every rule
-    re-runs over already-processed databases whose per-database context tables
-    (#index_details and the rest) have since been truncated - which produced
-    silent, wrong DDL. See the note at the top of the cursor loop.
-    */
-    AND   ia_dup.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Merge includes from the disabled Key Duplicates into the MAKE UNIQUE index */
     UPDATE
         ia_winner
     SET
-        /*
-        Merge the includes of every index being disabled in this winner's favor
-        into the index being made unique.
-
-        Sourced from #index_details, one row per column, rather than splitting
-        included_columns on ', '. A column name may legally contain a comma and
-        a space, which made that delimiter ambiguous: [Last, First] tore into two
-        fragments the DISTINCT sort could separate, producing a broken INCLUDE
-        list on a script whose paired DISABLE still ran.
-
-        Both loser rules matter, and missing one is not a cosmetic error. Rule 7.5
-        can rewrite a row Rule 6 already processed as a Key Superset into MAKE
-        UNIQUE, so a winner arriving here may own Key SUBSET losers as well as Key
-        DUPLICATE ones. Reading only Key Duplicates discarded the subsets'
-        includes that Rule 6 had already merged in, while their DISABLE still
-        ran - a covering column silently gone, on a script that executes cleanly.
-        The old string-splitting code survived this by accident: it read the
-        accumulated included_columns, so an earlier merge carried forward.
-        Re-deriving from disk does not, which is why every loser has to be
-        gathered here explicitly.
-
-        Key duplicates share the winner's keys, but key subsets do not, so losers
-        are matched on target_index_name rather than key_filter_hash, and a column
-        already in the winner's key is excluded - SQL Server rejects an index that
-        includes its own key column (Msg 1909).
-        */
         ia_winner.included_columns =
-            STUFF
-            (
-                (
-                    SELECT
-                        N', ' +
-                        QUOTENAME(idc.column_name)
-                    FROM #index_details AS idc
-                    WHERE idc.is_included_column = 1
-                    AND
+        (
+            SELECT
+                combined_cols =
+                    STUFF
                     (
-                        /* The winner's own includes */
-                        idc.index_hash = ia_winner.index_hash
-                        /* Plus those of every index being disabled in its favor */
-                        OR EXISTS
-                           (
-                               SELECT
-                                   1/0
-                               FROM #index_analysis AS ia_loser
-                               WHERE ia_loser.scope_hash = ia_winner.scope_hash
-                               AND   ia_loser.action = N'DISABLE'
-                               AND   ia_loser.target_index_name = ia_winner.index_name
-                               AND   ia_loser.consolidation_rule IN
-                                     (
-                                         N'Key Duplicate',
-                                         N'Key Subset'
-                                     )
-                               AND   ia_loser.index_hash = idc.index_hash
-                           )
+                        (
+                            SELECT DISTINCT
+                                N', ' + t.c.value('.', 'sysname')
+                            FROM
+                            (
+                                /* Winner's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(ISNULL(ia_winner.included_columns, N''), N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                WHERE ia_winner.included_columns IS NOT NULL
+
+                                UNION ALL
+
+                                /* Loser's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(ia_loser.included_columns, N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                FROM #index_analysis AS ia_loser
+                                WHERE ia_loser.scope_hash = ia_winner.scope_hash
+                                AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
+                                AND   ia_loser.action = N'DISABLE'
+                                AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                                AND   ia_loser.target_index_name = ia_winner.index_name
+                                AND   ia_loser.included_columns IS NOT NULL
+                            ) AS a
+                            CROSS APPLY a.x.nodes('/c') AS t(c)
+                            WHERE LEN(t.c.value('.', 'sysname')) > 0
+                            FOR
+                                XML
+                                PATH('')
+                        ),
+                        1,
+                        2,
+                        ''
                     )
-                    /* A column already in the winner's key doesn't need including */
-                    AND NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS idk
-                        WHERE idk.index_hash = ia_winner.index_hash
-                        AND   idk.is_included_column = 0
-                        AND   idk.column_name = idc.column_name
-                    )
-                    GROUP BY
-                        idc.column_name
-                    ORDER BY
-                        idc.column_name
-                    FOR
-                        XML
-                        PATH(''),
-                        TYPE
-                ).value('text()[1]', 'nvarchar(max)'),
-                1,
-                2,
-                ''
-            ),
+        ),
         ia_winner.superseded_by =
             CASE
                 WHEN ia_winner.superseded_by IS NULL
@@ -4719,12 +4240,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              AND   ia_loser.action = N'DISABLE'
                              AND   ia_loser.consolidation_rule = N'Key Duplicate'
                              AND   ia_loser.target_index_name = ia_winner.index_name
-                             /* TYPE plus .value() so an index named [a&b] isn't reported as [a&amp;b] */
                              FOR
                                  XML
-                                 PATH(''),
-                                 TYPE
-                         ).value('text()[1]', 'nvarchar(max)'),
+                                 PATH('')
+                         ),
                          1,
                          2,
                          ''
@@ -4742,12 +4261,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              AND   ia_loser.action = N'DISABLE'
                              AND   ia_loser.consolidation_rule = N'Key Duplicate'
                              AND   ia_loser.target_index_name = ia_winner.index_name
-                             /* TYPE plus .value() so an index named [a&b] isn't reported as [a&amp;b] */
                              FOR
                                  XML
-                                 PATH(''),
-                                 TYPE
-                         ).value('text()[1]', 'nvarchar(max)'),
+                                 PATH('')
+                         ),
                          1,
                          2,
                          ''
@@ -4767,7 +4284,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_loser.consolidation_rule = N'Key Duplicate'
         AND   ia_loser.target_index_name = ia_winner.index_name
     )
-    AND   ia_winner.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4794,9 +4310,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.index_name < ia2.index_name  /* Only process each pair once */
       AND ia1.consolidation_rule IS NULL  /* Not already processed */
       AND ia2.consolidation_rule IS NULL  /* Not already processed */
-      /* Both sides must have cleared @min_reads / @min_writes on their own */
-      AND ia1.meets_usage_floor = 1
-      AND ia2.meets_usage_floor = 1
     WHERE
         /* Leading columns match */
         EXISTS
@@ -4846,7 +4359,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE id1.index_hash = ia1.index_hash
             AND   id2.index_hash = ia2.index_hash
         )
-    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -5050,7 +4562,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
       AND ia.consolidation_rule = N'Key Duplicate'
-      AND ia.database_id = @current_database_id
     GROUP BY
         ia.database_id,
         ia.object_id,
@@ -5081,7 +4592,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.index_name <> kdd.winning_index_name
     AND   ia.action = N'MERGE INCLUDES'
     AND   ia.consolidation_rule = N'Key Duplicate'
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update the winning index's superseded_by to list all other indexes */
@@ -5100,7 +4610,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ia.scope_hash = kdd.scope_hash
       AND ia.key_filter_hash = kdd.key_filter_hash
     WHERE ia.index_name = kdd.winning_index_name
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Merge all included columns from Key Duplicate indexes into the winning index */
@@ -5109,64 +4618,88 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Merging included columns from Key Duplicate indexes', 0, 0) WITH NOWAIT;
     END;
 
-    /*
-    Merge every disabled duplicate's includes into the winner.
-
-    This reads #index_details rather than splitting the winner's and losers'
-    included_columns strings apart on ', '. That delimiter is ambiguous: a column
-    name is allowed to contain a comma and a space, so [Last, First] used to tear
-    into [Last and First], and the DISTINCT sort could then slot another column
-    between the halves - emitting INCLUDE ([col_b], [Last, [zzz], First]), which
-    fails with Msg 102 while the paired DISABLE of the loser still runs.
-
-    #index_details already holds one row per column, so there is nothing to parse
-    and nothing to re-escape. Winner and losers share key_filter_hash, meaning
-    identical keys, and SQL Server will not let a key column also be an include,
-    so no key-column exclusion is needed here.
-    */
+    WITH
+        KeyDuplicateIncludes AS
+    (
+        SELECT
+            winner.database_id,
+            winner.object_id,
+            winner.index_id,
+            winner.index_name,
+            winner.index_hash,
+            winner.included_columns AS winner_includes,
+            loser.included_columns AS loser_includes
+        FROM #index_analysis AS winner
+        JOIN #key_duplicate_dedupe AS kdd
+          ON  winner.scope_hash = kdd.scope_hash
+          AND winner.key_filter_hash = kdd.key_filter_hash
+          AND winner.index_name = kdd.winning_index_name
+        JOIN #index_analysis AS loser
+          ON  loser.scope_hash = kdd.scope_hash
+          AND loser.key_filter_hash = kdd.key_filter_hash
+          AND loser.index_name <> kdd.winning_index_name
+          AND loser.action = N'DISABLE'
+          AND loser.consolidation_rule = N'Key Duplicate'
+        WHERE winner.action = N'MERGE INCLUDES'
+        AND   winner.consolidation_rule = N'Key Duplicate'
+    )
     UPDATE
         ia
     SET
         ia.included_columns =
-            STUFF
-            (
-                (
-                    SELECT
-                        N', ' +
-                        QUOTENAME(idc.column_name)
-                    FROM #index_details AS idc
-                    WHERE idc.is_included_column = 1
-                    AND
+        (
+            SELECT
+                /* Combine all includes from winner and all losers, removing duplicates */
+                combined_cols =
+                    STUFF
                     (
-                        /* The winner's own includes */
-                        idc.index_hash = ia.index_hash
-                        /* Plus every duplicate it is about to disable */
-                        OR EXISTS
-                           (
-                               SELECT
-                                   1/0
-                               FROM #index_analysis AS loser
-                               WHERE loser.scope_hash = ia.scope_hash
-                               AND   loser.key_filter_hash = ia.key_filter_hash
-                               AND   loser.index_name <> ia.index_name
-                               AND   loser.action = N'DISABLE'
-                               AND   loser.consolidation_rule = N'Key Duplicate'
-                               AND   loser.index_hash = idc.index_hash
-                           )
+                        (
+                            SELECT DISTINCT
+                                N', ' +
+                                t.c.value('.', 'sysname')
+                            FROM
+                            (
+                                /* Create XML from winner's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(ISNULL(kdi.winner_includes, N''), N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                FROM KeyDuplicateIncludes AS kdi
+                                WHERE kdi.index_hash = ia.index_hash
+                                AND   kdi.winner_includes IS NOT NULL
+
+                                UNION ALL
+
+                                /* Create XML from each loser's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(kdi.loser_includes, N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                FROM KeyDuplicateIncludes AS kdi
+                                WHERE kdi.index_hash = ia.index_hash
+                                AND   kdi.loser_includes IS NOT NULL
+                            ) AS a
+                            /* Split XML into individual columns */
+                            CROSS APPLY a.x.nodes('/c') AS t(c)
+                            /* Filter out empty strings that can result from NULL handling */
+                            WHERE LEN(t.c.value('.', 'sysname')) > 0
+                            FOR
+                                XML
+                                PATH('')
+                        ),
+                        1,
+                        2,
+                        ''
                     )
-                    GROUP BY
-                        idc.column_name
-                    ORDER BY
-                        idc.column_name
-                    FOR
-                        XML
-                        PATH(''),
-                        TYPE
-                ).value('text()[1]', 'nvarchar(max)'),
-                1,
-                2,
-                N''
-            )
+        )
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
     AND   ia.consolidation_rule = N'Key Duplicate'
@@ -5178,7 +4711,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE kdd.scope_hash = ia.scope_hash
         AND   kdd.winning_index_name = ia.index_name
     )
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert Key Duplicate winners into #merged_includes so they get MERGE scripts */
@@ -5221,150 +4753,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   loser.included_columns IS NOT NULL
         AND   ISNULL(loser.included_columns, N'') <> ISNULL(ia.included_columns, N'')
     )
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
-
-    /*
-    Rule 5 settles a unique-vs-non-unique key duplicate in a single pass: the
-    unique index is marked MERGE INCLUDES and the non-unique loser is marked
-    DISABLE immediately. That leaves the group holding exactly one MERGE INCLUDES
-    row, and #key_duplicate_dedupe above only collects groups holding more than
-    one (HAVING COUNT_BIG(*) > 1), so nothing ever merged the loser's includes
-    into the winner. The winner was then downgraded to KEEP further down for
-    having no merged includes, while the loser's DISABLE still ran: any include
-    the winner did not already carry was silently dropped.
-
-    Rule 5 excludes unique constraints on both sides, so a winner reaching here
-    is always a plain unique index. Unlike a constraint-backed index (Msg 1907),
-    that accepts CREATE UNIQUE INDEX ... INCLUDE (...) WITH (DROP_EXISTING = ON),
-    so the merge is safe to emit.
-
-    Includes come from #index_details, one row per column, rather than from
-    splitting included_columns on ', ' - a column name may legally contain a
-    comma and a space, which made that delimiter ambiguous.
-
-    Only rows whose merged list actually differs from what the winner already
-    covers are recorded. When a loser's includes are a subset of the winner's,
-    the existing KEEP plus the loser's DISABLE is already correct, and emitting a
-    rebuild that changes nothing would be noise.
-    */
-    INSERT INTO
-        #merged_includes
-    WITH
-        (TABLOCK)
-    (
-        scope_hash,
-        index_name,
-        key_columns,
-        merged_includes
-    )
-    SELECT
-        kd.scope_hash,
-        kd.index_name,
-        kd.key_columns,
-        kd.merged_includes
-    FROM
-    (
-        SELECT
-            ia.scope_hash,
-            ia.index_name,
-            ia.key_columns,
-            original_includes = ia.included_columns,
-            merged_includes =
-                STUFF
-                (
-                    (
-                        SELECT
-                            N', ' +
-                            QUOTENAME(idc.column_name)
-                        FROM #index_details AS idc
-                        WHERE idc.is_included_column = 1
-                        AND
-                        (
-                            /* The winner's own includes */
-                            idc.index_hash = ia.index_hash
-                            /* Plus every duplicate it is about to disable */
-                            OR EXISTS
-                               (
-                                   SELECT
-                                       1/0
-                                   FROM #index_analysis AS loser
-                                   WHERE loser.scope_hash = ia.scope_hash
-                                   AND   loser.key_filter_hash = ia.key_filter_hash
-                                   AND   loser.target_index_name = ia.index_name
-                                   AND   loser.action = N'DISABLE'
-                                   AND   loser.consolidation_rule = N'Key Duplicate'
-                                   AND   loser.index_hash = idc.index_hash
-                               )
-                        )
-                        GROUP BY
-                            idc.column_name
-                        ORDER BY
-                            idc.column_name
-                        FOR
-                            XML
-                            PATH(''),
-                            TYPE
-                    ).value('text()[1]', 'nvarchar(max)'),
-                    1,
-                    2,
-                    N''
-                )
-        FROM #index_analysis AS ia
-        WHERE ia.action = N'MERGE INCLUDES'
-        AND   ia.consolidation_rule = N'Key Duplicate'
-        /* Leave the multi-winner groups handled above alone */
-        AND   NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #merged_includes AS mi
-            WHERE mi.scope_hash = ia.scope_hash
-            AND   mi.index_name = ia.index_name
-        )
-        AND   EXISTS
-        (
-            SELECT
-                1/0
-            FROM #index_analysis AS loser_check
-            WHERE loser_check.scope_hash = ia.scope_hash
-            AND   loser_check.key_filter_hash = ia.key_filter_hash
-            AND   loser_check.target_index_name = ia.index_name
-            AND   loser_check.action = N'DISABLE'
-            AND   loser_check.consolidation_rule = N'Key Duplicate'
-            AND   loser_check.included_columns IS NOT NULL
-        )
-        AND   ia.database_id = @current_database_id
-    ) AS kd
-    WHERE ISNULL(kd.merged_includes, N'') <> ISNULL(kd.original_includes, N'')
-    OPTION(RECOMPILE);
-
-    /*
-    Apply them. Winners handled by the multi-winner path above already carry
-    their merged list, so this only moves the single-winner rows just recorded.
-    */
-    UPDATE
-        ia
-    SET
-        ia.included_columns = mi.merged_includes
-    FROM #index_analysis AS ia
-    JOIN #merged_includes AS mi
-      ON  mi.scope_hash = ia.scope_hash
-      AND mi.index_name = ia.index_name
-    WHERE ia.action = N'MERGE INCLUDES'
-    AND   ia.consolidation_rule = N'Key Duplicate'
-    AND   ISNULL(ia.included_columns, N'') <> ISNULL(mi.merged_includes, N'')
-    AND   ia.database_id = @current_database_id
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_analysis after single-winner key duplicate merge',
-            ia.*
-        FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-    END;
 
     /* Find indexes with same key columns where one has includes that are a subset of another */
     IF @debug = 1
@@ -5413,7 +4802,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OR ia2.included_columns IS NULL
         OR LEN(ia1.included_columns) < LEN(ia2.included_columns)
       )
-    WHERE ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update the subset indexes to be disabled, since supersets already contain their columns */
@@ -5432,7 +4820,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #include_subset_dedupe AS isd
       ON  ia.scope_hash = isd.scope_hash
       AND ia.index_name = isd.subset_index_name
-    WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update the superset indexes to indicate they supersede the subset indexes */
@@ -5452,7 +4839,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #include_subset_dedupe AS isd
       ON  ia.scope_hash = isd.scope_hash
       AND ia.index_name = isd.superset_index_name
-    WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update winning indexes that don't actually need changes to have action = N'KEEP' */
@@ -5473,7 +4859,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE mi.scope_hash = ia.scope_hash
         AND   mi.index_name = ia.index_name
     )
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert merge scripts for indexes */
@@ -5644,50 +5029,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     /* Only create merge scripts for the indexes that should remain after merging */
     AND   ia.target_index_name IS NULL
-    /*
-    Backstop behind the Rule 3 target exclusions: CREATE INDEX ... WITH
-    (DROP_EXISTING = ON) can never succeed against a constraint-backed
-    index (Msg 1907), so no matter what upstream rules decide, never
-    emit a merge script for one.
-
-    "Constraint-backed" means a primary key as well as a unique
-    constraint. is_unique_constraint is 0 for a primary key, so testing
-    it alone left PKs unguarded here.
-    */
-    AND NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id_uc_guard
-        WHERE id_uc_guard.index_hash = ia.index_hash
-        AND
-        (
-             id_uc_guard.is_unique_constraint = 1
-          OR id_uc_guard.is_primary_key = 1
-        )
-    )
-    /*
-    Second backstop, behind the Rule 7 / 7.5 guards: any script that
-    comes out of here as CREATE UNIQUE must not partition on a column
-    outside its own key, or SQL Server rejects it with Msg 1908 — and
-    the paired DROP CONSTRAINT would still succeed, leaving the table
-    with no uniqueness at all.
-    */
-    AND
-    (
-           ia.action <> N'MAKE UNIQUE'
-       AND ia.is_unique = 0
-        OR NOT EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #partition_stats AS ps_uq_guard
-               WHERE ps_uq_guard.index_hash = ia.index_hash
-               AND   ps_uq_guard.partition_columns IS NOT NULL
-               AND   CHARINDEX(ps_uq_guard.partition_columns, ia.key_columns) = 0
-           )
-    )
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Debug which indexes are getting MERGE scripts */
@@ -5864,29 +5205,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ia.action = N'DISABLE'
-    /*
-    Exclude unique constraints - they are handled by DISABLE CONSTRAINT scripts.
-
-    Primary keys are excluded here too, but they are NOT rerouted to that
-    path: a unique constraint can legitimately be replaced by a promoted
-    nonclustered index and dropped, a primary key never can. Excluding one
-    here means it gets no script at all, which is the only safe answer.
-    ALTER INDEX ... DISABLE against a primary key does not error - it
-    succeeds, and silently disables every foreign key referencing it, after
-    which orphan rows insert cleanly. A script that succeeds while being
-    wrong is the worst thing this procedure can emit.
-    */
+    /* Exclude unique constraints - they are handled by DISABLE CONSTRAINT scripts */
     AND NOT EXISTS
     (
         SELECT
             1/0
         FROM #index_details AS id_uc
         WHERE id_uc.index_hash = ia.index_hash
-        AND
-        (
-             id_uc.is_unique_constraint = 1
-          OR id_uc.is_primary_key = 1
-        )
+        AND   id_uc.is_unique_constraint = 1
     )
     /* Also exclude any index that is also going to be made unique in rule 7.5 */
     AND NOT EXISTS
@@ -5898,7 +5224,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_unique.index_name = ia.index_name
         AND   ia_unique.action = N'MAKE UNIQUE'
     )
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Add clustered indexes to #index_analysis specifically for compression purposes */
@@ -5957,13 +5282,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2.object_id = fo.object_id
                 AND   id2.index_id = fo.index_id
                 AND   id2.is_included_column = 0
-                /*
-                   A partitioned index's partitioning column rides along at
-                   key_ordinal = 0 when it is not a real key. Without this it was
-                   emitted as a phantom LEADING key, corrupting rebuilt indexes
-                   and poisoning duplicate/subset hashing.
-                */
-                AND   id2.key_ordinal > 0
                 GROUP BY
                     id2.column_name,
                     id2.is_descending_key,
@@ -6016,13 +5334,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHERE id2.object_id = fo.object_id
                         AND   id2.index_id = fo.index_id
                         AND   id2.is_included_column = 0
-                        /*
-                           A partitioned index's partitioning column rides along at
-                           key_ordinal = 0 when it is not a real key. Without this it was
-                           emitted as a phantom LEADING key, corrupting rebuilt indexes
-                           and poisoning duplicate/subset hashing.
-                        */
-                        AND   id2.key_ordinal > 0
                         GROUP BY
                             id2.column_name,
                             id2.is_descending_key,
@@ -6083,13 +5394,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHERE id2.object_id = fo.object_id
                     AND   id2.index_id = fo.index_id
                     AND   id2.is_included_column = 0
-                    /*
-                       A partitioned index's partitioning column rides along at
-                       key_ordinal = 0 when it is not a real key. Without this it was
-                       emitted as a phantom LEADING key, corrupting rebuilt indexes
-                       and poisoning duplicate/subset hashing.
-                    */
-                    AND   id2.key_ordinal > 0
                     GROUP BY
                         id2.column_name,
                         id2.is_descending_key,
@@ -6159,7 +5463,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       OR id.is_primary_key = 1
     )
     AND   ce.can_compress = 1 /* Only those eligible for compression */
-    AND   fo.database_id = @current_database_id
     /* Only add if not already in #index_analysis */
     AND   NOT EXISTS
     (
@@ -6178,8 +5481,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SET
         #index_analysis.action = N'KEEP'
     WHERE #index_analysis.index_id = 1 /* Clustered indexes */
-    AND   #index_analysis.action IS NULL
-    AND   #index_analysis.database_id = @current_database_id;
+    AND   #index_analysis.action IS NULL;
 
     /* Update index priority for clustered indexes to ensure they're not chosen for deduplication */
     UPDATE
@@ -6187,8 +5489,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SET
         #index_analysis.index_priority = 1000 /* Maximum priority */
     WHERE #index_analysis.index_id = 1 /* Clustered indexes */
-    AND   #index_analysis.index_priority IS NULL
-    AND   #index_analysis.database_id = @current_database_id;
+    AND   #index_analysis.index_priority IS NULL;
 
     IF @debug = 1
     BEGIN
@@ -6321,7 +5622,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
     AND  ce.can_compress = 1
-    AND  ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert disable scripts for unique constraints */
@@ -6397,7 +5697,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_uc.action = N'DISABLE'
         /* That have consolidation_rule of 'Unique Constraint Replacement' */
         AND ia_uc.consolidation_rule = N'Unique Constraint Replacement'
-        AND ia_uc.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert per-partition compression scripts */
@@ -6523,7 +5822,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND  (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
     AND   ce.can_compress = 1
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert compression ineligible info */
@@ -6587,7 +5885,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ce.can_compress = 0
-    AND   ce.database_id = @current_database_id
     OPTION(RECOMPILE);
 
 
@@ -6651,7 +5948,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ia.action = N'REVIEW'
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
 
@@ -6808,7 +6104,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.index_id > 0
         )
     )
-    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /*
@@ -7518,9 +6813,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             schema_name = 'ALWAYS TEST THESE RECOMMENDATIONS',
             table_name = 'IN A NON-PRODUCTION ENVIRONMENT FIRST!',
-            /* ISNULL to match the DATABASE and TABLE levels below: an
-               empty scope rendered this as NULL instead of 0 */
-            tables_analyzed = FORMAT(ISNULL(irs.tables_analyzed, 0), 'N0'),
+            tables_analyzed = FORMAT(irs.tables_analyzed, 'N0'),
             total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
             removable_indexes = FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0'),
             mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
