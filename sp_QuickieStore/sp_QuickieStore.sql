@@ -103,6 +103,7 @@ ALTER PROCEDURE
     @include_maintenance bit = 0, /*Set this bit to 1 to add maintenance operations such as index creation to the result set*/
     @find_high_impact bit = 0, /*finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions*/
     @primary_window nvarchar(20) = NULL, /*with @find_high_impact, restricts results to queries whose majority activity is in this window: business, off-hours, or weekend*/
+    @find_parameter_sensitive bit = 0, /*finds plan shapes whose runtime metrics swing wildly across executions of the same plan: classic parameter sensitivity*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -206,6 +207,7 @@ BEGIN
                 WHEN N'@include_maintenance' THEN N'Set this bit to 1 to add maintenance operations such as index creation to the result set'
                 WHEN N'@find_high_impact' THEN N'finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions'
                 WHEN N'@primary_window' THEN N'with @find_high_impact, restricts results to queries whose majority activity is in this window (business, off-hours, or weekend)'
+                WHEN N'@find_parameter_sensitive' THEN N'finds plan shapes whose runtime metrics swing wildly across executions of the same plan: classic parameter sensitivity'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
@@ -269,6 +271,7 @@ BEGIN
                 WHEN N'@include_maintenance' THEN N'0 or 1'
                 WHEN N'@find_high_impact' THEN N'0 or 1'
                 WHEN N'@primary_window' THEN N'business, off-hours, or weekend (any unambiguous prefix works: b, biz, off, overnight, w, wknd, etc.)'
+                WHEN N'@find_parameter_sensitive' THEN N'0 or 1'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
@@ -332,6 +335,7 @@ BEGIN
                 WHEN N'@include_maintenance' THEN N'0'
                 WHEN N'@find_high_impact' THEN N'0'
                 WHEN N'@primary_window' THEN N'NULL'
+                WHEN N'@find_parameter_sensitive' THEN N'0'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
                 WHEN N'@troubleshoot_performance' THEN '0'
@@ -471,6 +475,66 @@ BEGIN
     SELECT 'recommendation: actionable guidance based on the workload profile.' UNION ALL
     SELECT '    For flat workloads: consider forced parameterization, look for missing schema prefixes,' UNION ALL
     SELECT '    temp table patterns causing recompilation, or RECOMPILE hints generating unique plans.';
+
+    /*
+    Parameter Sensitive column guide
+    */
+    SELECT
+        parameter_sensitive_columns =
+           'when using @find_parameter_sensitive = 1, results are one row per plan shape (query_hash + query_plan_hash) with these columns:' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'a plan shape groups every plan_id that compiled to the same query_plan_hash for the same query_hash,' UNION ALL
+    SELECT '    so recompiles of the same plan are analyzed together. Wild metric swings within one shape mean' UNION ALL
+    SELECT '    the same plan is fast for some parameter values and slow for others: classic parameter sensitivity.' UNION ALL
+    SELECT '    Only regular executions feed the statistics; aborted and exception executions are counted separately.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'database_name: the database being analyzed' UNION ALL
+    SELECT 'start_date, end_date: the time window analyzed' UNION ALL
+    SELECT 'object_name: the stored procedure, function, or trigger this query belongs to, or "Adhoc" for ad hoc SQL' UNION ALL
+    SELECT 'query_sql_text: representative query text (the most-executed query_id in this shape)' UNION ALL
+    SELECT 'query_plan: the most recently executed plan (XML) for this shape' UNION ALL
+    SELECT 'top_waits: top 3 Query Store wait categories for this shape (SQL 2017+ with wait stats enabled, omitted otherwise)' UNION ALL
+    SELECT 'query_hash, query_plan_hash: the grouping keys' UNION ALL
+    SELECT 'query_count, plan_count: distinct query_ids and plan_ids that make up this shape' UNION ALL
+    SELECT 'shapes_for_query_hash: how many distinct plan shapes this query_hash has overall.' UNION ALL
+    SELECT '    1 shape with high volatility = one plan that cannot serve every parameter value.' UNION ALL
+    SELECT '    Multiple shapes = the optimizer also flips plans; check the other shapes'' averages in signals.' UNION ALL
+    SELECT 'query_id_list, plan_id_list: comma-separated IDs for drilling into Query Store views' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'ranked_on, volatility_score: results are ranked by the coefficient of variation (stdev / average) of the' UNION ALL
+    SELECT '    @sort_order metric (cpu, duration, physical reads, writes, memory, rows, tempdb; anything else = cpu).' UNION ALL
+    SELECT '    The stdev is properly combined across runtime stat intervals, weighted by executions, so one weird' UNION ALL
+    SELECT '    interval does not dominate. 0 = perfectly stable, 1 = the stdev equals the average, bigger = wilder.' UNION ALL
+    SELECT 'signals: rule-based reads on the swings. Nx means max is N times min for that metric' UNION ALL
+    SELECT '    (tiny mins are floored at 0.001 ms / 1 row first, so extreme ratios are lower bounds):' UNION ALL
+    SELECT '    parameter sensitive (cpu Nx, rows Nx) - big cpu swings while rows barely move. The plan does wildly' UNION ALL
+    SELECT '        different amounts of work for similar-sized results: the strongest sniffing signal.' UNION ALL
+    SELECT '    row driven (cpu Nx, rows Nx) - cpu swings track row count swings. Work scales with honest data volume,' UNION ALL
+    SELECT '        so this is probably not a parameter sensitivity problem.' UNION ALL
+    SELECT '    intermittent waits (duration Nx, cpu Nx) - duration swings without cpu swings: blocking, grants, or I/O,' UNION ALL
+    SELECT '        not parameter sensitivity. Check top_waits.' UNION ALL
+    SELECT '    memory grant swings (Nx) / tempdb swings (Nx) - grant or spill behavior varies between executions.' UNION ALL
+    SELECT '    timed out N times / errored N times - aborted (client timeout/cancel) and exception executions.' UNION ALL
+    SELECT '        Timeouts on a volatile shape are often the bad-parameter executions themselves.' UNION ALL
+    SELECT '    psp variants involved (2022+) - Parameter Sensitive Plan optimization already dispatched variants here.' UNION ALL
+    SELECT '    other plan shapes exist (N, avg cpu X to Y ms) - the same query_hash compiled to other shapes whose' UNION ALL
+    SELECT '        averages diverge: the optimizer is flipping between good and bad plans.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'total_executions, aborted_executions, exception_executions: execution counts for this shape in the window' UNION ALL
+    SELECT 'min/avg/max cpu, duration (ms) and rows, each with a volatility (coefficient of variation) column' UNION ALL
+    SELECT 'last_execution_time: the most recent regular execution of this shape in the time window' UNION ALL
+    SELECT 'variance_metrics: clickable XML rollup with min/avg/max/volatility for memory, physical reads, writes,' UNION ALL
+    SELECT '    and tempdb (2017+), plus max DOP. Click the column in SSMS to see the full breakdown.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'what this mode cannot tell you: Query Store never records which parameter values produced the min or max,' UNION ALL
+    SELECT '    so this convicts the query, not the values. Compare compiled parameter values across the plan_ids in' UNION ALL
+    SELECT '    plan_id_list, or use sp_HumanEvents to catch live executions with runtime parameter values.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'SHAPE VOLATILITY SUMMARY (separate result set, returned before the query details):' UNION ALL
+    SELECT 'total_shapes: how many plan shapes had regular executions in the time window' UNION ALL
+    SELECT 'shapes_past_floors: how many cleared the noise floors (executions and minimum cpu/duration)' UNION ALL
+    SELECT 'surfaced_shapes: how many made it into the detail result set after top-N ranking' UNION ALL
+    SELECT 'multi_shape_query_hashes: how many query_hashes compiled to more than one plan shape in the window';
 
     /*
     Limitations
@@ -782,6 +846,41 @@ AND @find_high_impact = 1
 )
 BEGIN
     RAISERROR('@log_to_table cannot be used with @find_high_impact. Run them separately.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+@find_parameter_sensitive is a takeover mode like @find_high_impact,
+so the two of them can't be combined, and it can't be combined with
+the things @find_high_impact can't be combined with either
+*/
+IF
+(
+    @find_parameter_sensitive = 1
+AND @find_high_impact = 1
+)
+BEGIN
+    RAISERROR('@find_parameter_sensitive cannot be used with @find_high_impact. Pick one mode per run.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+IF
+(
+    @find_parameter_sensitive = 1
+AND @get_all_databases = 1
+)
+BEGIN
+    RAISERROR('@find_parameter_sensitive cannot be used with @get_all_databases. Run @find_parameter_sensitive against each database individually.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+IF
+(
+    @log_to_table = 1
+AND @find_parameter_sensitive = 1
+)
+BEGIN
+    RAISERROR('@log_to_table cannot be used with @find_parameter_sensitive. Run them separately.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -4801,7 +4900,8 @@ BEGIN
     CREATE TABLE
         #hi_representative_text
     (
-        query_hash binary(8) NOT NULL,
+        query_hash binary(8) NOT NULL
+            PRIMARY KEY CLUSTERED,
         query_sql_text nvarchar(max) NULL,
         rn bigint NOT NULL
     );
@@ -4836,7 +4936,9 @@ BEGIN
         query_hash binary(8) NOT NULL,
         wait_category_desc nvarchar(60) NOT NULL,
         total_wait_ms decimal(38, 6) NOT NULL,
-        rn bigint NOT NULL
+        rn bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, rn)
     );
 
     CREATE TABLE
@@ -4853,21 +4955,27 @@ BEGIN
         #hi_id_staging_queries
     (
         query_hash binary(8) NOT NULL,
-        query_id bigint NOT NULL
+        query_id bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_id)
     );
 
     CREATE TABLE
         #hi_id_staging_plans
     (
         query_hash binary(8) NOT NULL,
-        plan_id bigint NOT NULL
+        plan_id bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, plan_id)
     );
 
     CREATE TABLE
         #hi_id_staging_objects
     (
         query_hash binary(8) NOT NULL,
-        object_id integer NOT NULL
+        object_id integer NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, object_id)
     );
 
     CREATE TABLE
@@ -5970,6 +6078,8 @@ OPTION(RECOMPILE);' + @nc10;
                                 so.object_id
                             FROM #hi_id_staging_objects AS so
                             WHERE so.query_hash = i.query_hash
+                            ORDER BY
+                                so.object_id
                         ),
                         @database_id
                     )
@@ -5984,6 +6094,8 @@ OPTION(RECOMPILE);' + @nc10;
                                 so.object_id
                             FROM #hi_id_staging_objects AS so
                             WHERE so.query_hash = i.query_hash
+                            ORDER BY
+                                so.object_id
                         ),
                         @database_id
                     )
@@ -6900,6 +7012,1734 @@ OPTION(RECOMPILE);' + @nc10;
         RETURN;
     END;
 END; /*End @find_high_impact*/
+
+/*
+Find parameter sensitive queries: plan shapes (query_hash + query_plan_hash)
+whose runtime metrics swing wildly across executions of the same plan.
+Groups every plan_id that compiled to the same shape, computes a proper
+execution-weighted coefficient of variation from the stdev columns, and
+ranks shapes by how unpredictable the @sort_order metric is.
+*/
+IF @find_parameter_sensitive = 1
+BEGIN
+    /*Create temp tables for parameter sensitivity analysis*/
+    CREATE TABLE
+        #ps_intervals
+    (
+        runtime_stats_interval_id bigint NOT NULL
+            PRIMARY KEY CLUSTERED
+    );
+
+    CREATE TABLE
+        #ps_shape_stats
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_count bigint NOT NULL,
+        plan_count bigint NOT NULL,
+        last_execution_time datetimeoffset(7) NULL,
+        total_executions bigint NOT NULL,
+        aborted_executions bigint NOT NULL,
+        exception_executions bigint NOT NULL,
+        total_cpu_ms decimal(38, 6) NULL,
+        min_cpu_ms decimal(38, 6) NULL,
+        avg_cpu_ms decimal(38, 6) NULL,
+        max_cpu_ms decimal(38, 6) NULL,
+        cpu_volatility decimal(19, 4) NULL,
+        total_duration_ms decimal(38, 6) NULL,
+        min_duration_ms decimal(38, 6) NULL,
+        avg_duration_ms decimal(38, 6) NULL,
+        max_duration_ms decimal(38, 6) NULL,
+        duration_volatility decimal(19, 4) NULL,
+        min_rows bigint NULL,
+        avg_rows decimal(38, 6) NULL,
+        max_rows bigint NULL,
+        rows_volatility decimal(19, 4) NULL,
+        min_memory_mb decimal(38, 6) NULL,
+        avg_memory_mb decimal(38, 6) NULL,
+        max_memory_mb decimal(38, 6) NULL,
+        memory_volatility decimal(19, 4) NULL,
+        min_physical_reads_mb decimal(38, 6) NULL,
+        avg_physical_reads_mb decimal(38, 6) NULL,
+        max_physical_reads_mb decimal(38, 6) NULL,
+        physical_reads_volatility decimal(19, 4) NULL,
+        min_writes_mb decimal(38, 6) NULL,
+        avg_writes_mb decimal(38, 6) NULL,
+        max_writes_mb decimal(38, 6) NULL,
+        writes_volatility decimal(19, 4) NULL,
+        min_tempdb_mb decimal(38, 6) NULL,
+        avg_tempdb_mb decimal(38, 6) NULL,
+        max_tempdb_mb decimal(38, 6) NULL,
+        tempdb_volatility decimal(19, 4) NULL,
+        max_dop bigint NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_query_rollup
+    (
+        query_hash binary(8) NOT NULL
+            PRIMARY KEY CLUSTERED,
+        shape_count bigint NOT NULL,
+        min_shape_avg_cpu_ms decimal(38, 6) NULL,
+        max_shape_avg_cpu_ms decimal(38, 6) NULL
+    );
+
+    CREATE TABLE
+        #ps_interesting
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_id_staging
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_id bigint NOT NULL,
+        plan_id bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash, query_id, plan_id)
+    );
+
+    CREATE TABLE
+        #ps_representative_text
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_sql_text nvarchar(max) NULL,
+        rn bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_object_staging
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        object_id integer NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash, object_id)
+    );
+
+    CREATE TABLE
+        #ps_wait_staging
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        wait_category_desc nvarchar(60) NOT NULL,
+        total_wait_ms decimal(38, 6) NOT NULL,
+        rn bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash, rn)
+    );
+
+    CREATE TABLE
+        #ps_shape_waits
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        top_waits nvarchar(max) NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_variant_flags
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        has_variants bit NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_identifiers
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_id_list nvarchar(max) NULL,
+        plan_id_list nvarchar(max) NULL,
+        object_name nvarchar(500) NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_output
+    (
+        object_name nvarchar(500) NULL,
+        query_sql_text nvarchar(max) NULL,
+        top_waits nvarchar(max) NULL,
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_count bigint NOT NULL,
+        plan_count bigint NOT NULL,
+        shapes_for_query_hash bigint NOT NULL,
+        query_id_list nvarchar(max) NULL,
+        plan_id_list nvarchar(max) NULL,
+        ranked_on nvarchar(40) NOT NULL,
+        volatility_score decimal(19, 4) NULL,
+        signals nvarchar(4000) NULL,
+        total_executions bigint NOT NULL,
+        aborted_executions bigint NOT NULL,
+        exception_executions bigint NOT NULL,
+        min_cpu_ms decimal(38, 6) NULL,
+        avg_cpu_ms decimal(38, 6) NULL,
+        max_cpu_ms decimal(38, 6) NULL,
+        cpu_volatility decimal(19, 4) NULL,
+        min_duration_ms decimal(38, 6) NULL,
+        avg_duration_ms decimal(38, 6) NULL,
+        max_duration_ms decimal(38, 6) NULL,
+        duration_volatility decimal(19, 4) NULL,
+        min_rows bigint NULL,
+        avg_rows decimal(38, 6) NULL,
+        max_rows bigint NULL,
+        rows_volatility decimal(19, 4) NULL,
+        last_execution_time datetimeoffset(7) NULL,
+        variance_metrics xml NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    /*
+    Local knobs: minimum executions for variance to mean anything,
+    and which metric's volatility ranks the results
+    */
+    DECLARE
+        @ps_min_executions bigint =
+            ISNULL(@execution_count, 2),
+        @ps_rank_metric nvarchar(20) =
+            CASE
+                WHEN @sort_order IN
+                     (
+                         'duration',
+                         'physical reads',
+                         'writes',
+                         'memory',
+                         'rows'
+                     )
+                THEN @sort_order
+                WHEN @sort_order = 'tempdb'
+                 AND @new = 1
+                THEN @sort_order
+                ELSE N'cpu'
+            END;
+
+    /*Step 1a: Stage interval IDs for the time window*/
+    SELECT
+        @current_table = 'inserting #ps_intervals',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    qsrsi.runtime_stats_interval_id
+FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats_interval AS qsrsi
+WHERE qsrsi.start_time >= @start_date
+AND   qsrsi.start_time <  @end_date
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_intervals WITH (TABLOCK)
+    (
+        runtime_stats_interval_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @start_date,
+        @end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*
+    Step 1b: Aggregate runtime stats to plan shape level.
+    Only regular executions (execution_type = 0) feed the statistics,
+    because aborted executions have truncated metrics that poison
+    min/max and stdev; they get counted separately instead.
+    The variance combination is the standard execution-weighted
+    formula: combined variance = SUM(n * (stdev^2 + avg^2)) / SUM(n)
+    minus the square of the combined average, computed in float
+    because the native microsecond values squared overflow decimals.
+    */
+    SELECT
+        @current_table = 'inserting #ps_shape_stats',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    x.query_hash,
+    x.query_plan_hash,
+    x.query_count,
+    x.plan_count,
+    x.last_execution_time,
+    total_executions = x.n,
+    x.aborted_executions,
+    x.exception_executions,
+    total_cpu_ms =
+        CONVERT(decimal(38, 6), x.cpu_sum / 1000.0),
+    min_cpu_ms =
+        CONVERT(decimal(38, 6), x.cpu_min / 1000.0),
+    avg_cpu_ms =
+        CONVERT(decimal(38, 6), x.cpu_sum / v.n_float / 1000.0),
+    max_cpu_ms =
+        CONVERT(decimal(38, 6), x.cpu_max / 1000.0),
+    cpu_volatility =
+        CONVERT
+        (
+            decimal(19, 4),
+            SQRT
+            (
+                CASE
+                    WHEN (x.cpu_ex2 / v.n_float) - POWER(x.cpu_sum / v.n_float, 2) < 0
+                    THEN 0
+                    ELSE (x.cpu_ex2 / v.n_float) - POWER(x.cpu_sum / v.n_float, 2)
+                END
+            ) /
+            NULLIF(x.cpu_sum / v.n_float, 0)
+        ),
+    total_duration_ms =
+        CONVERT(decimal(38, 6), x.duration_sum / 1000.0),
+    min_duration_ms =
+        CONVERT(decimal(38, 6), x.duration_min / 1000.0),
+    avg_duration_ms =
+        CONVERT(decimal(38, 6), x.duration_sum / v.n_float / 1000.0),
+    max_duration_ms =
+        CONVERT(decimal(38, 6), x.duration_max / 1000.0),
+    duration_volatility =
+        CONVERT
+        (
+            decimal(19, 4),
+            SQRT
+            (
+                CASE
+                    WHEN (x.duration_ex2 / v.n_float) - POWER(x.duration_sum / v.n_float, 2) < 0
+                    THEN 0
+                    ELSE (x.duration_ex2 / v.n_float) - POWER(x.duration_sum / v.n_float, 2)
+                END
+            ) /
+            NULLIF(x.duration_sum / v.n_float, 0)
+        ),
+    min_rows =
+        CONVERT(bigint, x.rows_min),
+    avg_rows =
+        CONVERT(decimal(38, 6), x.rows_sum / v.n_float),
+    max_rows =
+        CONVERT(bigint, x.rows_max),
+    rows_volatility =
+        CONVERT
+        (
+            decimal(19, 4),
+            SQRT
+            (
+                CASE
+                    WHEN (x.rows_ex2 / v.n_float) - POWER(x.rows_sum / v.n_float, 2) < 0
+                    THEN 0
+                    ELSE (x.rows_ex2 / v.n_float) - POWER(x.rows_sum / v.n_float, 2)
+                END
+            ) /
+            NULLIF(x.rows_sum / v.n_float, 0)
+        ),
+    min_memory_mb =
+        CONVERT(decimal(38, 6), x.memory_min * 8.0 / 1024.0),
+    avg_memory_mb =
+        CONVERT(decimal(38, 6), x.memory_sum / v.n_float * 8.0 / 1024.0),
+    max_memory_mb =
+        CONVERT(decimal(38, 6), x.memory_max * 8.0 / 1024.0),
+    memory_volatility =
+        CONVERT
+        (
+            decimal(19, 4),
+            SQRT
+            (
+                CASE
+                    WHEN (x.memory_ex2 / v.n_float) - POWER(x.memory_sum / v.n_float, 2) < 0
+                    THEN 0
+                    ELSE (x.memory_ex2 / v.n_float) - POWER(x.memory_sum / v.n_float, 2)
+                END
+            ) /
+            NULLIF(x.memory_sum / v.n_float, 0)
+        ),
+    min_physical_reads_mb =
+        CONVERT(decimal(38, 6), x.physical_reads_min * 8.0 / 1024.0),
+    avg_physical_reads_mb =
+        CONVERT(decimal(38, 6), x.physical_reads_sum / v.n_float * 8.0 / 1024.0),
+    max_physical_reads_mb =
+        CONVERT(decimal(38, 6), x.physical_reads_max * 8.0 / 1024.0),
+    physical_reads_volatility =
+        CONVERT
+        (
+            decimal(19, 4),
+            SQRT
+            (
+                CASE
+                    WHEN (x.physical_reads_ex2 / v.n_float) - POWER(x.physical_reads_sum / v.n_float, 2) < 0
+                    THEN 0
+                    ELSE (x.physical_reads_ex2 / v.n_float) - POWER(x.physical_reads_sum / v.n_float, 2)
+                END
+            ) /
+            NULLIF(x.physical_reads_sum / v.n_float, 0)
+        ),
+    min_writes_mb =
+        CONVERT(decimal(38, 6), x.writes_min * 8.0 / 1024.0),
+    avg_writes_mb =
+        CONVERT(decimal(38, 6), x.writes_sum / v.n_float * 8.0 / 1024.0),
+    max_writes_mb =
+        CONVERT(decimal(38, 6), x.writes_max * 8.0 / 1024.0),
+    writes_volatility =
+        CONVERT
+        (
+            decimal(19, 4),
+            SQRT
+            (
+                CASE
+                    WHEN (x.writes_ex2 / v.n_float) - POWER(x.writes_sum / v.n_float, 2) < 0
+                    THEN 0
+                    ELSE (x.writes_ex2 / v.n_float) - POWER(x.writes_sum / v.n_float, 2)
+                END
+            ) /
+            NULLIF(x.writes_sum / v.n_float, 0)
+        ),
+    min_tempdb_mb =
+        CONVERT(decimal(38, 6), x.tempdb_min * 8.0 / 1024.0),
+    avg_tempdb_mb =
+        CONVERT(decimal(38, 6), x.tempdb_sum / v.n_float * 8.0 / 1024.0),
+    max_tempdb_mb =
+        CONVERT(decimal(38, 6), x.tempdb_max * 8.0 / 1024.0),
+    tempdb_volatility =
+        CONVERT
+        (
+            decimal(19, 4),
+            SQRT
+            (
+                CASE
+                    WHEN (x.tempdb_ex2 / v.n_float) - POWER(x.tempdb_sum / v.n_float, 2) < 0
+                    THEN 0
+                    ELSE (x.tempdb_ex2 / v.n_float) - POWER(x.tempdb_sum / v.n_float, 2)
+                END
+            ) /
+            NULLIF(x.tempdb_sum / v.n_float, 0)
+        ),
+    x.max_dop
+FROM
+(
+    SELECT
+        qsq.query_hash,
+        qsp.query_plan_hash,
+        query_count =
+            COUNT_BIG(DISTINCT CASE WHEN qsrs.execution_type = 0 THEN qsp.query_id END),
+        plan_count =
+            COUNT_BIG(DISTINCT CASE WHEN qsrs.execution_type = 0 THEN qsp.plan_id END),
+        last_execution_time =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.last_execution_time END),
+        n =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions ELSE 0 END),
+        aborted_executions =
+            SUM(CASE WHEN qsrs.execution_type = 3 THEN qsrs.count_executions ELSE 0 END),
+        exception_executions =
+            SUM(CASE WHEN qsrs.execution_type = 4 THEN qsrs.count_executions ELSE 0 END),
+        cpu_sum =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.avg_cpu_time * qsrs.count_executions END),
+        cpu_ex2 =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions * (qsrs.stdev_cpu_time * qsrs.stdev_cpu_time + qsrs.avg_cpu_time * qsrs.avg_cpu_time) END),
+        cpu_min =
+            MIN(CASE WHEN qsrs.execution_type = 0 THEN qsrs.min_cpu_time END),
+        cpu_max =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_cpu_time END),
+        duration_sum =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.avg_duration * qsrs.count_executions END),
+        duration_ex2 =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions * (qsrs.stdev_duration * qsrs.stdev_duration + qsrs.avg_duration * qsrs.avg_duration) END),
+        duration_min =
+            MIN(CASE WHEN qsrs.execution_type = 0 THEN qsrs.min_duration END),
+        duration_max =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_duration END),
+        rows_sum =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.avg_rowcount * qsrs.count_executions END),
+        rows_ex2 =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions * (qsrs.stdev_rowcount * qsrs.stdev_rowcount + qsrs.avg_rowcount * qsrs.avg_rowcount) END),
+        rows_min =
+            MIN(CASE WHEN qsrs.execution_type = 0 THEN qsrs.min_rowcount END),
+        rows_max =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_rowcount END),
+        memory_sum =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.avg_query_max_used_memory * qsrs.count_executions END),
+        memory_ex2 =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions * (qsrs.stdev_query_max_used_memory * qsrs.stdev_query_max_used_memory + qsrs.avg_query_max_used_memory * qsrs.avg_query_max_used_memory) END),
+        memory_min =
+            MIN(CASE WHEN qsrs.execution_type = 0 THEN qsrs.min_query_max_used_memory END),
+        memory_max =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_query_max_used_memory END),
+        physical_reads_sum =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.avg_physical_io_reads * qsrs.count_executions END),
+        physical_reads_ex2 =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions * (qsrs.stdev_physical_io_reads * qsrs.stdev_physical_io_reads + qsrs.avg_physical_io_reads * qsrs.avg_physical_io_reads) END),
+        physical_reads_min =
+            MIN(CASE WHEN qsrs.execution_type = 0 THEN qsrs.min_physical_io_reads END),
+        physical_reads_max =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_physical_io_reads END),
+        writes_sum =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.avg_logical_io_writes * qsrs.count_executions END),
+        writes_ex2 =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions * (qsrs.stdev_logical_io_writes * qsrs.stdev_logical_io_writes + qsrs.avg_logical_io_writes * qsrs.avg_logical_io_writes) END),
+        writes_min =
+            MIN(CASE WHEN qsrs.execution_type = 0 THEN qsrs.min_logical_io_writes END),
+        writes_max =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_logical_io_writes END),' +
+    CASE
+        WHEN @new = 1
+        THEN N'
+        tempdb_sum =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.avg_tempdb_space_used * qsrs.count_executions END),
+        tempdb_ex2 =
+            SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions * (qsrs.stdev_tempdb_space_used * qsrs.stdev_tempdb_space_used + qsrs.avg_tempdb_space_used * qsrs.avg_tempdb_space_used) END),
+        tempdb_min =
+            MIN(CASE WHEN qsrs.execution_type = 0 THEN qsrs.min_tempdb_space_used END),
+        tempdb_max =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_tempdb_space_used END),'
+        ELSE N'
+        /*NULL, not 0: a zero would render in variance_metrics as a real
+          measurement of no tempdb use, when the truth is the columns
+          do not exist before 2017. NULL attributes drop out of the XML.*/
+        tempdb_sum =
+            CONVERT(float, NULL),
+        tempdb_ex2 =
+            CONVERT(float, NULL),
+        tempdb_min =
+            CONVERT(float, NULL),
+        tempdb_max =
+            CONVERT(float, NULL),'
+    END + N'
+        max_dop =
+            MAX(CASE WHEN qsrs.execution_type = 0 THEN qsrs.max_dop END)
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+        ON qsp.plan_id = qsrs.plan_id
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+        ON qsq.query_id = qsp.query_id
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ps_intervals AS pi
+        WHERE pi.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+    )
+    GROUP BY
+        qsq.query_hash,
+        qsp.query_plan_hash
+    HAVING
+        SUM(CASE WHEN qsrs.execution_type = 0 THEN qsrs.count_executions ELSE 0 END) > 0
+) AS x
+CROSS APPLY
+(
+    VALUES
+        (CONVERT(float, x.n))
+) AS v (n_float)
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_shape_stats WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        query_count,
+        plan_count,
+        last_execution_time,
+        total_executions,
+        aborted_executions,
+        exception_executions,
+        total_cpu_ms,
+        min_cpu_ms,
+        avg_cpu_ms,
+        max_cpu_ms,
+        cpu_volatility,
+        total_duration_ms,
+        min_duration_ms,
+        avg_duration_ms,
+        max_duration_ms,
+        duration_volatility,
+        min_rows,
+        avg_rows,
+        max_rows,
+        rows_volatility,
+        min_memory_mb,
+        avg_memory_mb,
+        max_memory_mb,
+        memory_volatility,
+        min_physical_reads_mb,
+        avg_physical_reads_mb,
+        max_physical_reads_mb,
+        physical_reads_volatility,
+        min_writes_mb,
+        avg_writes_mb,
+        max_writes_mb,
+        writes_volatility,
+        min_tempdb_mb,
+        avg_tempdb_mb,
+        max_tempdb_mb,
+        tempdb_volatility,
+        max_dop
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 2: Roll up shape counts and average divergence per query_hash (static SQL)*/
+    INSERT
+        #ps_query_rollup WITH (TABLOCK)
+    (
+        query_hash,
+        shape_count,
+        min_shape_avg_cpu_ms,
+        max_shape_avg_cpu_ms
+    )
+    SELECT
+        ps.query_hash,
+        shape_count =
+            COUNT_BIG(*),
+        min_shape_avg_cpu_ms =
+            MIN(ps.avg_cpu_ms),
+        max_shape_avg_cpu_ms =
+            MAX(ps.avg_cpu_ms)
+    FROM #ps_shape_stats AS ps
+    GROUP BY
+        ps.query_hash;
+
+    /*
+    Step 3: Pick the top N shapes by volatility of the ranking metric.
+    The noise floors keep trivia out: a shape must have enough executions
+    for variance to mean anything, and must have done a measurable amount
+    of work at least once. @duration_ms takes over the work floor when set.
+    */
+    INSERT
+        #ps_interesting WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash
+    )
+    SELECT TOP (@top)
+        ps.query_hash,
+        ps.query_plan_hash
+    FROM #ps_shape_stats AS ps
+    WHERE ps.total_executions >= @ps_min_executions
+    AND
+    (
+        (
+             @duration_ms IS NOT NULL
+         AND ps.max_duration_ms >= @duration_ms
+        )
+     OR
+        (
+             @duration_ms IS NULL
+         AND
+            (
+                ps.max_cpu_ms >= 10
+             OR ps.max_duration_ms >= 100
+            )
+        )
+    )
+    ORDER BY
+        CASE @ps_rank_metric
+            WHEN N'duration' THEN ps.duration_volatility
+            WHEN N'physical reads' THEN ps.physical_reads_volatility
+            WHEN N'writes' THEN ps.writes_volatility
+            WHEN N'memory' THEN ps.memory_volatility
+            WHEN N'rows' THEN ps.rows_volatility
+            WHEN N'tempdb' THEN ps.tempdb_volatility
+            ELSE ps.cpu_volatility
+        END DESC,
+        ps.total_cpu_ms DESC,
+        ps.query_hash,
+        ps.query_plan_hash;
+
+    /*Step 3b: Shape volatility summary, returned before the details*/
+    SELECT
+        total_shapes =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #ps_shape_stats AS ps
+            ),
+        shapes_past_floors =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #ps_shape_stats AS ps
+                WHERE ps.total_executions >= @ps_min_executions
+                AND
+                (
+                    (
+                         @duration_ms IS NOT NULL
+                     AND ps.max_duration_ms >= @duration_ms
+                    )
+                 OR
+                    (
+                         @duration_ms IS NULL
+                     AND
+                        (
+                            ps.max_cpu_ms >= 10
+                         OR ps.max_duration_ms >= 100
+                        )
+                    )
+                )
+            ),
+        surfaced_shapes =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #ps_interesting AS i
+            ),
+        multi_shape_query_hashes =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #ps_query_rollup AS qr
+                WHERE qr.shape_count > 1
+            ),
+        ranked_on =
+            @ps_rank_metric + N' volatility';
+
+    /*
+    Step 4: Stage query and plan ids for the interesting shapes.
+    Window-scoped to regular executions so the id lists agree with
+    query_count and plan_count in the shape statistics.
+    */
+    SELECT
+        @current_table = 'inserting #ps_id_staging',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsq.query_hash,
+    qsp.query_plan_hash,
+    qsp.query_id,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    ON qsq.query_id = qsp.query_id
+JOIN #ps_interesting AS i
+    ON  i.query_hash = qsq.query_hash
+    AND i.query_plan_hash = qsp.query_plan_hash
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN #ps_intervals AS pi
+        ON pi.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+    WHERE qsrs.plan_id = qsp.plan_id
+    AND   qsrs.execution_type = 0
+)
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_id_staging WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        query_id,
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 4b: Representative query text per shape (the most-executed query_id in the window)*/
+    SELECT
+        @current_table = 'inserting #ps_representative_text',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    ranked.query_hash,
+    ranked.query_plan_hash,
+    qsqt.query_sql_text,
+    ranked.rn
+FROM
+(
+    SELECT
+        s.query_hash,
+        s.query_plan_hash,
+        qsq.query_text_id,
+        rn =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    s.query_hash,
+                    s.query_plan_hash
+                ORDER BY
+                    SUM(qsrs.count_executions) DESC
+            )
+    FROM #ps_id_staging AS s
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+        ON qsq.query_id = s.query_id
+    JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+        ON qsrs.plan_id = s.plan_id
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ps_intervals AS pi
+        WHERE pi.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+    )
+    AND qsrs.execution_type = 0
+    GROUP BY
+        s.query_hash,
+        s.query_plan_hash,
+        qsq.query_text_id
+) AS ranked
+JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+    ON qsqt.query_text_id = ranked.query_text_id
+WHERE ranked.rn = 1
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_representative_text WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        query_sql_text,
+        rn
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 4c: Object ids per shape, for module name resolution*/
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    s.query_hash,
+    s.query_plan_hash,
+    qsq.object_id
+FROM #ps_id_staging AS s
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    ON qsq.query_id = s.query_id
+WHERE qsq.object_id > 0
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_object_staging WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        object_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    /*Step 5: Wait stats per shape (SQL 2017+ only, two-stage approach)*/
+    IF
+    (
+        @new = 1
+    AND @query_store_waits_enabled = 1
+    )
+    BEGIN
+        /*Stage 1: Dynamic SQL populates staging table*/
+        SELECT
+            @current_table = 'inserting #ps_wait_staging',
+            @sql = @isolation_level;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXECUTE sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+        END;
+
+        SELECT
+            @sql += N'
+SELECT
+    s.query_hash,
+    s.query_plan_hash,
+    qsws.wait_category_desc,
+    total_wait_ms =
+        SUM(qsws.total_query_wait_time_ms),
+    rn =
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                s.query_hash,
+                s.query_plan_hash
+            ORDER BY
+                SUM(qsws.total_query_wait_time_ms) DESC
+        )
+FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+JOIN #ps_id_staging AS s
+    ON qsws.plan_id = s.plan_id
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #ps_intervals AS pi
+    WHERE pi.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+)
+GROUP BY
+    s.query_hash,
+    s.query_plan_hash,
+    qsws.wait_category_desc
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #ps_wait_staging WITH (TABLOCK)
+        (
+            query_hash,
+            query_plan_hash,
+            wait_category_desc,
+            total_wait_ms,
+            rn
+        )
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+
+            EXECUTE sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXECUTE sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+
+        /*Stage 2: Aggregate top 3 waits per shape (static SQL, XML PATH)*/
+        INSERT
+            #ps_shape_waits WITH (TABLOCK)
+        (
+            query_hash,
+            query_plan_hash,
+            top_waits
+        )
+        SELECT
+            ws.query_hash,
+            ws.query_plan_hash,
+            top_waits =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ws2.wait_category_desc +
+                            N' (' +
+                            CONVERT(nvarchar(20), CONVERT(bigint, ws2.total_wait_ms)) +
+                            N' ms)'
+                        FROM #ps_wait_staging AS ws2
+                        WHERE ws2.query_hash = ws.query_hash
+                        AND   ws2.query_plan_hash = ws.query_plan_hash
+                        AND   ws2.rn <= 3
+                        ORDER BY
+                            ws2.total_wait_ms DESC
+                        FOR
+                            XML PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+        FROM
+        (
+            SELECT DISTINCT
+                ws.query_hash,
+                ws.query_plan_hash
+            FROM #ps_wait_staging AS ws
+        ) AS ws;
+    END; /*End wait stats*/
+
+    /*Step 5b: Flag shapes the Parameter Sensitive Plan feature already touched (SQL 2022+ only)*/
+    IF @sql_2022_views = 1
+    BEGIN
+        SELECT
+            @current_table = 'inserting #ps_variant_flags',
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+SELECT DISTINCT
+    s.query_hash,
+    s.query_plan_hash,
+    has_variants =
+        CONVERT(bit, 1)
+FROM #ps_id_staging AS s
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    WHERE qsqv.query_variant_query_id = s.query_id
+    OR    qsqv.parent_query_id = s.query_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #ps_variant_flags WITH (TABLOCK)
+        (
+            query_hash,
+            query_plan_hash,
+            has_variants
+        )
+        EXECUTE sys.sp_executesql
+            @sql;
+    END; /*End variant flags*/
+
+    /*Step 5c: Aggregate ids with XML PATH and resolve object names (static SQL)*/
+    INSERT
+        #ps_identifiers WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        query_id_list,
+        plan_id_list,
+        object_name
+    )
+    SELECT
+        i.query_hash,
+        i.query_plan_hash,
+        query_id_list =
+            STUFF
+            (
+                (
+                    SELECT DISTINCT
+                        N', ' +
+                        CONVERT(nvarchar(20), s.query_id)
+                    FROM #ps_id_staging AS s
+                    WHERE s.query_hash = i.query_hash
+                    AND   s.query_plan_hash = i.query_plan_hash
+                    ORDER BY
+                        N', ' +
+                        CONVERT(nvarchar(20), s.query_id)
+                    FOR
+                        XML PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        plan_id_list =
+            STUFF
+            (
+                (
+                    SELECT DISTINCT
+                        N', ' +
+                        CONVERT(nvarchar(20), s.plan_id)
+                    FROM #ps_id_staging AS s
+                    WHERE s.query_hash = i.query_hash
+                    AND   s.query_plan_hash = i.query_plan_hash
+                    ORDER BY
+                        N', ' +
+                        CONVERT(nvarchar(20), s.plan_id)
+                    FOR
+                        XML PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        object_name =
+            ISNULL
+            (
+                QUOTENAME
+                (
+                    OBJECT_SCHEMA_NAME
+                    (
+                        (
+                            SELECT TOP (1)
+                                os.object_id
+                            FROM #ps_object_staging AS os
+                            WHERE os.query_hash = i.query_hash
+                            AND   os.query_plan_hash = i.query_plan_hash
+                            ORDER BY
+                                os.object_id
+                        ),
+                        @database_id
+                    )
+                ) +
+                N'.' +
+                QUOTENAME
+                (
+                    OBJECT_NAME
+                    (
+                        (
+                            SELECT TOP (1)
+                                os.object_id
+                            FROM #ps_object_staging AS os
+                            WHERE os.query_hash = i.query_hash
+                            AND   os.query_plan_hash = i.query_plan_hash
+                            ORDER BY
+                                os.object_id
+                        ),
+                        @database_id
+                    )
+                ),
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #ps_object_staging AS os
+                        WHERE os.query_hash = i.query_hash
+                        AND   os.query_plan_hash = i.query_plan_hash
+                    )
+                    THEN N'Unknown object_id'
+                    ELSE N'Adhoc'
+                END
+            )
+    FROM #ps_interesting AS i;
+
+    /*Step 6: Assemble output (static SQL, no plans yet)*/
+    SELECT
+        @current_table = 'inserting #ps_output',
+        @sql = N'';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    INSERT
+        #ps_output WITH (TABLOCK)
+    (
+        object_name,
+        query_sql_text,
+        top_waits,
+        query_hash,
+        query_plan_hash,
+        query_count,
+        plan_count,
+        shapes_for_query_hash,
+        query_id_list,
+        plan_id_list,
+        ranked_on,
+        volatility_score,
+        signals,
+        total_executions,
+        aborted_executions,
+        exception_executions,
+        min_cpu_ms,
+        avg_cpu_ms,
+        max_cpu_ms,
+        cpu_volatility,
+        min_duration_ms,
+        avg_duration_ms,
+        max_duration_ms,
+        duration_volatility,
+        min_rows,
+        avg_rows,
+        max_rows,
+        rows_volatility,
+        last_execution_time,
+        variance_metrics
+    )
+    SELECT
+        qi.object_name,
+        rt.query_sql_text,
+        top_waits =
+            CASE
+                WHEN @new = 1
+                 AND @query_store_waits_enabled = 1
+                THEN qw.top_waits
+            END,
+        ps.query_hash,
+        ps.query_plan_hash,
+        ps.query_count,
+        ps.plan_count,
+        shapes_for_query_hash =
+            ISNULL(qr.shape_count, 1),
+        qi.query_id_list,
+        qi.plan_id_list,
+        ranked_on =
+            @ps_rank_metric + N' volatility',
+        volatility_score =
+            CASE @ps_rank_metric
+                WHEN N'duration' THEN ps.duration_volatility
+                WHEN N'physical reads' THEN ps.physical_reads_volatility
+                WHEN N'writes' THEN ps.writes_volatility
+                WHEN N'memory' THEN ps.memory_volatility
+                WHEN N'rows' THEN ps.rows_volatility
+                WHEN N'tempdb' THEN ps.tempdb_volatility
+                ELSE ps.cpu_volatility
+            END,
+        signals =
+            STUFF
+            (
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN sw.cpu_ratio >= 20
+                         AND ps.max_cpu_ms >= 10
+                         AND sw.cpu_ratio >= sw.rows_ratio * 10
+                        THEN N'parameter sensitive (cpu ' +
+                             CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio)) +
+                             N'x, rows ' +
+                             CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) +
+                             N'x)'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN sw.rows_ratio >= 20
+                         AND sw.cpu_ratio <= sw.rows_ratio * 2
+                        THEN N'row driven (cpu ' +
+                             CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio)) +
+                             N'x, rows ' +
+                             CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) +
+                             N'x)'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN sw.duration_ratio >= 20
+                         AND ps.max_duration_ms >= 1000
+                         AND sw.cpu_ratio < 3
+                        THEN N'intermittent waits (duration ' +
+                             CONVERT(nvarchar(20), CONVERT(bigint, sw.duration_ratio)) +
+                             N'x, cpu ' +
+                             CONVERT(nvarchar(20), CONVERT(decimal(5, 1), sw.cpu_ratio)) +
+                             N'x)'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN sw.memory_ratio >= 10
+                         AND ps.max_memory_mb >= 8
+                        THEN N'memory grant swings (' +
+                             CONVERT(nvarchar(20), CONVERT(bigint, sw.memory_ratio)) +
+                             N'x)'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN sw.tempdb_ratio >= 10
+                         AND ps.max_tempdb_mb >= 8
+                        THEN N'tempdb swings (' +
+                             CONVERT(nvarchar(20), CONVERT(bigint, sw.tempdb_ratio)) +
+                             N'x)'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN ps.aborted_executions > 0
+                        THEN N'timed out or cancelled ' +
+                             CONVERT(nvarchar(20), ps.aborted_executions) +
+                             N' times'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN ps.exception_executions > 0
+                        THEN N'errored ' +
+                             CONVERT(nvarchar(20), ps.exception_executions) +
+                             N' times'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN vf.has_variants = 1
+                        THEN N'psp variants involved'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN qr.shape_count > 1
+                        THEN N'other plan shapes exist (' +
+                             CONVERT(nvarchar(20), qr.shape_count) +
+                             N' total, shape avg cpu ' +
+                             CONVERT(nvarchar(20), CONVERT(decimal(19, 1), qr.min_shape_avg_cpu_ms)) +
+                             N' to ' +
+                             CONVERT(nvarchar(20), CONVERT(decimal(19, 1), qr.max_shape_avg_cpu_ms)) +
+                             N' ms)'
+                    END,
+                    N''
+                ),
+                1,
+                3,
+                N''
+            ),
+        ps.total_executions,
+        ps.aborted_executions,
+        ps.exception_executions,
+        ps.min_cpu_ms,
+        ps.avg_cpu_ms,
+        ps.max_cpu_ms,
+        ps.cpu_volatility,
+        ps.min_duration_ms,
+        ps.avg_duration_ms,
+        ps.max_duration_ms,
+        ps.duration_volatility,
+        ps.min_rows,
+        ps.avg_rows,
+        ps.max_rows,
+        ps.rows_volatility,
+        ps.last_execution_time,
+        variance_metrics =
+        (
+            SELECT
+                [memory/@min_mb]              = ps.min_memory_mb,
+                [memory/@avg_mb]              = ps.avg_memory_mb,
+                [memory/@max_mb]              = ps.max_memory_mb,
+                [memory/@volatility]          = ps.memory_volatility,
+                [physical_reads/@min_mb]      = ps.min_physical_reads_mb,
+                [physical_reads/@avg_mb]      = ps.avg_physical_reads_mb,
+                [physical_reads/@max_mb]      = ps.max_physical_reads_mb,
+                [physical_reads/@volatility]  = ps.physical_reads_volatility,
+                [writes/@min_mb]              = ps.min_writes_mb,
+                [writes/@avg_mb]              = ps.avg_writes_mb,
+                [writes/@max_mb]              = ps.max_writes_mb,
+                [writes/@volatility]          = ps.writes_volatility,
+                [tempdb/@min_mb]              = ps.min_tempdb_mb,
+                [tempdb/@avg_mb]              = ps.avg_tempdb_mb,
+                [tempdb/@max_mb]              = ps.max_tempdb_mb,
+                [tempdb/@volatility]          = ps.tempdb_volatility,
+                [parallelism/@max_dop]        = ps.max_dop
+            FOR
+                XML
+                PATH(N'metrics'),
+                TYPE
+        )
+    FROM #ps_shape_stats AS ps
+    JOIN #ps_interesting AS i
+        ON  i.query_hash = ps.query_hash
+        AND i.query_plan_hash = ps.query_plan_hash
+    CROSS APPLY
+    (
+        /*
+        max/min ratios with clamped mins, not (max - min) / avg: when a
+        third of executions are slow, the average inflates and the swing
+        reads small even when max/min is four orders of magnitude apart,
+        which is exactly the case this mode exists to catch
+        */
+        VALUES
+            (
+                ps.max_cpu_ms /
+                    CASE
+                        WHEN ps.min_cpu_ms < 0.001
+                        THEN 0.001
+                        ELSE ps.min_cpu_ms
+                    END,
+                ps.max_duration_ms /
+                    CASE
+                        WHEN ps.min_duration_ms < 0.001
+                        THEN 0.001
+                        ELSE ps.min_duration_ms
+                    END,
+                CONVERT(decimal(38, 6), ps.max_rows) /
+                    CASE
+                        WHEN ps.min_rows < 1
+                        THEN 1
+                        ELSE ps.min_rows
+                    END,
+                ps.max_memory_mb /
+                    CASE
+                        WHEN ps.min_memory_mb < 0.001
+                        THEN 0.001
+                        ELSE ps.min_memory_mb
+                    END,
+                ps.max_tempdb_mb /
+                    CASE
+                        WHEN ps.min_tempdb_mb < 0.001
+                        THEN 0.001
+                        ELSE ps.min_tempdb_mb
+                    END
+            )
+    ) AS sw (cpu_ratio, duration_ratio, rows_ratio, memory_ratio, tempdb_ratio)
+    LEFT JOIN #ps_representative_text AS rt
+        ON  rt.query_hash = ps.query_hash
+        AND rt.query_plan_hash = ps.query_plan_hash
+        AND rt.rn = 1
+    LEFT JOIN #ps_identifiers AS qi
+        ON  qi.query_hash = ps.query_hash
+        AND qi.query_plan_hash = ps.query_plan_hash
+    LEFT JOIN #ps_shape_waits AS qw
+        ON  qw.query_hash = ps.query_hash
+        AND qw.query_plan_hash = ps.query_plan_hash
+    LEFT JOIN #ps_variant_flags AS vf
+        ON  vf.query_hash = ps.query_hash
+        AND vf.query_plan_hash = ps.query_plan_hash
+    LEFT JOIN #ps_query_rollup AS qr
+        ON qr.query_hash = ps.query_hash;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    END;
+
+    /*Step 7: Final output with plans (dynamic SQL for OUTER APPLY)*/
+    SELECT
+        @current_table = 'selecting parameter sensitivity results',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    database_name =
+        @database_name,
+    start_date =
+        ' +
+        CASE
+            WHEN @timezone IS NOT NULL
+            THEN N'@start_date AT TIME ZONE @timezone'
+            ELSE N'SWITCHOFFSET(@start_date, @utc_offset_string)'
+        END + N',
+    end_date =
+        ' +
+        CASE
+            WHEN @timezone IS NOT NULL
+            THEN N'@end_date AT TIME ZONE @timezone'
+            ELSE N'SWITCHOFFSET(@end_date, @utc_offset_string)'
+        END + N',
+    o.object_name,
+    query_sql_text =
+        (
+             SELECT
+                 [processing-instruction(query)] =
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                         o.query_sql_text COLLATE Latin1_General_BIN2,
+                     NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
+                     NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
+                     NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N'''')
+             FOR XML
+                 PATH(N''''),
+                 TYPE
+        ),
+    query_plan =
+        TRY_CONVERT(xml, qp.query_plan),
+    ' +
+    CASE
+        WHEN @new = 1
+         AND @query_store_waits_enabled = 1
+        THEN N'o.top_waits,
+    '
+        ELSE N''
+    END + N'o.query_hash,
+    o.query_plan_hash,
+    o.query_count,
+    o.plan_count,
+    o.shapes_for_query_hash,
+    o.query_id_list,
+    o.plan_id_list,
+    o.ranked_on,
+    o.volatility_score,
+    o.signals,
+    o.total_executions,
+    o.aborted_executions,
+    o.exception_executions,
+    o.min_cpu_ms,
+    o.avg_cpu_ms,
+    o.max_cpu_ms,
+    o.cpu_volatility,
+    o.min_duration_ms,
+    o.avg_duration_ms,
+    o.max_duration_ms,
+    o.duration_volatility,
+    o.min_rows,
+    o.avg_rows,
+    o.max_rows,
+    o.rows_volatility,
+    last_execution_time =
+        ' +
+        CASE
+            WHEN @timezone IS NOT NULL
+            THEN N'o.last_execution_time AT TIME ZONE @timezone'
+            ELSE N'SWITCHOFFSET(o.last_execution_time, @utc_offset_string)'
+        END + N',
+    o.variance_metrics
+FROM #ps_output AS o
+OUTER APPLY
+(
+    SELECT
+        qp0.*
+    FROM
+    (
+        SELECT
+            n = ROW_NUMBER() OVER
+                (
+                    ORDER BY
+                        qsp.last_execution_time DESC
+                ),
+            qsp.query_plan
+        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #ps_id_staging AS s
+            WHERE qsp.plan_id = s.plan_id
+            AND   o.query_hash = s.query_hash
+            AND   o.query_plan_hash = s.query_plan_hash
+        )
+    ) AS qp0
+    WHERE qp0.n = 1
+) AS qp
+ORDER BY
+    o.volatility_score DESC,
+    o.query_hash,
+    o.query_plan_hash
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@database_name sysname,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7),
+        @utc_offset_string varchar(6),
+        @timezone sysname',
+        @database_name,
+        @start_date,
+        @end_date,
+        @utc_offset_string,
+        @timezone;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Exit: go to DEBUG dump or return*/
+    IF @debug = 1
+    BEGIN
+        GOTO DEBUG;
+    END;
+    ELSE
+    BEGIN
+        RETURN;
+    END;
+END; /*End @find_parameter_sensitive*/
 
 /*
 Get filters ready, or whatever
@@ -14251,6 +16091,8 @@ BEGIN
             @find_high_impact,
         primary_window =
             @primary_window,
+        find_parameter_sensitive =
+            @find_parameter_sensitive,
         help =
             @help,
         debug =
@@ -14489,7 +16331,8 @@ BEGIN
                 '#requested_but_skipped_databases is empty';
     END;
 
-    IF @find_high_impact = 0
+    IF  @find_high_impact = 0
+    AND @find_parameter_sensitive = 0
     BEGIN
         IF EXISTS
            (
@@ -14653,7 +16496,8 @@ BEGIN
                 '#include_query_hashes is empty';
     END;
 
-    IF @find_high_impact = 0
+    IF  @find_high_impact = 0
+    AND @find_parameter_sensitive = 0
     BEGIN
         IF EXISTS
            (
@@ -15066,7 +16910,8 @@ BEGIN
                 '#database_query_store_options is empty';
     END;
 
-    IF @find_high_impact = 0
+    IF  @find_high_impact = 0
+    AND @find_parameter_sensitive = 0
     BEGIN
 
     IF EXISTS
@@ -15550,7 +17395,8 @@ BEGIN
                 '#troubleshoot_performance is empty';
     END;
 
-    IF @find_high_impact = 0
+    IF  @find_high_impact = 0
+    AND @find_parameter_sensitive = 0
     BEGIN
     IF EXISTS
        (
@@ -15928,6 +17774,298 @@ BEGIN
             SELECT
                 result =
                     '#hi_output is empty';
+        END;
+    END;
+
+    IF  @find_parameter_sensitive = 1
+    AND OBJECT_ID('tempdb..#ps_intervals') IS NOT NULL
+    BEGIN
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_intervals AS pi
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_intervals',
+                pi.*
+            FROM #ps_intervals AS pi
+            ORDER BY
+                pi.runtime_stats_interval_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_intervals is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_shape_stats AS ps
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_shape_stats',
+                ps.*
+            FROM #ps_shape_stats AS ps
+            ORDER BY
+                ps.query_hash,
+                ps.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_shape_stats is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_query_rollup AS qr
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_query_rollup',
+                qr.*
+            FROM #ps_query_rollup AS qr
+            ORDER BY
+                qr.query_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_query_rollup is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_interesting AS i
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_interesting',
+                i.*
+            FROM #ps_interesting AS i
+            ORDER BY
+                i.query_hash,
+                i.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_interesting is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_id_staging AS s
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_id_staging',
+                s.*
+            FROM #ps_id_staging AS s
+            ORDER BY
+                s.query_hash,
+                s.query_plan_hash,
+                s.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_id_staging is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_representative_text AS rt
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_representative_text',
+                rt.*
+            FROM #ps_representative_text AS rt
+            ORDER BY
+                rt.query_hash,
+                rt.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_representative_text is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_object_staging AS os
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_object_staging',
+                os.*
+            FROM #ps_object_staging AS os
+            ORDER BY
+                os.query_hash,
+                os.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_object_staging is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_wait_staging AS ws
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_wait_staging',
+                ws.*
+            FROM #ps_wait_staging AS ws
+            ORDER BY
+                ws.query_hash,
+                ws.query_plan_hash,
+                ws.rn
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_wait_staging is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_shape_waits AS sw
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_shape_waits',
+                sw.*
+            FROM #ps_shape_waits AS sw
+            ORDER BY
+                sw.query_hash,
+                sw.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_shape_waits is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_variant_flags AS vf
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_variant_flags',
+                vf.*
+            FROM #ps_variant_flags AS vf
+            ORDER BY
+                vf.query_hash,
+                vf.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_variant_flags is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_identifiers AS qi
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_identifiers',
+                qi.*
+            FROM #ps_identifiers AS qi
+            ORDER BY
+                qi.query_hash,
+                qi.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_identifiers is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_output AS o
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_output',
+                o.*
+            FROM #ps_output AS o
+            ORDER BY
+                o.query_hash,
+                o.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_output is empty';
         END;
     END;
 
