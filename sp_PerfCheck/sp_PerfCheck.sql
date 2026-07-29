@@ -1,4 +1,4 @@
-﻿SET ANSI_NULLS ON;
+SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -52,9 +52,17 @@ ALTER PROCEDURE
     @database_name sysname = NULL, /* Database to check, NULL for all user databases */
     @slow_read_ms decimal(10, 2) = 20.0, /* Flag data-file reads slower than this (ms); High at 5x */
     @slow_write_ms decimal(10, 2) = 20.0, /* Flag data-file writes slower than this (ms); High at 5x */
-    @significant_wait_threshold_pct decimal(5, 2) = 10.0, /* Minimum % of uptime for a wait to be reported */
-    @wait_high_pct decimal(5, 2) = 50.0, /* Resource wait at/above this % of uptime is High */
-    @wait_medium_pct decimal(5, 2) = 20.0, /* Resource wait at/above this % of uptime is Medium */
+    /*
+    decimal(38, 2), not decimal(5, 2). These compare against
+    #wait_stats.wait_time_percent_of_uptime, which is decimal(38, 2) because
+    cumulative wait time across all schedulers routinely runs to several
+    hundred or several thousand percent of wall-clock uptime on a many-core
+    server. decimal(5, 2) caps an override at 999.99, which cannot express a
+    threshold in the range the column actually reports.
+    */
+    @significant_wait_threshold_pct decimal(38, 2) = 10.0, /* Minimum % of uptime for a wait to be reported */
+    @wait_high_pct decimal(38, 2) = 50.0, /* Resource wait at/above this % of uptime is High */
+    @wait_medium_pct decimal(38, 2) = 20.0, /* Resource wait at/above this % of uptime is Medium */
     @memory_grant_warning integer = 100, /* Forced grants at/above this count are Medium */
     @memory_grant_critical integer = 10000, /* Forced grants at/above this count are High */
     @help bit = 0, /*For helpfulness*/
@@ -202,19 +210,47 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     SELECT
         @slow_read_ms =
-            CASE WHEN @slow_read_ms >= 0 THEN @slow_read_ms ELSE 20.0 END,
+            CASE
+                WHEN @slow_read_ms >= 0
+                THEN @slow_read_ms
+                ELSE 20.0
+            END,
         @slow_write_ms =
-            CASE WHEN @slow_write_ms >= 0 THEN @slow_write_ms ELSE 20.0 END,
+            CASE
+                WHEN @slow_write_ms >= 0
+                THEN @slow_write_ms
+                ELSE 20.0
+            END,
         @significant_wait_threshold_pct =
-            CASE WHEN @significant_wait_threshold_pct >= 0 THEN @significant_wait_threshold_pct ELSE 10.0 END,
+            CASE
+                WHEN @significant_wait_threshold_pct >= 0
+                THEN @significant_wait_threshold_pct
+                ELSE 10.0
+            END,
         @wait_high_pct =
-            CASE WHEN @wait_high_pct >= 0 THEN @wait_high_pct ELSE 50.0 END,
+            CASE
+                WHEN @wait_high_pct >= 0
+                THEN @wait_high_pct
+                ELSE 50.0
+            END,
         @wait_medium_pct =
-            CASE WHEN @wait_medium_pct >= 0 THEN @wait_medium_pct ELSE 20.0 END,
+            CASE
+                WHEN @wait_medium_pct >= 0
+                THEN @wait_medium_pct
+                ELSE 20.0
+            END,
         @memory_grant_warning =
-            CASE WHEN @memory_grant_warning >= 0 THEN @memory_grant_warning ELSE 100 END,
+            CASE
+                WHEN @memory_grant_warning >= 0
+                THEN @memory_grant_warning
+                ELSE 100
+            END,
         @memory_grant_critical =
-            CASE WHEN @memory_grant_critical >= 0 THEN @memory_grant_critical ELSE 10000 END;
+            CASE
+                WHEN @memory_grant_critical >= 0
+                THEN @memory_grant_critical
+                ELSE 10000
+            END;
 
     /*
     Variable Declarations
@@ -551,7 +587,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category nvarchar(50) NOT NULL,
         finding nvarchar(200) NOT NULL,
         database_name sysname NOT NULL DEFAULT N'N/A',
-        object_name sysname NOT NULL DEFAULT N'N/A',
+        /*
+        Wide, not sysname. The storage checks (3001, 3002, 3003) put a file or
+        drive location in here: drive_location and physical_name are both
+        nvarchar(260) and hold the full blob storage URL for a data file on
+        Azure, and 3001/3002 append N' (' + type_desc + N')' on top of that.
+        sysname truncates at 128 characters and even 260 is not enough for the
+        longest path plus its suffix. Overflow raises Msg 8152 inside the outer
+        TRY, which kills the entire run rather than just the storage findings.
+        */
+        object_name nvarchar(500) NOT NULL DEFAULT N'N/A',
         details nvarchar(4000) NULL,
         url nvarchar(200) NULL
     );
@@ -1128,12 +1173,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT
         check_id = 5103,
         /*
-        Rate is deadlocks-per-day, computed from DATEDIFF(SECOND, ...) rather than
-        DATEDIFF(DAY, ...). The DAY-based version rounded sub-day uptime to 0 and
-        the NULLIF then collapsed the whole expression to NULL, which evaluated as
-        UNKNOWN in the WHERE below and silently skipped the deadlock check for the
-        first calendar-day-boundary of server uptime. SECOND-based rate keeps the
-        threshold semantics identical for any uptime ≥ 1 second.
+        Rate is deadlocks-per-day, and it has to be computed from
+        DATEDIFF(SECOND, ...) scaled by 86400, not DATEDIFF(DAY, ...).
+        A DAY-based denominator rounds sub-day uptime to 0, the NULLIF then
+        collapses the whole expression to NULL, and NULL evaluates as UNKNOWN
+        in the WHERE below, which silently skips the deadlock check entirely
+        until the server has been up across a calendar day boundary. The
+        SECOND-based rate is identical in threshold semantics for any uptime
+        of 1 second or more.
         */
         priority =
             CASE
@@ -1425,7 +1472,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 9998,
-                90, /* Low priority informational */
+                50, /* Informational: collection error */
                 N'Errors',
                 N'Error Capturing Trace Flags',
                 N'Unable to capture trace flags: ' + ERROR_MESSAGE()
@@ -2293,13 +2340,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @has_view_server_state = 1
     BEGIN
         /* Calculate pagelatch wait time for TempDB contention check.
-           Split into two scalar SELECTs — the previous version mixed an
-           aggregated value (@pagelatch_wait_hours) with a non-aggregated
-           one (@server_uptime_hours) in the same SELECT by joining
-           wait_stats to sys_info and GROUP BY'ing on the uptime
-           expression. It worked only because sys_info is always a
-           single-row view, and the GROUP BY on a scalar expression
-           reads oddly. */
+           Deliberately two scalar SELECTs. Assigning the aggregated value
+           (@pagelatch_wait_hours) and the non-aggregated one
+           (@server_uptime_hours) in a single SELECT would mean joining
+           wait_stats to sys_info and grouping by the uptime expression,
+           which only works because sys_info is always a single-row view
+           and reads as though the GROUP BY were meaningful. Keep them
+           separate. */
         SELECT
             @server_uptime_hours =
                 DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) / 3600.0
@@ -2855,7 +2902,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             i.avg_io_stall_ms DESC;
 
-        /* Check 6201 (High Database I/O Stalls) removed — duplicated by file-level checks 3001/3002/3003 */
+        /* Check 6201 (High Database I/O Stalls) removed: duplicated by file-level checks 3001/3002/3003 */
     END;
 
     /*
@@ -3736,7 +3783,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1002,
-                20, /* High priority — OS-starvation risk */
+                20, /* High priority: OS-starvation risk */
                 N'Server Configuration',
                 N'Max Server Memory Too Close To Physical Memory',
                 N'Max server memory (' +
@@ -4621,7 +4668,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE qso.desired_state <> 0 /* Not intentionally OFF */
             AND   qso.readonly_reason <> 8 /* Ignore AG secondaries */
             AND   qso.desired_state <> qso.actual_state /* States don''t match */
-            AND   qso.actual_state IN (0, 1, 3); /* OFF(0), READ_ONLY(1), or ERROR(3) when it should be READ_WRITE - the comment used to say READ_ONLY but the list omitted state 1, so a Query Store auto-flipped to READ_ONLY because it filled up (readonly_reason 65536) never got flagged, its single most common failure. AG secondaries (readonly_reason 8) and intentional READ_ONLY (desired = actual) are already excluded above. */';
+            /*
+            OFF(0), READ_ONLY(1), or ERROR(3) while the desired state is
+            READ_WRITE. State 1 has to be in this list: a Query Store that
+            auto-flips to READ_ONLY because it filled up (readonly_reason
+            65536) is its most common failure mode, and omitting 1 means that
+            case is never flagged. AG secondaries (readonly_reason 8) and
+            intentional READ_ONLY (desired = actual) are already excluded by
+            the predicates above.
+            */
+            AND   qso.actual_state IN (0, 1, 3);';
 
             IF @debug = 1
             BEGIN
@@ -4821,16 +4877,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         10, 13, 16, 17, 18, 19, 20, 24,
                         27, 28, 31, 33, 34, 35, 37, 39,
                         /*
-                        SQL Server 2025 options, with the real
-                        configuration_ids from the catalog. The IDs used
-                        to be 40, 41, 42, 43: 40/41 are actually
+                        SQL Server 2025 options, using the real
+                        configuration_ids from the catalog. 42, 44, and 47
+                        are the three the CASE above actually evaluates.
+                        40 and 41 do not belong here: they are
                         READABLE_SECONDARY_TEMPORARY_STATS_AUTO_CREATE and
-                        _UPDATE, which have no entry in the CASE above, so
-                        they were pulled and flagged non-default on every
-                        2025 database even at their default of 1; 43 does
-                        not exist; and the three options the CASE really
-                        evaluates (42, 44, 47) were never pulled, so they
-                        were silently never checked.
+                        _UPDATE, which the CASE has no entry for, so pulling
+                        them flags every 2025 database non-default even at
+                        their default of 1. 43 does not exist.
                         */
                         42, 44, 47
                       );
@@ -4944,45 +4998,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         with SI/RCSI enabled.
 
         Gated on the column actually existing. Accelerated Database
-        Recovery arrived in SQL Server 2019; on 2016/2017 the
+        Recovery arrived in SQL Server 2019; on 2016 and 2017 the
         is_accelerated_database_recovery_on column does not exist, so the
-        #databases builder hardcodes it to 0 for every database. Without
-        this gate the check's "= 0" predicate was ALWAYS true and it
-        recommended enabling ADR - a feature those versions do not have -
-        for any database with snapshot isolation or RCSI on, which is
-        most of them. Advice impossible to act on.
+        #databases builder hardcodes it to 0 for every database. The gate is
+        what keeps the "= 0" predicate below from being trivially true on
+        those versions, where the check would recommend enabling a feature
+        they do not have for every database running snapshot isolation or
+        RCSI.
         */
         IF @has_is_accelerated_database_recovery = 1
         BEGIN
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 7009,
-            priority = 40, /* Low: recommendation */
-            category = N'Database Configuration',
-            finding = N'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
-            database_name = d.name,
-            details =
-                N'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
-                N'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
-            url = N'https://erikdarling.com/sp_perfcheck/#ADR'
-        FROM #databases AS d
-        WHERE d.database_id = @current_database_id
-        AND   d.is_accelerated_database_recovery_on = 0
-        AND
-        (
-              d.snapshot_isolation_state_desc = N'ON'
-           OR d.is_read_committed_snapshot_on = 1
-        );
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                details,
+                url
+            )
+            SELECT
+                check_id = 7009,
+                priority = 40, /* Low: recommendation */
+                category = N'Database Configuration',
+                finding = N'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
+                database_name = d.name,
+                details =
+                    N'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
+                    N'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
+                url = N'https://erikdarling.com/sp_perfcheck/#ADR'
+            FROM #databases AS d
+            WHERE d.database_id = @current_database_id
+            AND   d.is_accelerated_database_recovery_on = 0
+            AND
+            (
+                  d.snapshot_isolation_state_desc = N'ON'
+               OR d.is_read_committed_snapshot_on = 1
+            );
         END;
 
         /* Check if ledger is enabled */
