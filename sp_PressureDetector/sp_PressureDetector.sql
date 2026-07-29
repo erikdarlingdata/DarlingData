@@ -53,7 +53,7 @@ ALTER PROCEDURE
     @skip_queries bit = 0, /*if you want to skip looking at running queries*/
     @skip_plan_xml bit = 0, /*if you want to skip getting plan XML*/
     @minimum_disk_latency_ms smallint = 100, /*low bound for reporting disk latency*/
-    @cpu_utilization_threshold smallint = 50, /*low bound for reporting high cpu utlization*/
+    @cpu_utilization_threshold smallint = 50, /*low bound for reporting high cpu utilization*/
     @skip_waits bit = 0, /*skips waits when you do not need them on every run*/
     @skip_perfmon bit = 0, /*skips perfmon counters when you do not need them on every run*/
     @sample_seconds tinyint = 0, /*take a sample of your server's metrics*/
@@ -113,7 +113,7 @@ BEGIN
                 WHEN N'@skip_queries' THEN N'if you want to skip looking at running queries'
                 WHEN N'@skip_plan_xml' THEN N'if you want to skip getting plan XML'
                 WHEN N'@minimum_disk_latency_ms' THEN N'low bound for reporting disk latency'
-                WHEN N'@cpu_utilization_threshold' THEN N'low bound for reporting high cpu utlization'
+                WHEN N'@cpu_utilization_threshold' THEN N'low bound for reporting high cpu utilization'
                 WHEN N'@skip_waits' THEN N'skips waits when you do not need them on every run'
                 WHEN N'@skip_perfmon' THEN N'skips perfmon counters when you do not need them on every run'
                 WHEN N'@sample_seconds' THEN N'take a sample of your server''s metrics'
@@ -135,14 +135,14 @@ BEGIN
                 WHEN N'@skip_queries' THEN N'0 or 1'
                 WHEN N'@skip_plan_xml' THEN N'0 or 1'
                 WHEN N'@minimum_disk_latency_ms' THEN N'a reasonable number of milliseconds for disk latency'
-                WHEN N'@cpu_utilization_threshold' THEN N'a reasonable cpu utlization percentage'
+                WHEN N'@cpu_utilization_threshold' THEN N'a reasonable cpu utilization percentage'
                 WHEN N'@skip_waits' THEN N'0 or 1'
                 WHEN N'@skip_perfmon' THEN N'0 or 1'
                 WHEN N'@sample_seconds' THEN N'a valid tinyint: 0-255'
                 WHEN N'@log_to_table' THEN N'0 or 1'
                 WHEN N'@log_database_name' THEN N'any valid database name'
                 WHEN N'@log_schema_name' THEN N'any valid schema name'
-                WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
+                WHEN N'@log_table_name_prefix' THEN N'any valid identifier, 112 characters or fewer'
                 WHEN N'@log_retention_days' THEN N'a positive integer'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@troubleshoot_blocking' THEN N'0 or 1'
@@ -508,14 +508,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
             /* Default schema name to dbo if not specified */
             @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
             /*
-            Default the prefix too. It was the one log identifier with no
-            guard, so a NULL (an automation variable that resolved to
-            NULL) made QUOTENAME(NULL + N'_Waits') NULL, which nulled
-            every CREATE / INSERT / DELETE command string — and
-            sp_executesql runs a NULL batch as a silent no-op. The proc
-            returned success having created no tables and logged nothing,
-            with every result set suppressed because it was in logging
-            mode. Total silent data loss.
+            Default the prefix too: it is the one log identifier that
+            QUOTENAME touches unguarded, and a NULL prefix (say, an
+            automation variable that resolves to NULL) nulls every
+            CREATE / INSERT / DELETE command string, which sp_executesql
+            runs as a silent no-op. In logging mode every result set is
+            suppressed, so nothing would announce that no tables were
+            created and nothing was logged.
             */
             @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'PressureDetector');
 
@@ -2315,12 +2314,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 /*
                 Filter on the raw counter, not the per-second STRING.
                 total_per_second is cntr_value / uptime-in-seconds in
-                integer arithmetic, so every counter smaller than the
-                server's uptime floored to '0' and got dropped here —
-                and those are exactly the point-in-time pressure gauges
-                (Memory Grants Pending, Processes Blocked, deadlocks,
-                which sit at single digits). The load step already keeps
-                only cntr_value > 0, so this just stops re-dropping them.
+                integer arithmetic, so any counter smaller than the
+                server's uptime floors to '0', and the counters that sit
+                at single digits (Memory Grants Pending, Processes
+                Blocked, deadlocks) are exactly the point-in-time
+                pressure gauges. The load step already keeps only
+                cntr_value > 0, so this filter matches it.
                 */
                 WHERE p.cntr_value > 0
                 ORDER BY
@@ -3439,12 +3438,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       ELSE N''
                   END
                   /*
-                  Without this ELSE, @skip_plan_xml = 1 made the outer
-                  CASE return NULL, CONVERT(nvarchar(max), NULL) is NULL,
-                  and the whole @mem_sql string collapsed to NULL — so
-                  skipping the plan XML silently discarded the entire
-                  "queries with memory grants" result set. The CPU
-                  builder has this ELSE; this one was missing it.
+                  This ELSE is load-bearing: without it, @skip_plan_xml
+                  = 1 makes the outer CASE return NULL, CONVERT of NULL
+                  is NULL, and the whole @mem_sql string collapses to
+                  NULL, silently discarding the entire "queries with
+                  memory grants" result set. The CPU builder carries the
+                  same ELSE for the same reason.
                   */
                   ELSE N''
               END +
@@ -3537,10 +3536,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
             /*
             TRY/CATCH so a failure fetching query plans does not take the
             whole report down with it. This batch SETs LOCK_TIMEOUT to
-            fail fast, but with XACT_ABORT ON and no handler a lock
-            timeout (error 1222 — plausible under the very plan-cache
-            churn being diagnosed) aborted the entire procedure, losing
-            every section after this one. Now it degrades to a warning.
+            fail fast, and with XACT_ABORT ON an unhandled lock timeout
+            (error 1222, plausible under the very plan-cache churn being
+            diagnosed) would abort the entire procedure, losing every
+            section after this one. Degrade to a warning instead.
             */
             BEGIN TRY
                 EXECUTE sys.sp_executesql
@@ -3717,8 +3716,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @cpu_details_output OUTPUT;
 
         /*
-        Checking for high CPU utilization periods
+        Checking for high CPU utilization periods.
+        Both CPU documents below must stamp identical sample_times for
+        the UNION in the logging insert to collapse samples that appear
+        in each, so the two moving inputs are frozen once here instead
+        of each query reading SYSDATETIME() and ms_ticks at its own
+        moment and stamping the same ring buffer record differently
         */
+        DECLARE
+            @utilization_now datetime2(7) = SYSDATETIME(),
+            @utilization_ms_ticks bigint;
+
+        SELECT
+            @utilization_ms_ticks = osi.ms_ticks
+        FROM sys.dm_os_sys_info AS osi;
+
         SELECT
             @cpu_utilization =
                 x.cpu_utilization
@@ -3732,8 +3744,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         DATEADD
                         (
                             SECOND,
-                            (t.timestamp - osi.ms_ticks) / 1000,
-                            SYSDATETIME()
+                            (t.timestamp - @utilization_ms_ticks) / 1000,
+                            @utilization_now
                         )
                     ),
                 sqlserver_cpu_utilization =
@@ -3743,8 +3755,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','integer')),
                 total_cpu_utilization =
                     (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'integer'))
-            FROM sys.dm_os_sys_info AS osi
-            CROSS JOIN
+            FROM
             (
                 SELECT
                     dorb.timestamp,
@@ -3794,8 +3805,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         DATEADD
                         (
                             SECOND,
-                            (t.timestamp - osi.ms_ticks) / 1000,
-                            SYSDATETIME()
+                            (t.timestamp - @utilization_ms_ticks) / 1000,
+                            @utilization_now
                         )
                     ),
                 sqlserver_cpu_utilization =
@@ -3805,8 +3816,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','integer')),
                 total_cpu_utilization =
                     (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'integer'))
-            FROM sys.dm_os_sys_info AS osi
-            CROSS JOIN
+            FROM
             (
                 SELECT
                     dorb.timestamp,
@@ -3876,12 +3886,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
             UNION both CPU signals into the same insert. The event table
             already carries other_process_cpu_utilization and
             total_cpu_utilization, but the SQL-CPU XML only holds samples
-            that tripped SQL's own threshold — so a sample where an
-            external process pegged the box while SQL sat idle was never
-            logged. Adding the external XML captures exactly those; UNION
-            (not UNION ALL) collapses samples that tripped both. The
-            no-data placeholder XML has no sample_time node, so its
-            exist() filter is false and it contributes nothing.
+            that tripped SQL's own threshold, so a sample where an
+            external process pegs the box while SQL sits idle appears
+            only in the external XML. Both documents stamp identical
+            sample_times from the inputs frozen above, which is what
+            lets UNION (not UNION ALL) collapse samples that tripped
+            both. The no-data placeholder XML has no sample_time node,
+            so its exist() filter is false and it contributes nothing.
             */
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
