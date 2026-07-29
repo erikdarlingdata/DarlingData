@@ -419,6 +419,9 @@ BEGIN
         high_impact_columns =
            'when using @find_high_impact = 1, the result set contains these columns:' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'this mode honors @top, @sort_order (as a tiebreak), @work_start/@work_end, and @primary_window; the other' UNION ALL
+    SELECT '    filter parameters (@procedure_name, @query_text_search, include/ignore lists, etc.) do not apply here.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'database_name: the database being analyzed' UNION ALL
     SELECT 'start_date, end_date: the time window analyzed (UTC)' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -487,6 +490,8 @@ BEGIN
     SELECT '    so recompiles of the same plan are analyzed together. Wild metric swings within one shape mean' UNION ALL
     SELECT '    the same plan is fast for some parameter values and slow for others: classic parameter sensitivity.' UNION ALL
     SELECT '    Only regular executions feed the statistics; aborted and exception executions are counted separately.' UNION ALL
+    SELECT '    This mode honors @top, @sort_order, @execution_count, and @duration_ms; the other filter' UNION ALL
+    SELECT '    parameters (@procedure_name, @query_text_search, include/ignore lists, etc.) do not apply here.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'database_name: the database being analyzed' UNION ALL
     SELECT 'start_date, end_date: the time window analyzed' UNION ALL
@@ -514,7 +519,7 @@ BEGIN
     SELECT '    intermittent waits (duration Nx, cpu Nx) - duration swings without cpu swings: blocking, grants, or I/O,' UNION ALL
     SELECT '        not parameter sensitivity. Check top_waits.' UNION ALL
     SELECT '    memory grant swings (Nx) / tempdb swings (Nx) - grant or spill behavior varies between executions.' UNION ALL
-    SELECT '    timed out N times / errored N times - aborted (client timeout/cancel) and exception executions.' UNION ALL
+    SELECT '    timed out or cancelled N times / errored N times - aborted (client timeout/cancel) and exception executions.' UNION ALL
     SELECT '        Timeouts on a volatile shape are often the bad-parameter executions themselves.' UNION ALL
     SELECT '    psp variants involved (2022+) - Parameter Sensitive Plan optimization already dispatched variants here.' UNION ALL
     SELECT '    other plan shapes exist (N, avg cpu X to Y ms) - the same query_hash compiled to other shapes whose' UNION ALL
@@ -534,7 +539,8 @@ BEGIN
     SELECT 'total_shapes: how many plan shapes had regular executions in the time window' UNION ALL
     SELECT 'shapes_past_floors: how many cleared the noise floors (executions and minimum cpu/duration)' UNION ALL
     SELECT 'surfaced_shapes: how many made it into the detail result set after top-N ranking' UNION ALL
-    SELECT 'multi_shape_query_hashes: how many query_hashes compiled to more than one plan shape in the window';
+    SELECT 'multi_shape_query_hashes: how many query_hashes compiled to more than one plan shape in the window' UNION ALL
+    SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order';
 
     /*
     Limitations
@@ -3875,11 +3881,16 @@ BEGIN
                 7,
                 @start_date
             ),
+        /*
+        Same seven days as @end_date above: these originals feed the
+        logging tables and debug output, so a different span here would
+        record a window the queries did not actually use
+        */
         @end_date_original =
             DATEADD
             (
                 DAY,
-                1,
+                7,
                 @start_date_original
             );
 END;
