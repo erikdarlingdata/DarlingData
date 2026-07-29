@@ -28,6 +28,14 @@ GO
 Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
+For usage and licensing details, run:
+EXECUTE sp_HealthParser
+    @help = 1;
+
+For working through errors:
+EXECUTE sp_HealthParser
+    @debug = 1;
+
 For support, head over to GitHub:
 https://code.erikdarling.com
 */
@@ -82,7 +90,8 @@ BEGIN
                 'hi, i''m sp_HealthParser!' UNION ALL
         SELECT  'you can use me to examine the contents of the system_health extended event session' UNION ALL
         SELECT  'i apologize if i take a long time, i have to do a lot of XML processing' UNION ALL
-        SELECT  'from your loving sql server consultant, erik darling: erikdarling.com';
+        SELECT  'you got me from https://code.erikdarling.com' UNION ALL
+        SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
         /*
         Parameters
@@ -133,7 +142,7 @@ BEGIN
                     WHEN N'@log_to_table' THEN N'0 or 1'
                     WHEN N'@log_database_name' THEN N'any valid database name'
                     WHEN N'@log_schema_name' THEN N'any valid schema name'
-                    WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
+                    WHEN N'@log_table_name_prefix' THEN N'any valid identifier, 111 characters or fewer'
                     WHEN N'@log_retention_days' THEN N'a positive integer'
                     WHEN N'@version' THEN N'none'
                     WHEN N'@version_date' THEN N'none'
@@ -532,6 +541,8 @@ AND   ca.utc_timestamp < @end_date';
             @log_database_name = ISNULL(@log_database_name, DB_NAME()),
             /* Default schema name to dbo if not specified */
             @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+            /* An explicit NULL prefix walks past the length guard and QUOTENAME(NULL) silently no-ops every logging table */
+            @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'HealthParser'),
             @log_retention_days =
                 CASE
                     WHEN @log_retention_days < 0
@@ -548,7 +559,7 @@ AND   ca.utc_timestamp < @end_date';
         */
         IF LEN(@log_table_name_prefix) > 111
         BEGIN
-            RAISERROR('@log_table_name_prefix is limited to 111 characters, so the longest table name suffix (_SignificantWaits) still fits in an identifier. Logging will be disabled.', 11, 1) WITH NOWAIT;
+            RAISERROR('@log_table_name_prefix is limited to 111 characters, so the longest table name suffix (_SignificantWaits) still fits in an identifier. Shorten it and run me again.', 11, 1) WITH NOWAIT;
             RETURN;
         END;
 
@@ -561,7 +572,7 @@ AND   ca.utc_timestamp < @end_date';
             WHERE d.name = @log_database_name
         )
         BEGIN
-            RAISERROR('The specified logging database %s does not exist. Logging will be disabled.', 11, 1, @log_database_name) WITH NOWAIT;
+            RAISERROR('The specified logging database %s does not exist. Fix @log_database_name and run me again.', 11, 1, @log_database_name) WITH NOWAIT;
             RETURN;
         END;
 
@@ -5400,9 +5411,12 @@ AND   ca.utc_timestamp < @end_date';
                                 rendering the query column blank. The
                                 raw text still carries the database and
                                 object ids, which beats an empty cell.
+                                COALESCE, not ISNULL: ISNULL types the
+                                result as its first argument and cuts
+                                the fallback text to 257 characters.
                                 */
                                 [processing-instruction(query)] =
-                                    ISNULL
+                                    COALESCE
                                     (
                                         OBJECT_SCHEMA_NAME
                                         (
@@ -6024,9 +6038,12 @@ AND   ca.utc_timestamp < @end_date';
                                         functions, and the concatenation
                                         with them — falling back to the
                                         raw text keeps the ids visible.
+                                        COALESCE, not ISNULL: ISNULL types
+                                        the result as its first argument and
+                                        cuts the fallback to 257 characters.
                                         */
                                         [processing-instruction(query)] =
-                                            ISNULL
+                                            COALESCE
                                             (
                                                 OBJECT_SCHEMA_NAME
                                                 (
