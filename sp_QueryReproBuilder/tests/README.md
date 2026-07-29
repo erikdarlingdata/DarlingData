@@ -27,16 +27,19 @@ password). Expect `237 passed, 0 failed` and `5 of 5 mutations caught`.
 
 | File | What it does |
 | --- | --- |
-| `run_tests.py` | 44 cases, 237 assertions. Each embeds a ShowPlanXML, drives it through `@query_plan_xml`, extracts the emitted repro, executes it, and asserts it built, is correct, and RAN. Self-contained and self-cleaning. |
+| `run_tests.py` | 265 assertions. Most cases embed a ShowPlanXML, drive it through `@query_plan_xml`, extract the emitted repro, execute it, and assert it built, is correct, and RAN. The `procname:` family instead resolves real one/two/three-part `@procedure_name` values against scratch Query Store databases it creates and drops. Self-contained and self-cleaning. |
 | `mutation_check.py` | Plants five plausible generation bugs in a scratch copy of the procedure, installs each, and asserts `run_tests.py` goes RED on every one -- proof the suite has teeth. Restores the real build afterward. |
 | `template_generate.sql` | The generation half: runs the procedure in `@query_plan_xml` mode and lets its result set print so the repro can be read off stdout. Driven by `run_tests.py`. |
 | `template_execute.sql` | The execution half: takes the repro back (as base64) into a real `nvarchar(max)` variable and runs it with `sys.sp_executesql` inside `BEGIN TRANSACTION ... ROLLBACK` and `TRY/CATCH`. Driven by `run_tests.py`. |
 
 Everything is embedded or synthesized. There is no dependency on a captured plan
-cache, on `StackOverflow2013`, or on any particular user database. Plans
+cache, on `StackOverflow2013`, or on any pre-existing user database. Plans
 reference `sys` objects, which are always present; the single case that needs a
 real user table (a parameterized `UPDATE`) uses a small fixture the harness
-creates in `tempdb` and drops on the way out.
+creates in `tempdb` and drops on the way out. The `procname:` family is the one
+exception to plan embedding: resolving `@procedure_name` means reading Query
+Store in a real database, so those cases build two scratch databases with Query
+Store enabled and drop them in a teardown that runs even when setup fails.
 
 ## The execute check is the one that earns its keep
 

@@ -22,6 +22,12 @@ deterministic - it depends on no captured plan cache and no specific user
 database. Plans reference sys objects (always present); the one case that needs
 a real user table uses a small fixture the harness creates in tempdb and drops.
 
+The one exception is the procname: family, which covers @procedure_name
+resolution (including three-part MyDb.dbo.MyProc pastes). Resolving a name means
+reading Query Store in a real database, which no synthetic plan can exercise, so
+those cases build and drop two scratch databases of their own. See
+run_procname_cases.
+
 The authentic ParameterCompiledValue serializations used below (e.g. numeric as
 (12.50), money as ($99.9500), datetimeoffset as '... +05:30', guid as
 {guid'...'}) were captured from real sniffed plans on SQL Server, so the
@@ -747,6 +753,254 @@ def _run_inline(server, password, sql, tag):
     return _run_sql_file(server, password, path)
 
 
+# ------------------------------------------------------- procedure name paths
+
+# The @procedure_name cases can't ride the @query_plan_xml entry point the rest
+# of the suite uses: resolving a name means hitting Query Store in a real
+# database. So they get their own fixture, two scratch databases with Query
+# Store on. qrb_pn_db owns the procedure; qrb_pn_other exists only to be the
+# WRONG current database, so a pasted three-part name has to override it to
+# resolve. Query Store is on in both because the precedence case has to reach
+# the procedure lookup in qrb_pn_other rather than stopping at the earlier
+# "Query Store isn't enabled for database" guard.
+PN_DB = "qrb_pn_db"
+PN_OTHER = "qrb_pn_other"
+
+PROCNAME_SETUP = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_pn_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_pn_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_pn_db;
+END;
+IF DB_ID('qrb_pn_other') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_pn_other SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_pn_other;
+END;
+CREATE DATABASE qrb_pn_db;
+CREATE DATABASE qrb_pn_other;
+GO
+ALTER DATABASE qrb_pn_db SET QUERY_STORE = ON;
+ALTER DATABASE qrb_pn_db SET QUERY_STORE
+    (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL, INTERVAL_LENGTH_MINUTES = 1);
+ALTER DATABASE qrb_pn_other SET QUERY_STORE = ON;
+ALTER DATABASE qrb_pn_other SET QUERY_STORE
+    (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL, INTERVAL_LENGTH_MINUTES = 1);
+GO
+USE qrb_pn_db;
+GO
+CREATE TABLE dbo.qrb_pn_table
+(
+    id integer NOT NULL,
+    val integer NOT NULL,
+    name nvarchar(50) NULL
+);
+INSERT dbo.qrb_pn_table (id, val, name) VALUES (1, 10, N'a'), (2, 20, N'b'), (3, 30, N'c');
+GO
+CREATE PROCEDURE dbo.qrb_pn_proc
+(
+    @val integer,
+    @name nvarchar(50)
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT c = COUNT_BIG(*) FROM dbo.qrb_pn_table AS q WHERE q.val > @val AND q.name = @name;
+END;
+GO
+EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
+EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
+EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
+GO
+/* Flush so the resolution cases don't race Query Store's async capture. */
+EXECUTE sys.sp_query_store_flush_db;
+GO
+SELECT marker = 'QS_ROWS:' + CONVERT(varchar(20), COUNT_BIG(*))
+FROM qrb_pn_db.sys.query_store_query AS qsq
+WHERE qsq.object_id = OBJECT_ID('qrb_pn_db.dbo.qrb_pn_proc');
+GO
+"""
+
+PROCNAME_TEARDOWN = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_pn_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_pn_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_pn_db;
+END;
+IF DB_ID('qrb_pn_other') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_pn_other SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_pn_other;
+END;
+"""
+
+# USE runs in its own batch, then the procedure is called unqualified so the
+# sp_ prefix rule finds it in master while DB_NAME() stays the scratch database
+# -- which is the whole point: the current database has to be the wrong one.
+PROCNAME_TEMPLATE = """\
+SET NOCOUNT ON;
+SET XACT_ABORT OFF;
+USE {db};
+GO
+BEGIN TRY
+    EXECUTE dbo.sp_QueryReproBuilder
+        {args};
+END TRY
+BEGIN CATCH
+    PRINT 'PROC_ERROR: Msg ' + CONVERT(varchar(20), ERROR_NUMBER()) +
+          ' Lvl ' + CONVERT(varchar(20), ERROR_SEVERITY()) +
+          ' : ' + ERROR_MESSAGE();
+END CATCH;
+"""
+
+# The message the procedure emits when a name resolves to no Query Store
+# entries. It reports the name and database AFTER parsing, so its exact text is
+# what proves which database was adopted and that the name was split.
+PN_MISS = "does not appear to have any entries in Query Store for database"
+
+PROCNAME_CASES = [
+    {
+        "name": "procname:three_part_adopts_database",
+        "db": PN_OTHER,
+        "args": "@procedure_name = 'qrb_pn_db.dbo.qrb_pn_proc'",
+        "expect_repro": True,
+        "note": "the pasted database wins over the current one when none was passed",
+    },
+    {
+        "name": "procname:three_part_bracketed",
+        "db": PN_OTHER,
+        "args": "@procedure_name = '[qrb_pn_db].[dbo].[qrb_pn_proc]'",
+        "expect_repro": True,
+        "note": "bracketed three-part paste splits the same way",
+    },
+    {
+        "name": "procname:three_part_wildcard",
+        "db": PN_OTHER,
+        "args": "@procedure_name = 'qrb_pn_db.dbo.qrb_pn_pro%'",
+        "expect_repro": True,
+        "note": "three-part name on the wildcard lookup path",
+    },
+    {
+        "name": "procname:explicit_database_wins",
+        "db": PN_OTHER,
+        "args": ("@database_name = 'qrb_pn_other',\n"
+                 "        @procedure_name = 'qrb_pn_db.dbo.qrb_pn_proc'"),
+        "expect_repro": False,
+        # Matches sp_QuickieStore: a three-part name only supplies the database
+        # when the caller passed none, so this looks in qrb_pn_other and misses.
+        "expect_text": ["The stored procedure qrb_pn_proc " + PN_MISS + " qrb_pn_other"],
+        "note": "explicitly passed @database_name beats the pasted one",
+    },
+    {
+        "name": "procname:three_part_missing_proc",
+        "db": PN_OTHER,
+        "args": "@procedure_name = 'qrb_pn_db.dbo.qrb_pn_nope'",
+        "expect_repro": False,
+        # Proves the split and the adoption without depending on any captured
+        # Query Store data: the message names the bare procedure and qrb_pn_db.
+        "expect_text": ["The stored procedure qrb_pn_nope " + PN_MISS + " qrb_pn_db"],
+        "note": "a three-part miss reports the parsed name and parsed database",
+    },
+    {
+        "name": "procname:two_part_unchanged",
+        "db": PN_DB,
+        "args": "@procedure_name = 'dbo.qrb_pn_proc'",
+        "expect_repro": True,
+        "note": "two-part behavior must be untouched by the three-part support",
+    },
+    {
+        "name": "procname:one_part_unchanged",
+        "db": PN_DB,
+        "args": "@procedure_name = 'qrb_pn_proc'",
+        "expect_repro": True,
+        "note": "one-part behavior must be untouched",
+    },
+]
+
+
+def run_procname_cases(server, password, only=None, verbose=False):
+    """Run the @procedure_name resolution cases against their own fixture.
+
+    Returns (results, setup_error) where results matches the plan-case shape:
+    (case_name, ok, label, detail).
+    """
+    cases = PROCNAME_CASES
+    if only:
+        cases = [c for c in cases if only in c["name"]]
+    if not cases:
+        return [], None
+
+    def bail(message):
+        """Setup can fail after creating one of the two databases, so tear down
+        on the way out rather than leaving a scratch database behind."""
+        _run_inline(server, password, PROCNAME_TEARDOWN, "procname_teardown")
+        return [], message
+
+    setup_out = _run_inline(server, password, PROCNAME_SETUP, "procname_setup")
+    setup_err = find_sql_errors(setup_out)
+    if setup_err:
+        return bail("could not build the procedure-name fixture: " + "; ".join(setup_err))
+    # If Query Store captured nothing the resolution cases would fail for a
+    # reason that has nothing to do with name parsing, so say so plainly.
+    m = re.search(r"QS_ROWS:(\d+)", setup_out)
+    if not m or int(m.group(1)) < 1:
+        return bail("Query Store captured no rows for qrb_pn_db.dbo.qrb_pn_proc "
+                    "(marker=%s); the resolution cases cannot run" %
+                    (m.group(1) if m else "absent"))
+
+    results = []
+    try:
+        for case in cases:
+            sql = PROCNAME_TEMPLATE.format(db=case["db"], args=case["args"])
+            out = _run_inline(server, password, sql, "procname_case")
+            mm = re.search(r"<\?_(.*?)\?>", out, re.DOTALL)
+            repro = mm.group(1).strip("\r\n").lstrip() if mm else None
+
+            checks = []
+
+            def ck(ok, label, detail=""):
+                checks.append((bool(ok), label, detail))
+
+            ck(not find_sql_errors(out), "no severe SQL error",
+               str(find_sql_errors(out)))
+
+            if case["expect_repro"]:
+                ck(repro is not None, "repro built for %s" % case["name"],
+                   "no repro; output tail=%r" % out[-300:])
+                ck(repro is not None and "qrb_pn_table" in repro,
+                   "repro is the fixture procedure's query",
+                   "repro[:200]=%r" % (repro[:200] if repro else None))
+                ck(PN_MISS not in out, "no 'not in Query Store' miss reported",
+                   "output claimed a miss")
+            else:
+                ck(repro is None, "no repro built (expected miss)",
+                   "unexpected repro[:200]=%r" % (repro[:200] if repro else None))
+
+            for t in (case.get("expect_text") or []):
+                ck(t in out, "message present: %s" % t,
+                   "not found; output tail=%r" % out[-400:])
+
+            case_failed = any(not ok for (ok, _l, _d) in checks)
+            for (ok, label, detail) in checks:
+                results.append((case["name"], ok, label, detail))
+            if case_failed and not verbose:
+                print("FAIL  %s" % case["name"])
+                for (ok, label, detail) in checks:
+                    if not ok:
+                        print("        - %s :: %s" % (label, detail))
+            elif not case_failed:
+                print("PASS  %s" % case["name"])
+                if verbose:
+                    for (ok, label, _d) in checks:
+                        print("        - %s" % label)
+    finally:
+        _run_inline(server, password, PROCNAME_TEARDOWN, "procname_teardown")
+
+    return results, None
+
+
 # ------------------------------------------------------------------ main
 
 def main():
@@ -809,6 +1063,13 @@ def main():
                         print("        - %s" % label)
     finally:
         _run_inline(args.server, args.password, FIXTURE_TEARDOWN, "fixture_teardown")
+
+    procname_results, procname_setup_error = run_procname_cases(
+        args.server, args.password, only=args.only, verbose=args.verbose)
+    if procname_setup_error:
+        print("ERROR: " + procname_setup_error)
+        sys.exit(1)
+    results.extend(procname_results)
 
     passed = sum(1 for (_n, ok, _l, _d) in results if ok)
     failed = sum(1 for (_n, ok, _l, _d) in results if not ok)
