@@ -185,6 +185,9 @@ DROP TABLE IF EXISTS dbo.ic_pk_key_test;
 DROP TABLE IF EXISTS dbo.ic_pk_exact_test;
 DROP TABLE IF EXISTS dbo.ic_sort_dir_test;
 DROP TABLE IF EXISTS dbo.ic_key_include_test;
+DROP TABLE IF EXISTS dbo.ic_floor_target_test;
+DROP TABLE IF EXISTS dbo.ic_floor_uc_test;
+DROP TABLE IF EXISTS dbo.ic_floor_dup_test;
 GO
 
 /*
@@ -323,6 +326,76 @@ CREATE TABLE
     filler varchar(100) NOT NULL,
     CONSTRAINT pk_ic_key_include_test PRIMARY KEY CLUSTERED (id)
 );
+
+/*
+ic_floor_target_test: the usage floor has to gate the index Rule 3 picks as a
+merge TARGET, not only the subset it disables.
+
+ix_ft_sub (col_a) is the subset. Two indexes qualify as its superset:
+ix_ft_cold (col_a, col_b) at ~5 reads and ix_ft_hot (col_a, col_c) at ~200.
+Rule 3's target subquery orders by LEN(key_columns) then index_name -- the two
+key lists are the same length, so the NAME decides and ix_ft_cold wins it.
+
+That ordering is the whole point. Under @min_reads = 100 the outer join still
+matches, because ix_ft_hot clears the floor and gives Rule 3 something to fire
+on, while the subquery on its own would still hand back ix_ft_cold: a below-floor
+index named as the merge target and then rebuilt by Rule 4/6. The subset's
+INCLUDE (col_d) is what makes that rebuild real -- without an include to merge,
+the target is flipped back to KEEP and gets no script either way, and the
+assertion would pass without proving anything.
+*/
+CREATE TABLE
+    dbo.ic_floor_target_test
+(
+    id integer NOT NULL,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL,
+    filler varchar(100) NOT NULL,
+    CONSTRAINT pk_ic_floor_target_test PRIMARY KEY CLUSTERED (id)
+);
+
+/*
+ic_floor_uc_test: the usage floor has to gate Rule 7.5 as well.
+
+uq_floor is a unique constraint at ~200 reads; ix_floor_nc has its exact key
+columns at ~5. Rule 7 will not promote ix_floor_nc under a floor of 100 -- it
+checks meets_usage_floor -- but Rule 7.5 reaches the same outcome on its own:
+DISABLE the constraint, rewrite the below-floor index as unique. Same shape as
+Group G's icg_uc, which is the pair already proven to make Rule 7.5 fire.
+*/
+CREATE TABLE
+    dbo.ic_floor_uc_test
+(
+    id integer NOT NULL,
+    col_a integer NOT NULL,
+    col_c integer NOT NULL,
+    filler varchar(100) NOT NULL,
+    CONSTRAINT pk_ic_floor_uc_test PRIMARY KEY CLUSTERED (id)
+);
+
+/*
+ic_floor_dup_test: Rule 7.6, which disables key duplicates of an index Rule 7.5
+just made unique.
+
+uq_fd plus ix_fd_win (~200 reads each) is the pair that produces the MAKE UNIQUE
+winner. ix_fd_cold carries the same keys with different includes at ~5 reads.
+
+Under a floor of 100 that cold index is exactly the case Rule 5 refuses -- same
+keys, different includes, one side below the floor -- so it arrives at Rule 7.6
+still unprocessed, and Rule 7.6 had no floor check of its own to stop it.
+*/
+CREATE TABLE
+    dbo.ic_floor_dup_test
+(
+    id integer NOT NULL,
+    col_a integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL,
+    filler varchar(100) NOT NULL,
+    CONSTRAINT pk_ic_floor_dup_test PRIMARY KEY CLUSTERED (id)
+);
 GO
 
 INSERT INTO
@@ -445,6 +518,63 @@ SELECT TOP (20000)
 FROM sys.all_columns AS ac1
 CROSS JOIN sys.all_columns AS ac2
 OPTION(MAXDOP 1);
+
+INSERT INTO
+    dbo.ic_floor_target_test
+(
+    id,
+    col_a,
+    col_b,
+    col_c,
+    col_d,
+    filler
+)
+SELECT TOP (20000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_a = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 500,
+    col_b = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 100,
+    col_c = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 250,
+    col_d = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 50,
+    filler = REPLICATE('x', 100)
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+INSERT INTO
+    dbo.ic_floor_uc_test
+(
+    id,
+    col_a,
+    col_c,
+    filler
+)
+SELECT TOP (20000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_a = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 500,
+    col_c = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 250,
+    filler = REPLICATE('x', 100)
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+INSERT INTO
+    dbo.ic_floor_dup_test
+(
+    id,
+    col_a,
+    col_c,
+    col_d,
+    filler
+)
+SELECT TOP (20000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_a = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 500,
+    col_c = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 250,
+    col_d = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 50,
+    filler = REPLICATE('x', 100)
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
 GO
 
 CREATE INDEX ix_hot ON dbo.ic_min_reads_test (col_a) INCLUDE (col_b);
@@ -468,6 +598,27 @@ CREATE INDEX ix_sort_desc ON dbo.ic_sort_dir_test (col_a, col_b DESC) INCLUDE (c
 /* Subset whose include (col_b) is already a key column of the superset */
 CREATE INDEX ix_ki_subset ON dbo.ic_key_include_test (col_a) INCLUDE (col_b);
 CREATE INDEX ix_ki_superset ON dbo.ic_key_include_test (col_a, col_b);
+
+/*
+One subset and two candidate supersets. The key lists of ix_ft_cold and
+ix_ft_hot are the same length, so Rule 3's ORDER BY falls through to the index
+name and ix_ft_cold -- the below-floor one -- is what it prefers.
+*/
+CREATE INDEX ix_ft_sub ON dbo.ic_floor_target_test (col_a) INCLUDE (col_d);
+CREATE INDEX ix_ft_cold ON dbo.ic_floor_target_test (col_a, col_b);
+CREATE INDEX ix_ft_hot ON dbo.ic_floor_target_test (col_a, col_c);
+
+/* A unique constraint and a plain index carrying its exact key columns */
+ALTER TABLE dbo.ic_floor_uc_test ADD CONSTRAINT uq_floor UNIQUE (col_a, id);
+CREATE INDEX ix_floor_nc ON dbo.ic_floor_uc_test (col_a, id) INCLUDE (col_c);
+
+/*
+Same pair again, plus a cold key duplicate of the winner for Rule 7.6 to find
+after Rule 7.5 has promoted ix_fd_win.
+*/
+ALTER TABLE dbo.ic_floor_dup_test ADD CONSTRAINT uq_fd UNIQUE (col_a, id);
+CREATE INDEX ix_fd_win ON dbo.ic_floor_dup_test (col_a, id) INCLUDE (col_c);
+CREATE INDEX ix_fd_cold ON dbo.ic_floor_dup_test (col_a, id) INCLUDE (col_d);
 GO
 
 /*
@@ -557,6 +708,45 @@ BEGIN
     SELECT @i += 1;
 END;
 GO
+
+/*
+Reads for the usage-floor fixtures: ~200 on everything that must clear a floor
+of 100, ~5 on the two that must miss it.
+
+Every index here gets SOME read, primary keys included. An index at exactly zero
+reads is claimed by Rule 1 as an Unused Index on any instance with more than
+seven days of uptime, and a Rule 1 DISABLE would land in these groups' dedupe
+counts and fail them for a reason that has nothing to do with the usage floor.
+*/
+DECLARE
+    @c bigint,
+    @i integer = 0;
+
+WHILE @i < 200
+BEGIN
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_target_test AS t WITH (INDEX = ix_ft_sub) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_target_test AS t WITH (INDEX = ix_ft_hot) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_uc_test AS t WITH (INDEX = uq_floor) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_dup_test AS t WITH (INDEX = uq_fd) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_dup_test AS t WITH (INDEX = ix_fd_win) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+
+    SELECT @i += 1;
+END;
+
+SELECT @i = 0;
+
+WHILE @i < 5
+BEGIN
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_target_test AS t WITH (INDEX = ix_ft_cold) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_uc_test AS t WITH (INDEX = ix_floor_nc) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_dup_test AS t WITH (INDEX = ix_fd_cold) WHERE t.col_a = @i % 500 OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_target_test AS t WITH (INDEX = pk_ic_floor_target_test) WHERE t.id = @i OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_uc_test AS t WITH (INDEX = pk_ic_floor_uc_test) WHERE t.id = @i OPTION(MAXDOP 1);
+    SELECT @c = COUNT_BIG(*) FROM dbo.ic_floor_dup_test AS t WITH (INDEX = pk_ic_floor_dup_test) WHERE t.id = @i OPTION(MAXDOP 1);
+
+    SELECT @i += 1;
+END;
+GO
 """
 
 CLEANUP_SQL = """
@@ -568,6 +758,9 @@ DROP TABLE IF EXISTS dbo.ic_pk_key_test;
 DROP TABLE IF EXISTS dbo.ic_pk_exact_test;
 DROP TABLE IF EXISTS dbo.ic_sort_dir_test;
 DROP TABLE IF EXISTS dbo.ic_key_include_test;
+DROP TABLE IF EXISTS dbo.ic_floor_target_test;
+DROP TABLE IF EXISTS dbo.ic_floor_uc_test;
+DROP TABLE IF EXISTS dbo.ic_floor_dup_test;
 """
 
 # Group F's fixture. Unlike everything above it, this one needs two databases:
@@ -1512,6 +1705,164 @@ def run_tests(server, password, uptime_days):
                 "found %d (ALTER INDEX DISABLE on a UC silently disables inbound FKs) %s"
                 % (len(uc_disable),
                    [(r["database_name"], r["script"]) for r in uc_disable]))
+
+    # ---- Group H: the usage floor gates every dedupe path, not just some ----
+    #
+    # Group B covers the screen where it always worked: an index below the floor
+    # is not the SUBJECT of a dedupe rule. These are the two places it could still
+    # be the subject or the target of one, because the rule never consulted the
+    # flag:
+    #
+    #   H1: Rule 3's target-selection subquery. The outer join requires both sides
+    #   to clear the floor, so the rule only fires when SOME superset qualifies --
+    #   but the TOP (1) subquery that actually names target_index_name ordered by
+    #   key length then name and never looked at the floor at all. With one
+    #   qualifying superset to make the rule fire and a below-floor one that sorts
+    #   first, the subquery handed back the cold index. Rule 4 then marked it
+    #   MERGE INCLUDES and Rule 6 rebuilt it: a CREATE INDEX ... DROP_EXISTING
+    #   against an index the caller's floor said to leave alone, paired with a
+    #   DISABLE of the subset that runs regardless.
+    #
+    #   H2: Rule 7.5. Rule 7 checks meets_usage_floor before promoting an index to
+    #   replace a unique constraint. Rule 7.5 reaches the identical outcome --
+    #   DISABLE the constraint, rewrite the index as UNIQUE -- through a different
+    #   pair of UPDATEs that did not check it. Under a floor high enough to
+    #   exclude the index, Rule 7 correctly declined and Rule 7.5 did it anyway.
+    #
+    # Both are asserted against a floor of 100, and both are preceded by a run at
+    # @min_reads = 0 proving the rule fires on this fixture at all. Without that
+    # control, "the cold index is not the target" is equally true of a fixture
+    # where nothing matched in the first place.
+
+    # H1: Rule 3 must not pick a below-floor index as the merge target.
+    #
+    # No floor first. This is the control that matters most here: it proves the
+    # subquery's ORDER BY genuinely prefers ix_ft_cold, so a different answer
+    # under a floor is the floor doing its job and not some unrelated ordering.
+    rows, _ = run_proc(server, password, "ic_floor_target_test", extra=", @min_reads = 0")
+
+    sub_rows = dedupe_rows(rows, "ix_ft_sub")
+    assert_test("H-UsageFloor",
+                "positive control: @min_reads = 0, ix_ft_sub is disabled as a key subset",
+                len(sub_rows) >= 1,
+                "found %d (%s)" % (len(sub_rows), [r["script_type"] for r in sub_rows]))
+
+    cold_targeted = [r for r in sub_rows if r.get("target_index_name") == "ix_ft_cold"]
+    assert_test("H-UsageFloor",
+                "positive control: @min_reads = 0, the target IS ix_ft_cold (it sorts first)",
+                len(cold_targeted) >= 1,
+                "targets: %s" % [r.get("target_index_name") for r in sub_rows])
+
+    # The assertion. ix_ft_cold has 5 reads against a floor of 100, so it may not
+    # be named as the target no matter where the subquery's ORDER BY would land.
+    rows, _ = run_proc(server, password, "ic_floor_target_test", extra=", @min_reads = 100")
+
+    sub_rows = dedupe_rows(rows, "ix_ft_sub")
+    assert_test("H-UsageFloor",
+                "positive control: @min_reads = 100, Rule 3 still fires for ix_ft_sub",
+                len(sub_rows) >= 1,
+                "found %d (%s) -- ix_ft_hot clears the floor, so the rule has a target"
+                % (len(sub_rows), [r["script_type"] for r in sub_rows]))
+
+    cold_targeted = [r for r in sub_rows if r.get("target_index_name") == "ix_ft_cold"]
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: below-floor ix_ft_cold is not chosen as the merge target",
+                len(cold_targeted) == 0,
+                "targets: %s (expected ix_ft_hot)"
+                % [r.get("target_index_name") for r in sub_rows])
+
+    hot_targeted = [r for r in sub_rows if r.get("target_index_name") == "ix_ft_hot"]
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: the target is ix_ft_hot, the superset that clears the floor",
+                len(hot_targeted) >= 1,
+                "targets: %s" % [r.get("target_index_name") for r in sub_rows])
+
+    # And nothing may rebuild the cold index either -- Rule 4/6 follow whatever
+    # Rule 3 named, so a target that slipped through becomes a MERGE SCRIPT.
+    cold_rows = dedupe_rows(rows, "ix_ft_cold")
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: below-floor ix_ft_cold gets no dedupe action at all",
+                len(cold_rows) == 0,
+                "found %d (%s)" % (len(cold_rows), [r["script_type"] for r in cold_rows]))
+
+    # Positive control, same as Group B's: the floor gates dedupe only. If the fix
+    # worked by making the cold index invisible, this is what would catch it.
+    matches = find_rows(rows, index_name="ix_ft_cold", script_type="COMPRESSION SCRIPT")
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: ix_ft_cold still gets COMPRESSION SCRIPT",
+                len(matches) == 1, "found %d" % len(matches))
+
+    # H2: Rule 7.5 must not promote a below-floor index over a unique constraint.
+    rows, _ = run_proc(server, password, "ic_floor_uc_test", extra=", @min_reads = 0")
+
+    uc_drop = find_rows(rows, index_name="uq_floor",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("H-UsageFloor",
+                "positive control: @min_reads = 0, uq_floor gets a DISABLE CONSTRAINT SCRIPT",
+                len(uc_drop) == 1, "found %d (Rule 7.5 fires on this fixture)" % len(uc_drop))
+
+    nc_promoted = find_rows(rows, index_name="ix_floor_nc", script_type="MERGE SCRIPT")
+    assert_test("H-UsageFloor",
+                "positive control: @min_reads = 0, ix_floor_nc is the MAKE UNIQUE replacement",
+                len(nc_promoted) == 1, "found %d" % len(nc_promoted))
+
+    # The assertion. ix_floor_nc has 5 reads against a floor of 100. Rule 7
+    # already declined to promote it; Rule 7.5 must decline too.
+    rows, _ = run_proc(server, password, "ic_floor_uc_test", extra=", @min_reads = 100")
+
+    nc_rows = dedupe_rows(rows, "ix_floor_nc")
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: below-floor ix_floor_nc is not promoted to unique",
+                len(nc_rows) == 0,
+                "found %d (%s) -- a MERGE SCRIPT here rewrites an index the floor excluded"
+                % (len(nc_rows), [r["script_type"] for r in nc_rows]))
+
+    # The other half of the same recommendation: the constraint must survive too.
+    # Dropping it while its replacement is never created leaves the uniqueness
+    # unenforced, and the DROP CONSTRAINT runs cleanly on its own.
+    uc_rows = dedupe_rows(rows, "uq_floor")
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: uq_floor is not dropped in favor of a below-floor index",
+                len(uc_rows) == 0,
+                "found %d (%s)" % (len(uc_rows), [r["script_type"] for r in uc_rows]))
+
+    matches = find_rows(rows, index_name="ix_floor_nc", script_type="COMPRESSION SCRIPT")
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: ix_floor_nc still gets COMPRESSION SCRIPT",
+                len(matches) == 1, "found %d" % len(matches))
+
+    # H3: Rule 7.6 must not disable a below-floor key duplicate of the winner.
+    #
+    # This one needs no separate @min_reads = 0 run. The controls it needs all
+    # come from the floored run itself: Rule 7.5 has to have produced a MAKE
+    # UNIQUE winner, or Rule 7.6 has nothing to pair the cold index against and
+    # the assertion below would hold for the wrong reason.
+    rows, _ = run_proc(server, password, "ic_floor_dup_test", extra=", @min_reads = 100")
+
+    uc_drop = find_rows(rows, index_name="uq_fd",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("H-UsageFloor",
+                "positive control: @min_reads = 100, uq_fd still gets a DISABLE CONSTRAINT SCRIPT",
+                len(uc_drop) == 1, "found %d" % len(uc_drop))
+
+    win_rows = find_rows(rows, index_name="ix_fd_win", script_type="MERGE SCRIPT")
+    assert_test("H-UsageFloor",
+                "positive control: @min_reads = 100, ix_fd_win is the MAKE UNIQUE winner",
+                len(win_rows) == 1,
+                "found %d (Rule 7.6 needs this winner to pair against)" % len(win_rows))
+
+    # The assertion. ix_fd_cold is a key duplicate of that winner and sits below
+    # the floor, which is precisely the pairing Rule 5 already refuses.
+    cold_rows = dedupe_rows(rows, "ix_fd_cold")
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: below-floor ix_fd_cold is not disabled as a key duplicate",
+                len(cold_rows) == 0,
+                "found %d (%s)" % (len(cold_rows), [r["script_type"] for r in cold_rows]))
+
+    matches = find_rows(rows, index_name="ix_fd_cold", script_type="COMPRESSION SCRIPT")
+    assert_test("H-UsageFloor",
+                "@min_reads = 100: ix_fd_cold still gets COMPRESSION SCRIPT",
+                len(matches) == 1, "found %d" % len(matches))
 
     return results
 
