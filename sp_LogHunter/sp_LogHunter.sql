@@ -97,7 +97,7 @@ BEGIN
                      WHEN N'@custom_message' THEN 'if you want to search for a custom string'
                      WHEN N'@custom_message_only' THEN 'only search for the custom string'
                      WHEN N'@first_log_only' THEN 'only search through the first error log'
-                     WHEN N'@language_id' THEN 'to use something other than English'
+                     WHEN N'@language_id' THEN 'does not translate the search strings; they are English literals. Use @custom_message on non-English servers'
                      WHEN N'@help' THEN 'how you got here'
                      WHEN N'@debug' THEN 'dumps raw temp table contents'
                      WHEN N'@version' THEN 'OUTPUT; for support'
@@ -111,7 +111,7 @@ BEGIN
                      WHEN N'@custom_message' THEN 'something specific you want to search for. no wildcards or substitutions.'
                      WHEN N'@custom_message_only' THEN 'NULL, 0, 1'
                      WHEN N'@first_log_only' THEN 'NULL, 0, 1'
-                     WHEN N'@language_id' THEN 'SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id;'
+                     WHEN N'@language_id' THEN '1033; anything else only triggers a warning, because the search strings stay English'
                      WHEN N'@help' THEN 'NULL, 0, 1'
                      WHEN N'@debug' THEN 'NULL, 0, 1'
                      WHEN N'@version' THEN 'OUTPUT; for support'
@@ -306,12 +306,12 @@ BEGIN
     Retire @days_back once we are in date-range mode, and do it HERE —
     after the two fixups above, not before them.
 
-    The check used to require BOTH dates to be present, but a caller who
-    supplies only one gets the other filled in just above. Running the
-    check first meant @days_back survived at its -7 default, and the log
-    file pruner below then deleted every archive older than a week — so
-    searching for an incident from three months ago quietly threw away
-    the only file that contained it and returned nothing.
+    One supplied date is enough to be in date-range mode, because a
+    caller who supplies only one gets the other filled in just above.
+    If @days_back survived at its -7 default past this point, the log
+    file pruner below would delete every archive older than a week — so
+    searching for an incident from three months ago would quietly throw
+    away the only file that contained it and return nothing.
     */
     IF  @days_back IS NOT NULL
     AND
@@ -406,9 +406,10 @@ BEGIN
         start_date nvarchar(30) NULL,
         end_date nvarchar(30) NULL,
         /*
-        Widened from 10: the value is now N'20260720', which is 11 characters
-        rather than 10. At the old width it truncated to N'20260720 - an
-        unterminated literal that broke every generated command.
+        nvarchar(12), not 10: the stored value is N'20260720' - eleven
+        characters counting the N prefix and quotes. Anything narrower
+        truncates it into an unterminated literal that breaks every
+        generated command.
         */
         [current_date] nvarchar(12)
             DEFAULT N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, 1, SYSDATETIME()), 112) + N'''',
@@ -445,7 +446,8 @@ BEGIN
         id integer
            PRIMARY KEY CLUSTERED
            IDENTITY,
-        command nvarchar(4000) NOT NULL
+        command nvarchar(4000) NOT NULL,
+        error_message nvarchar(4000) NULL
     );
 
     /*get all the error logs*/
@@ -472,9 +474,7 @@ BEGIN
         final entry lands somewhere in the following 59 seconds - so the
         reported stamp always understates when the file actually ends.
         Comparing it exactly prunes archives that really do reach into
-        the window. (HEAD hid this by typing the column as `date`, which
-        floored everything to midnight and bought a full day of slack by
-        accident.) Since enum <= true_end < enum + 60s, one minute is
+        the window. Since enum <= true_end < enum + 60s, one minute is
         exactly enough.
         */
         WHERE DATEADD(MINUTE, 1, e.log_date) < DATEADD(DAY, @days_back, SYSDATETIME())
@@ -488,10 +488,10 @@ BEGIN
     Only the START of the window can rule a log file out, and that is the
     whole subtlety here. sp_enumerrorlogs reports each archive's LAST
     write, not its first, so a file stamped "March 10" holds entries
-    reaching back to whenever the previous archive ended. The old
-    predicate also deleted anything stamped AFTER @end_date — which threw
-    away precisely the file that straddles the end of the window, i.e.
-    the one most likely to contain the incident being investigated.
+    reaching back to whenever the previous archive ended. Excluding
+    anything stamped AFTER @end_date would throw away precisely the file
+    that straddles the end of the window, i.e. the one most likely to
+    contain the incident being investigated.
 
     A file whose last write predates the window truly cannot contain it,
     so that is the only safe exclusion. Keeping the newer files costs a
@@ -537,7 +537,7 @@ BEGIN
 
     /*
     Maybe you only want the first one anyway. Archive 0 IS the current
-    log, so keeping "archive > 1" kept two files, not one.
+    log, so "archive > 0" is the predicate that keeps exactly one file.
     */
     IF @first_log_only = 1
     BEGIN
@@ -579,10 +579,9 @@ BEGIN
             Canary floor is normally "at least 90 days back" so these
             server-identity strings are found regardless of how recent
             the caller is interested in. When the caller supplied
-            @start_date/@end_date, @days_back is NULL at this point —
-            the previous CASE collapsed to NULL, produced a NULL
-            days_back literal, and xp_readerrorlog received NULL as a
-            date argument and errored. Fall back to @start_date in
+            @start_date/@end_date, @days_back is NULL at this point, and
+            a NULL days_back literal would reach xp_readerrorlog as a
+            NULL date argument and error. Fall back to @start_date in
             date-range mode so the canary has a concrete floor.
             */
             days_back =
@@ -676,9 +675,12 @@ BEGIN
                    avoid closing the argument early and producing a syntax
                    error when sys.sp_executesql parses the generated batch. A
                    literal " needs no handling at all now that it is not a
-                   delimiter, and the search string is no longer subject to the
+                   delimiter, and the search string is not subject to the
                    128-character identifier limit that silently dropped long
-                   messages into #errors. */
+                   messages into #errors. The nvarchar(4000) command column is
+                   the remaining ceiling: a @custom_message within a few
+                   characters of 4000 (one less per apostrophe) still
+                   truncates the generated command and lands in #errors. */
                 N'N''' + REPLACE(@custom_message, N'''', N'''''') + N'''',
                 N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'''',
                 N'N''' + CONVERT(nvarchar(30), @start_date, 121) + N'''',
@@ -786,15 +788,17 @@ BEGIN
                         @c;
                 END TRY
                 BEGIN CATCH
-                    /*Insert any searches that throw an error here*/
+                    /*Insert any searches that throw an error here, and why they failed*/
                     INSERT
                         #errors
                     (
-                        command
+                        command,
+                        error_message
                     )
                     VALUES
                     (
-                        @c
+                        @c,
+                        ERROR_MESSAGE()
                     );
                 END CATCH;
             END;
