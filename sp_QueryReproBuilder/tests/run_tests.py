@@ -788,6 +788,28 @@ ALTER DATABASE qrb_pn_other SET QUERY_STORE = ON;
 ALTER DATABASE qrb_pn_other SET QUERY_STORE
     (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL, INTERVAL_LENGTH_MINUTES = 1);
 GO
+/*
+Query Store initialization is asynchronous: on a cold instance the
+desired READ_WRITE state can lead the actual state, and compiles that
+happen during initialization are silently lost. Wait for the real
+state in both scratch databases before running the workload, or the
+resolution cases fail with zero captured rows on slow CI containers.
+*/
+DECLARE
+    @qs_state_tries integer = 0;
+
+WHILE @qs_state_tries < 30
+BEGIN
+    IF  EXISTS (SELECT 1/0 FROM qrb_pn_db.sys.database_query_store_options AS dqso WHERE dqso.actual_state_desc = N'READ_WRITE')
+    AND EXISTS (SELECT 1/0 FROM qrb_pn_other.sys.database_query_store_options AS dqso WHERE dqso.actual_state_desc = N'READ_WRITE')
+    BEGIN
+        BREAK;
+    END;
+
+    WAITFOR DELAY '00:00:01';
+    SET @qs_state_tries += 1;
+END;
+GO
 USE qrb_pn_db;
 GO
 CREATE TABLE dbo.qrb_pn_table
@@ -809,16 +831,36 @@ BEGIN
     SELECT c = COUNT_BIG(*) FROM dbo.qrb_pn_table AS q WHERE q.val > @val AND q.name = @name;
 END;
 GO
-EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
-EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
-EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
-GO
-/* Flush so the resolution cases don't race Query Store's async capture. */
-EXECUTE sys.sp_query_store_flush_db;
-GO
-SELECT marker = 'QS_ROWS:' + CONVERT(varchar(20), COUNT_BIG(*))
-FROM qrb_pn_db.sys.query_store_query AS qsq
-WHERE qsq.object_id = OBJECT_ID('qrb_pn_db.dbo.qrb_pn_proc');
+/*
+Execute, flush, and verify capture in a retry loop rather than once:
+even after the state wait above, a cold Query Store can miss the first
+compiles, and a single-shot check turns that latency into a hard
+fixture failure. Ten more executions and a re-flush cost nothing.
+*/
+DECLARE
+    @qs_capture_tries integer = 0,
+    @qs_rows bigint = 0;
+
+WHILE @qs_capture_tries < 10 AND @qs_rows = 0
+BEGIN
+    EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
+    EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
+    EXECUTE dbo.qrb_pn_proc @val = 5, @name = N'a';
+    EXECUTE sys.sp_query_store_flush_db;
+
+    SELECT @qs_rows = COUNT_BIG(*)
+    FROM qrb_pn_db.sys.query_store_query AS qsq
+    WHERE qsq.object_id = OBJECT_ID('qrb_pn_db.dbo.qrb_pn_proc');
+
+    IF @qs_rows = 0
+    BEGIN
+        WAITFOR DELAY '00:00:01';
+    END;
+
+    SET @qs_capture_tries += 1;
+END;
+
+SELECT marker = 'QS_ROWS:' + CONVERT(varchar(20), @qs_rows);
 GO
 """
 
