@@ -2,7 +2,7 @@
 
 **Run before and after any change to `sp_QuickieStore.sql`.** Compiling proves
 very little here: the procedure is ~16,000 lines that assemble a large dynamic
-SQL statement whose *shape* changes with almost every one of its 59 parameters.
+SQL statement whose *shape* changes with almost every one of its 60 parameters.
 The statement that breaks is built at run time from string fragments, so it only
 fails when it executes.
 
@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. 134 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. 157 assertions. |
 
 ```
 cd sp_QuickieStore/tests
@@ -18,7 +18,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `134`.
+password). Expect `157`.
 
 ## What it actually covers
 
@@ -31,6 +31,10 @@ each run *executes* what it built:
 - **9 `@wait_filter` values**, **4 `@execution_type_desc`**, **4 `@query_type`**.
 - The **`@expert_mode` x `@format_output` grid**, which rewrites the column list,
   plus several sort orders combined with expert mode.
+- **`@find_parameter_sensitive`**, the plan-shape volatility mode: ranking by
+  each volatility metric, the mode grids, floors, mode-conflict guard errors,
+  and a fixture procedure (`qs_sniff_proc`) skewed hard enough that the
+  `parameter sensitive` signal must fire on a real conviction.
 
 On top of that, **bidirectional** assertions prove the filters actually filter
 rather than being silently ignored — `@query_text_search` on a known string vs

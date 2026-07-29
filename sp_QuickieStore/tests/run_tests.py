@@ -2,7 +2,7 @@
 sp_QuickieStore assertion test harness
 ======================================
 sp_QuickieStore is ~16,000 lines that assemble a large dynamic SQL statement
-whose SHAPE changes with almost every one of its 59 parameters: @sort_order
+whose SHAPE changes with almost every one of its 60 parameters: @sort_order
 alone accepts 35+ values, each producing a different ORDER BY and column set,
 and @wait_filter / @execution_type_desc / @query_type / @expert_mode /
 @format_output each rewrite the statement again.
@@ -199,6 +199,42 @@ BEGIN
     SET @i += 1;
 END;
 
+-- Parameter sensitivity fixture for @find_parameter_sensitive: a skewed table
+-- (group 1 has 100k rows, groups 2-501 have one each) and a procedure compiled
+-- on a tiny group so the seek + lookup plan gets reused for the giant group.
+-- One plan shape, four orders of magnitude of cpu swing, flat-ish row counts.
+CREATE TABLE dbo.skew
+(
+    id integer NOT NULL IDENTITY PRIMARY KEY,
+    grp integer NOT NULL,
+    pad char(200) NOT NULL
+);
+
+INSERT dbo.skew WITH (TABLOCK) (grp, pad)
+SELECT TOP (100000) 1, REPLICATE('x', 200)
+FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2;
+
+INSERT dbo.skew (grp, pad)
+SELECT TOP (500) 1 + ROW_NUMBER() OVER (ORDER BY ac1.object_id), REPLICATE('y', 200)
+FROM sys.all_columns AS ac1;
+
+CREATE INDEX ix_grp ON dbo.skew (grp);
+
+EXECUTE (N'CREATE PROCEDURE dbo.qs_sniff_proc (@grp integer) AS BEGIN SET NOCOUNT ON; DECLARE @c bigint, @p char(200); SELECT @c = COUNT_BIG(*) FROM dbo.skew AS s WHERE s.grp = @grp; SELECT TOP (10) @p = s2.pad FROM dbo.skew AS s2 WHERE s2.grp = @grp ORDER BY s2.pad; END;');
+
+DECLARE @g integer = 0;
+WHILE @g < 6
+BEGIN
+    EXECUTE dbo.qs_sniff_proc @grp = 5;
+    SET @g += 1;
+END;
+EXECUTE dbo.qs_sniff_proc @grp = 1;
+EXECUTE dbo.qs_sniff_proc @grp = 1;
+EXECUTE dbo.qs_sniff_proc @grp = 1;
+EXECUTE dbo.qs_sniff_proc @grp = 301;
+EXECUTE dbo.qs_sniff_proc @grp = 302;
+EXECUTE dbo.qs_sniff_proc @grp = 303;
+
 EXECUTE sys.sp_query_store_flush_db;
 """
 
@@ -377,6 +413,115 @@ def bidirectional_tests(server, password, R):
             result_rows(out) == 0, "got %d rows" % result_rows(out))
 
 
+PS_SUMMARY_MARKER = "multi_shape_query_hashes"
+
+
+def ps_detail_rows(stdout):
+    """Detail rows from @find_parameter_sensitive output: one per plan shape,
+    each beginning with the analyzed database name."""
+    return sum(1 for line in stdout.splitlines()
+               if line.startswith(TEST_DB + "\t"))
+
+
+def parameter_sensitive_tests(server, password, R):
+    """@find_parameter_sensitive is a takeover mode like @find_high_impact: it
+    returns its own result sets (a summary plus one row per plan shape) and
+    never reaches the footer, so completion is proven by the summary result
+    set's header instead of DONE_MARKER. The fixture's qs_sniff_proc gives it
+    a real conviction to make: one plan shape whose cpu swings four orders of
+    magnitude while rows stay flat."""
+    out, combined = run_qs(server, password, ", @find_parameter_sensitive = 1")
+    errs = find_sql_errors(combined)
+    R.check("ParamSensitive", "default run executes cleanly", not errs, str(errs[:2]))
+    R.check("ParamSensitive", "default run returns the summary result set",
+            PS_SUMMARY_MARKER in out, "summary header missing")
+    R.check("ParamSensitive", "default run returns detail rows",
+            ps_detail_rows(out) > 0, "no shapes surfaced from the skewed workload")
+    R.check("ParamSensitive", "the sniffed procedure is surfaced",
+            "qs_sniff_proc" in out, "qs_sniff_proc missing from output")
+    R.check("ParamSensitive", "the parameter sensitive signal fires",
+            "parameter sensitive (cpu" in out, "signals column missing the verdict")
+
+    # Each of these picks a different volatility column to rank by; the wait
+    # sort falls back to cpu. 'tempdb' additionally exercises the 2017+ branch.
+    for so in ("duration", "memory", "rows", "tempdb", "physical reads",
+               "cpu waits"):
+        out, combined = run_qs(server, password,
+                               ", @find_parameter_sensitive = 1, "
+                               "@sort_order = '%s'" % _esc(so))
+        errs = find_sql_errors(combined)
+        R.check("ParamSensitive", "@sort_order = '%s' executes cleanly" % so,
+                not errs and PS_SUMMARY_MARKER in out, str(errs[:2]))
+
+    for expert in (0, 1):
+        for fmt in (0, 1):
+            extra = (", @find_parameter_sensitive = 1, @expert_mode = %d, "
+                     "@format_output = %d" % (expert, fmt))
+            out, combined = run_qs(server, password, extra)
+            errs = find_sql_errors(combined)
+            R.check("ParamSensitive",
+                    "expert_mode=%d format_output=%d executes cleanly"
+                    % (expert, fmt),
+                    not errs and PS_SUMMARY_MARKER in out, str(errs[:2]))
+
+    out, combined = run_qs(server, password,
+                           ", @find_parameter_sensitive = 1, @top = 1")
+    R.check("ParamSensitive", "@top = 1 returns exactly one shape",
+            ps_detail_rows(out) == 1, "got %d rows" % ps_detail_rows(out))
+
+    out, combined = run_qs(server, password,
+                           ", @find_parameter_sensitive = 1, "
+                           "@execution_count = 1000000")
+    R.check("ParamSensitive",
+            "@execution_count impossibly high: summary still returned "
+            "(positive control for the absence below)",
+            PS_SUMMARY_MARKER in out, "summary header missing")
+    R.check("ParamSensitive", "@execution_count impossibly high returns no shapes",
+            ps_detail_rows(out) == 0, "got %d rows" % ps_detail_rows(out))
+
+    for extra, what in (
+            (", @find_parameter_sensitive = 1, @find_high_impact = 1",
+             "@find_high_impact"),
+            (", @find_parameter_sensitive = 1, @get_all_databases = 1",
+             "@get_all_databases"),
+            (", @find_parameter_sensitive = 1, @log_to_table = 1",
+             "@log_to_table")):
+        out, combined = run_qs(server, password, extra)
+        R.check("ParamSensitive", "conflict with %s raises the guard error" % what,
+                "cannot be used with" in combined, "guard error missing")
+
+    # DEBUG dumps: run against a scratch database with Query Store ON but no
+    # captured queries. master's Query Store is off, which bails out long
+    # before the mode block, so it cannot reach the new dump section. This
+    # reaches the mode with an empty Query Store (covering that path too),
+    # dumps every #ps_* table as its "is empty" row, and exercises the
+    # extended guards that skip the normal-path tables the mode never
+    # creates. With no XML rows, the go-sqlcmd rendering problem the other
+    # @debug test dodges does not apply here.
+    empty_db = TEST_DB + "_empty"
+    drop_empty = ("IF DB_ID(N'%s') IS NOT NULL BEGIN "
+                  "ALTER DATABASE %s SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+                  "DROP DATABASE %s; END;" % (empty_db, empty_db, empty_db))
+    _sqlcmd(server, password,
+            drop_empty +
+            " CREATE DATABASE %s; ALTER DATABASE %s SET QUERY_STORE = ON "
+            "(OPERATION_MODE = READ_WRITE);" % (empty_db, empty_db))
+    try:
+        sql = ("SET NOCOUNT ON; EXECUTE dbo.sp_QuickieStore "
+               "@database_name = '%s', @find_parameter_sensitive = 1, "
+               "@debug = 1;" % empty_db)
+        out, err = _sqlcmd(server, password, sql)
+        R.check("ParamSensitive",
+                "@debug = 1 on an empty Query Store: no severe SQL error",
+                not find_sql_errors(out + "\n" + err),
+                str(find_sql_errors(out + "\n" + err)))
+        R.check("ParamSensitive", "@debug = 1 reaches the mode's DEBUG dumps",
+                "#ps_shape_stats is empty" in out,
+                "new dump section not reached")
+    finally:
+        _sqlcmd(server, password, drop_empty)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="SQL2022")
@@ -403,6 +548,7 @@ def main():
             mode_matrix(args.server, args.password, R)
             filter_matrix(args.server, args.password, R)
             bidirectional_tests(args.server, args.password, R)
+            parameter_sensitive_tests(args.server, args.password, R)
     finally:
         out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL)
         R.check("Fixture", "scratch database dropped",
