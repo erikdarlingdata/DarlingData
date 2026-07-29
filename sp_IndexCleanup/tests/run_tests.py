@@ -7,17 +7,47 @@ Usage:
     python run_tests.py [--server SQL2022] [--password "L!nt0044"]
 """
 
+import os
+import re
+import shlex
 import subprocess
 import sys
-import re
+
+
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment
+    so the harness runs both locally and in CI. Locally SQLCMD_BIN defaults to
+    'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI sets SQLCMD_BIN to the
+    go-based sqlcmd and SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    container's self-signed cert and disable encryption, which the modern Go
+    TLS stack needs to connect to the SQL Server 2017 container."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
+
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def find_sql_errors(text):
+    """Return any SQL errors of severity 16 or higher found in text.
+
+    go-sqlcmd reports errors on stdout, so both streams have to be checked.
+    Matching the severity numerically catches Level 16 through 19 rather than
+    only the literal "Level 16".
+    """
+    if not text:
+        return []
+
+    return re.findall(r"Msg \d+, Level 1[6-9][^\n]*", text)
 
 
 def run_sqlcmd(server, password):
     """Run the test SQL and capture output."""
     cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+        *_sqlcmd_prefix(),
+        "-S", server, "-U", "sa", "-P", password,
         "-d", "StackOverflow2013",
-        "-i", "adversarial_test.sql",
+        "-i", os.path.join(HERE, "adversarial_test.sql"),
         "-W",  # trim trailing spaces
         "-s", "\t",  # tab delimiter
     ]
@@ -93,18 +123,35 @@ def run_tests(rows):
     assert_test("1-UC", "1a: NC subset of UC flagged DISABLE",
                 len(matches) == 1, f"found {len(matches)}")
 
-    # 1a: UC merge script → CREATE UNIQUE
+    # 1a: A unique CONSTRAINT must NOT be picked as the wider merge target.
+    #
+    # These two assertions used to expect the opposite, and the proc used to
+    # oblige, emitting:
+    #   CREATE UNIQUE INDEX [uq_uc_abc] ... INCLUDE ([col_e])
+    #       WITH (DROP_EXISTING = ON, ...)
+    # against a constraint-backed index. SQL Server rejects that outright with
+    # Msg 1907 ("The new index definition does not match the constraint being
+    # enforced by the existing index") - verified on 2016/2019/2022/2025. The
+    # paired DISABLE of the subset ran fine, so the net effect was losing a
+    # covering index while the constraint never absorbed its include.
+    #
+    # Contrast with 1d below: a plain unique INDEX does accept DROP_EXISTING
+    # with an added INCLUDE, so it remains a valid merge target. The dividing
+    # line is is_unique_constraint, not is_unique.
     matches = find_rows(rows, table_name="test_ic_uc", index_name="uq_uc_abc",
                         script_type="MERGE SCRIPT")
-    has_unique = any("CREATE UNIQUE" in m.get("script", "") for m in matches)
-    assert_test("1-UC", "1a: UC merge script has CREATE UNIQUE",
-                has_unique, f"found {len(matches)} merge rows, unique={has_unique}")
+    assert_test("1-UC", "1a: UC NOT used as merge target (Msg 1907)",
+                len(matches) == 0, f"found {len(matches)} merge rows (expected 0)")
 
-    # 1b: NC subset of UC with includes → DISABLE
+    # 1b: A subset carrying an include the constraint cannot absorb must survive.
+    # Disabling it would drop col_e coverage with no working merge to replace it.
+    # (ix_uc_ab, which has no includes, is still correctly disabled above: the
+    # constraint's keys already cover it, so no script against the constraint is
+    # needed.)
     matches = find_rows(rows, table_name="test_ic_uc", index_name="ix_uc_ab_inc",
                         script_type="DISABLE SCRIPT")
-    assert_test("1-UC", "1b: NC subset of UC (with includes) flagged DISABLE",
-                len(matches) == 1, f"found {len(matches)}")
+    assert_test("1-UC", "1b: NC subset of UC (with includes) NOT disabled",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
 
     # 1c: NC with non-prefix UC keys → NOT subset
     matches = find_rows(rows, table_name="test_ic_uc", index_name="ix_uc_bc",
@@ -292,10 +339,52 @@ def run_tests(rows):
                 len(matches) == 0, f"found {len(matches)} (expected 0)")
 
     # 12b: UC + NC + subset on same table
-    # KNOWN ISSUE: uq_int_cd, ix_int_cd, and ix_int_c don't appear in
-    # output at all — needs investigation with @debug = 1 to determine
-    # if they're excluded at collection or rule processing stage.
-    # Skipping assertion for now — tracked as issue for investigation.
+    # 12b: UC + key-duplicate NC + key-subset NC on the same table.
+    #
+    # This was skipped for a long time with a comment saying these three indexes
+    # "don't appear in output at all -- needs investigation". They were absent
+    # because the FIXTURE was broken, not the procedure: col_c and col_d were
+    # random values from 200 and 100 buckets across 10,000 rows, so
+    # uq_int_cd UNIQUE (col_c, col_d) failed to create on every run (Msg 1505),
+    # and the read loop then aborted hinting the missing index (Msg 308). The
+    # runner could not see any of it because it checked stderr and go-sqlcmd
+    # reports errors on stdout. Both are fixed; on clean data the procedure gets
+    # this group right.
+
+    # 12b: the constraint is replaced by its nonclustered twin
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="uq_int_cd",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("12-Interact", "12b: uq_int_cd constraint dropped for ix_int_cd",
+                len(matches) == 1, f"found {len(matches)}")
+
+    # 12b: that twin is made unique
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="ix_int_cd",
+                        script_type="MERGE SCRIPT")
+    has_unique = any("CREATE UNIQUE" in m.get("script", "") for m in matches)
+    assert_test("12-Interact", "12b: ix_int_cd made unique to replace the constraint",
+                has_unique, f"found {len(matches)} merge rows, unique={has_unique}")
+
+    # 12b: the key subset is disabled into it
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="ix_int_c",
+                        script_type="DISABLE SCRIPT")
+    assert_test("12-Interact", "12b: ix_int_c (key subset) disabled",
+                len(matches) == 1, f"found {len(matches)}")
+
+    # 12b: THE load-bearing one. ix_int_c is being disabled, so whatever it
+    # covered has to survive in the index replacing it. Rule 6 merges col_b in as
+    # a Key Subset; Rule 7.5 then rewrites the row to MAKE UNIQUE and Rule 7.6
+    # recomputes the includes. A 7.6 that gathers only Key Duplicate losers drops
+    # col_b here while ix_int_c's DISABLE still runs -- coverage silently gone on
+    # scripts that all execute cleanly, which the execute check cannot see.
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="ix_int_cd",
+                        script_type="MERGE SCRIPT")
+    script = matches[0].get("script", "") if matches else ""
+    include = script[script.find("INCLUDE"):script.find(")", script.find("INCLUDE")) + 1] if "INCLUDE" in script else ""
+    kept_subset_col = "col_b" in include
+    kept_own_col = "col_e" in include
+    assert_test("12-Interact", "12b: merge keeps BOTH its own include and the disabled subset's",
+                kept_subset_col and kept_own_col,
+                f"INCLUDE={include or '(none)'} col_b={kept_subset_col} col_e={kept_own_col}")
 
     return results
 
@@ -317,9 +406,20 @@ def main():
 
     stdout, stderr = run_sqlcmd(server, password)
 
-    if "Msg " in stderr and "Level 16" in stderr:
-        print("ERROR: SQL errors detected:")
-        print(stderr)
+    # go-sqlcmd writes SQL errors to STDOUT, not stderr. Checking stderr alone
+    # made this detection decorative: adversarial_test.sql was failing partway
+    # through on every run (Msg 1505 on test_ic_interact) and the suite stayed
+    # green, so group 12 was never really tested. Check both streams, and match
+    # any severity 16+ rather than the literal string "Level 16".
+    errors = find_sql_errors(stdout) + find_sql_errors(stderr)
+
+    if errors:
+        print("ERROR: SQL errors detected while running the fixture:")
+        for e in errors:
+            print("  " + e)
+        print()
+        print("The fixture did not build correctly, so the assertions below")
+        print("would be testing something other than what they claim.")
         sys.exit(1)
 
     rows = parse_output(stdout)

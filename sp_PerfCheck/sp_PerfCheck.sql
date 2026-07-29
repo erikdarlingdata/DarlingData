@@ -50,6 +50,21 @@ ALTER PROCEDURE
     dbo.sp_PerfCheck
 (
     @database_name sysname = NULL, /* Database to check, NULL for all user databases */
+    @slow_read_ms decimal(10, 2) = 20.0, /* Flag data-file reads slower than this (ms); High at 5x */
+    @slow_write_ms decimal(10, 2) = 20.0, /* Flag data-file writes slower than this (ms); High at 5x */
+    /*
+    decimal(38, 2), not decimal(5, 2). These compare against
+    #wait_stats.wait_time_percent_of_uptime, which is decimal(38, 2) because
+    cumulative wait time across all schedulers routinely runs to several
+    hundred or several thousand percent of wall-clock uptime on a many-core
+    server. decimal(5, 2) caps an override at 999.99, which cannot express a
+    threshold in the range the column actually reports.
+    */
+    @significant_wait_threshold_pct decimal(38, 2) = 10.0, /* Minimum % of uptime for a wait to be reported */
+    @wait_high_pct decimal(38, 2) = 50.0, /* Resource wait at/above this % of uptime is High */
+    @wait_medium_pct decimal(38, 2) = 20.0, /* Resource wait at/above this % of uptime is Medium */
+    @memory_grant_warning integer = 100, /* Forced grants at/above this count are Medium */
+    @memory_grant_critical integer = 10000, /* Forced grants at/above this count are High */
     @help bit = 0, /*For helpfulness*/
     @debug bit = 0, /* Print diagnostic messages */
     @version varchar(30) = NULL OUTPUT, /* Returns version */
@@ -66,8 +81,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.7',
-        @version_date = N'20260701';
+        @version = N'2.8',
+        @version_date = N'20260801';
 
     /*
     Help section, for help.
@@ -103,6 +118,13 @@ BEGIN
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
                     WHEN N'@version_date' THEN 'returns the date this version was released'
+                    WHEN N'@slow_read_ms' THEN 'flag data-file reads slower than this many ms (High at 5x)'
+                    WHEN N'@slow_write_ms' THEN 'flag data-file writes slower than this many ms (High at 5x)'
+                    WHEN N'@significant_wait_threshold_pct' THEN 'minimum percent of uptime for a wait to be reported'
+                    WHEN N'@wait_high_pct' THEN 'a resource wait at or above this percent of uptime is High priority'
+                    WHEN N'@wait_medium_pct' THEN 'a resource wait at or above this percent of uptime is Medium priority'
+                    WHEN N'@memory_grant_warning' THEN 'forced memory grants at or above this cumulative count are Medium'
+                    WHEN N'@memory_grant_critical' THEN 'forced memory grants at or above this cumulative count are High'
                     ELSE NULL
                 END,
             valid_inputs =
@@ -113,6 +135,13 @@ BEGIN
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
                     WHEN N'@version_date' THEN 'OUTPUT parameter'
+                    WHEN N'@slow_read_ms' THEN 'any positive number of milliseconds'
+                    WHEN N'@slow_write_ms' THEN 'any positive number of milliseconds'
+                    WHEN N'@significant_wait_threshold_pct' THEN 'any positive percentage'
+                    WHEN N'@wait_high_pct' THEN 'any positive percentage'
+                    WHEN N'@wait_medium_pct' THEN 'any positive percentage'
+                    WHEN N'@memory_grant_warning' THEN 'any positive integer'
+                    WHEN N'@memory_grant_critical' THEN 'any positive integer'
                     ELSE NULL
                 END,
             defaults =
@@ -123,6 +152,13 @@ BEGIN
                     WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
                     WHEN N'@version_date' THEN 'NULL'
+                    WHEN N'@slow_read_ms' THEN '20.0'
+                    WHEN N'@slow_write_ms' THEN '20.0'
+                    WHEN N'@significant_wait_threshold_pct' THEN '10.0'
+                    WHEN N'@wait_high_pct' THEN '50.0'
+                    WHEN N'@wait_medium_pct' THEN '20.0'
+                    WHEN N'@memory_grant_warning' THEN '100'
+                    WHEN N'@memory_grant_critical' THEN '10000'
                     ELSE NULL
                 END
         FROM sys.all_parameters AS ap
@@ -166,6 +202,55 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         RETURN;
     END;
+
+    /*
+    Default any tuning threshold left NULL or negative back to its documented
+    value, so a caller can override only the ones they care about. A CASE on
+    ">= 0" catches both NULL (UNKNOWN) and negative in one shot.
+    */
+    SELECT
+        @slow_read_ms =
+            CASE
+                WHEN @slow_read_ms >= 0
+                THEN @slow_read_ms
+                ELSE 20.0
+            END,
+        @slow_write_ms =
+            CASE
+                WHEN @slow_write_ms >= 0
+                THEN @slow_write_ms
+                ELSE 20.0
+            END,
+        @significant_wait_threshold_pct =
+            CASE
+                WHEN @significant_wait_threshold_pct >= 0
+                THEN @significant_wait_threshold_pct
+                ELSE 10.0
+            END,
+        @wait_high_pct =
+            CASE
+                WHEN @wait_high_pct >= 0
+                THEN @wait_high_pct
+                ELSE 50.0
+            END,
+        @wait_medium_pct =
+            CASE
+                WHEN @wait_medium_pct >= 0
+                THEN @wait_medium_pct
+                ELSE 20.0
+            END,
+        @memory_grant_warning =
+            CASE
+                WHEN @memory_grant_warning >= 0
+                THEN @memory_grant_warning
+                ELSE 100
+            END,
+        @memory_grant_critical =
+            CASE
+                WHEN @memory_grant_critical >= 0
+                THEN @memory_grant_critical
+                ELSE 10000
+            END;
 
     /*
     Variable Declarations
@@ -282,9 +367,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @size_difference_pct decimal(18, 2),
         @has_percent_growth bit,
         @has_fixed_growth bit,
-        /* Storage performance variables */
-        @slow_read_ms decimal(10, 2) = 500.0, /* Threshold for slow reads (ms) */
-        @slow_write_ms decimal(10, 2) = 500.0, /* Threshold for slow writes (ms) */
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
@@ -292,7 +374,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
         @uptime_ms bigint,
-        @significant_wait_threshold_pct decimal(5, 2) = 10.0, /* Only waits above 10% */
         @significant_wait_threshold_avg decimal(10, 2) = 10.0, /* Or avg wait time > 10ms */
         /* Threshold settings for stolen memory alert */
         @buffer_pool_size_gb decimal(38, 2),
@@ -392,6 +473,46 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
+    Validate @database_name up front, before any check runs. If the
+    caller named a database that does not exist (a typo), or one that is
+    not ONLINE (mid-restore, RECOVERY_PENDING, SUSPECT, a log-shipping
+    standby), the per-database checks match no rows and the report comes
+    back with no database findings and no error - reading as "this
+    database is clean" when it was never looked at. Fail loudly here
+    rather than running the whole server sweep and then returning empty.
+    Azure SQL DB is exempt: it always analyzes the current database via
+    DB_ID() and ignores the parameter.
+    */
+    IF  @database_name IS NOT NULL
+    AND @azure_sql_db = 0
+    BEGIN
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM sys.databases AS d
+            WHERE d.name = @database_name
+        )
+        BEGIN
+            RAISERROR(N'The database %s does not exist on this server. Check the name and try again.', 11, 1, @database_name) WITH NOWAIT;
+            RETURN;
+        END;
+
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM sys.databases AS d
+            WHERE d.name = @database_name
+            AND   d.state = 0 /* ONLINE */
+        )
+        BEGIN
+            RAISERROR(N'The database %s exists but is not ONLINE, so its configuration cannot be analyzed. Run without @database_name for the server-level checks.', 11, 1, @database_name) WITH NOWAIT;
+            RETURN;
+        END;
+    END;
+
+    /*
     Create a table for stuff I care about from sys.databases
     With comments on what we want to check
     */
@@ -427,7 +548,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_cdc_enabled bit NOT NULL,
         target_recovery_time_in_seconds integer NULL,
         delayed_durability_desc nvarchar(60) NULL,
-        is_accelerated_database_recovery_on bit NOT NULL,
+        /*
+        Nullable on purpose. A database that is closed (AUTO_CLOSE), OFFLINE, or
+        otherwise inaccessible returns NULL for is_accelerated_database_recovery_on
+        in sys.databases - ADR state lives with the database, not in master
+        metadata, so it can't be read while the database is shut. The collection
+        below has no state filter, so a single inaccessible database would
+        otherwise fail this INSERT with Msg 515 and abort the whole check. NULL
+        flows through harmlessly: the ADR finding tests "= 0", which NULL never
+        satisfies, so a database we cannot assess simply gets no recommendation.
+        */
+        is_accelerated_database_recovery_on bit NULL,
         is_ledger_on bit NULL
     );
 
@@ -456,7 +587,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category nvarchar(50) NOT NULL,
         finding nvarchar(200) NOT NULL,
         database_name sysname NOT NULL DEFAULT N'N/A',
-        object_name sysname NOT NULL DEFAULT N'N/A',
+        /*
+        Wide, not sysname. The storage checks (3001, 3002, 3003) put a file or
+        drive location in here: drive_location and physical_name are both
+        nvarchar(260) and hold the full blob storage URL for a data file on
+        Azure, and 3001/3002 append N' (' + type_desc + N')' on top of that.
+        sysname truncates at 128 characters and even 260 is not enough for the
+        longest path plus its suffix. Overflow raises Msg 8152 inside the outer
+        TRY, which kills the entire run rather than just the storage findings.
+        */
+        object_name nvarchar(500) NOT NULL DEFAULT N'N/A',
         details nvarchar(4000) NULL,
         url nvarchar(200) NULL
     );
@@ -585,7 +725,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         avg_wait_ms AS (wait_time_ms / NULLIF(waiting_tasks_count, 0)),
         percentage decimal(5, 2) NOT NULL,
         signal_wait_time_ms bigint NOT NULL,
-        wait_time_percent_of_uptime decimal(6, 2) NULL,
+        /*
+        decimal(38, 2), not decimal(6, 2). This is cumulative wait time
+        across all schedulers as a percentage of wall-clock uptime, so
+        on a many-core server it routinely runs to several hundred or
+        several thousand percent (64 cores fully waiting is ~6400%).
+        decimal(6, 2) caps at 9999.99, and the overflow THREW out of the
+        whole procedure - no health findings at all - on exactly the
+        busy, high-core servers that most need checking.
+        */
+        wait_time_percent_of_uptime decimal(38, 2) NULL,
         category nvarchar(50) NOT NULL
     );
 
@@ -913,14 +1062,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4101,
-            priority = 20, /* High: active memory spills */
+            priority =
+                CASE
+                    WHEN MAX(ders.forced_grant_count) >= @memory_grant_critical
+                    THEN 20 /* High: heavy, sustained memory pressure */
+                    WHEN MAX(ders.forced_grant_count) >= @memory_grant_warning
+                    THEN 30 /* Medium */
+                    ELSE 40 /* Low: a handful since startup, likely transient */
+                END,
             category = N'Memory Pressure',
-            finding = N'Memory-Starved Queries Detected',
+            finding = N'Memory-Starved Queries: Forced Grants',
             details =
-                N'dm_exec_query_resource_semaphores has ' +
+                N'dm_exec_query_resource_semaphores reports ' +
                 CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
-                N' forced memory grants. ' +
-                N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
+                N' forced memory grants since startup. Queries ran with less memory than they asked for and spilled to tempdb. ' +
+                N'Review oversized grants (large sorts and hashes), query tuning, and max server memory.',
             url = N'https://erikdarling.com/sp_perfcheck/#MemoryStarved'
         FROM sys.dm_exec_query_resource_semaphores AS ders
         WHERE ders.forced_grant_count > 0
@@ -940,14 +1096,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4103,
-            priority = 20, /* High: queries can't get memory */
+            priority =
+                CASE
+                    WHEN MAX(ders.timeout_error_count) > 100
+                    THEN 20 /* High: queries repeatedly failing to get memory */
+                    WHEN MAX(ders.timeout_error_count) > 10
+                    THEN 30 /* Medium */
+                    ELSE 40 /* Low: a few since startup, likely transient */
+                END,
             category = N'Memory Pressure',
-            finding = N'Memory-Starved Queries Detected',
+            finding = N'Memory-Starved Queries: Grant Timeouts',
             details =
-                N'dm_exec_query_resource_semaphores has ' +
+                N'dm_exec_query_resource_semaphores reports ' +
                 CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
-                N' memory grant timeouts. ' +
-                N'Queries are waiting for memory for a long time and giving up.',
+                N' memory grant timeouts since startup. Queries waited a long time for a memory grant and gave up (error 8645). ' +
+                N'Review oversized grants, RESOURCE_SEMAPHORE waits, and max server memory.',
             url = N'https://erikdarling.com/sp_perfcheck/#MemoryStarved'
         FROM sys.dm_exec_query_resource_semaphores AS ders
         WHERE ders.timeout_error_count > 0
@@ -1010,12 +1173,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT
         check_id = 5103,
         /*
-        Rate is deadlocks-per-day, computed from DATEDIFF(SECOND, ...) rather than
-        DATEDIFF(DAY, ...). The DAY-based version rounded sub-day uptime to 0 and
-        the NULLIF then collapsed the whole expression to NULL, which evaluated as
-        UNKNOWN in the WHERE below and silently skipped the deadlock check for the
-        first calendar-day-boundary of server uptime. SECOND-based rate keeps the
-        threshold semantics identical for any uptime ≥ 1 second.
+        Rate is deadlocks-per-day, and it has to be computed from
+        DATEDIFF(SECOND, ...) scaled by 86400, not DATEDIFF(DAY, ...).
+        A DAY-based denominator rounds sub-day uptime to 0, the NULLIF then
+        collapses the whole expression to NULL, and NULL evaluates as UNKNOWN
+        in the WHERE below, which silently skips the deadlock check entirely
+        until the server has been up across a calendar day boundary. The
+        SECOND-based rate is identical in threshold semantics for any uptime
+        of 1 second or more.
         */
         priority =
             CASE
@@ -1172,7 +1337,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             details =
                 N'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
                 N'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
-                N'For production SQL Servers with more than 64GB of memory, LPIM should be enabled.',
+                N'For production SQL Servers with 32GB of memory or more, LPIM should be enabled.',
             url = N'https://erikdarling.com/sp_perfcheck/#LPIM'
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
@@ -1255,38 +1420,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Resource Governor',
                 N'Enabled';
 
-            /* Add informational message about Resource Governor with query suggestion */
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT
-                check_id = 4107,
-                priority = 50, /* Informational: may be intentional */
-                category = N'Resource Governor',
-                finding = N'Resource Governor Enabled',
-                details =
-                    N'Resource Governor is enabled on this instance. This affects workload resource allocation and may ' +
-                    N'impact performance by limiting resources available to various workloads. ' +
-                    N'For more details, run these queries to explore your configuration:' + NCHAR(13) + NCHAR(10) +
-                    N'/* Resource Governor configuration */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT c.* FROM sys.resource_governor_configuration AS c;' + NCHAR(13) + NCHAR(10) +
-                    N'/* Resource pools and their settings */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT p.* FROM sys.dm_resource_governor_resource_pools AS p;' + NCHAR(13) + NCHAR(10) +
-                    N'/* Workload groups and their settings */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT wg.* FROM sys.dm_resource_governor_workload_groups AS wg;' + NCHAR(13) + NCHAR(10) +
-                    N'/* Classifier function (if configured) */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT cf.* FROM sys.resource_governor_configuration AS gc' + NCHAR(13) + NCHAR(10) +
-                    N'CROSS APPLY (SELECT OBJECT_NAME(gc.classifier_function_id) AS classifier_function_name) AS cf;',
-                url = N'https://erikdarling.com/sp_perfcheck/#ResourceGovernor'
-            FROM sys.resource_governor_configuration AS rgc
-            WHERE rgc.is_enabled = 1;
         END
         ELSE
         BEGIN
@@ -1339,7 +1472,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 9998,
-                90, /* Low priority informational */
+                50, /* Informational: collection error */
                 N'Errors',
                 N'Error Capturing Trace Flags',
                 N'Unable to capture trace flags: ' + ERROR_MESSAGE()
@@ -1376,6 +1509,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N''
                 );
         END;
+
+        /*
+        Flag notable global trace flags with interpretation. The complete list
+        is in #server_info; here we call out the ones that change behavior
+        server-wide or are redundant on modern versions, with severity by how
+        much they matter. Benign flags (backup-message suppression, lightweight
+        profiling, deadlock logging) are left in the server-info list only.
+        */
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            object_name,
+            details,
+            url
+        )
+        SELECT
+            check_id = 1012,
+            priority =
+                CASE tf.trace_flag
+                    WHEN 1211 THEN 20 /* High: disables lock escalation entirely */
+                    WHEN 3608 THEN 20 /* High: startup-only flag set globally */
+                    WHEN 3609 THEN 20 /* High: startup-only flag set globally */
+                    WHEN 1224 THEN 30 /* Medium */
+                    WHEN 834  THEN 30 /* Medium */
+                    ELSE 40 /* Low: notable but not dangerous */
+                END,
+            category = N'Server Configuration',
+            finding = N'Notable Global Trace Flag',
+            object_name = N'TF ' + CONVERT(nvarchar(10), tf.trace_flag),
+            details =
+                N'Global trace flag ' +
+                CONVERT(nvarchar(10), tf.trace_flag) +
+                N' is enabled. ' +
+                CASE tf.trace_flag
+                    WHEN 1211 THEN N'Disables lock escalation entirely, which can bloat lock memory and hurt concurrency. Almost never recommended; prefer 1224 if you truly must.'
+                    WHEN 1224 THEN N'Disables count-based lock escalation (escalation still happens under memory pressure). Rarely necessary.'
+                    WHEN 3608 THEN N'A startup-only flag (recover master only) that should not be set on a running production server.'
+                    WHEN 3609 THEN N'A startup-only flag (skip tempdb creation) that should not be set on a running production server.'
+                    WHEN 834  THEN N'Uses large-page allocations for the buffer pool. Can slow or block startup and interacts badly with columnstore; use deliberately.'
+                    WHEN 4199 THEN N'Enables all query optimizer hotfixes globally, which can change plans server-wide. On 2016+ prefer the database-scoped QUERY_OPTIMIZER_HOTFIXES option.'
+                    WHEN 8048 THEN N'Partitions memory objects per CPU to reduce spinlock contention. Only relevant on high-core NUMA servers.'
+                    WHEN 1117 THEN N'Grows all files in a filegroup together. Redundant for tempdb on 2016+, where this is already the default.'
+                    WHEN 1118 THEN N'Forces full-extent allocation. Redundant on 2016+, where this is already the default for tempdb.'
+                    WHEN 2371 THEN N'Lowers the auto-update-statistics threshold. Redundant on 2016+ at compatibility level 130+.'
+                    ELSE N'Review whether it is still needed.'
+                END,
+            url = N'https://erikdarling.com/sp_perfcheck/#TraceFlags'
+        FROM #trace_flags AS tf
+        WHERE tf.global = 1
+        AND   tf.trace_flag IN (1211, 1224, 3608, 3609, 834, 4199, 8048, 1117, 1118, 2371);
     END;
 
     /* Memory information - works on all platforms */
@@ -1482,70 +1669,105 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 (116, N'DBCC Event',            N'Database'),
                 (137, N'Server Memory Change',  N'Server');
 
-            /* Get relevant events from default trace */
-            INSERT INTO
-                #trace_events
-            (
-                event_time,
-                event_class,
-                event_subclass,
-                database_name,
-                database_id,
-                file_name,
-                object_name,
-                object_type,
-                duration_ms,
-                severity,
-                success,
-                error,
-                text_data,
-                file_growth,
-                is_auto,
-                spid
-            )
-            SELECT
-                event_time = t.StartTime,
-                event_class = t.EventClass,
-                event_subclass = t.EventSubClass,
-                database_name = DB_NAME(t.DatabaseID),
-                database_id = t.DatabaseID,
-                file_name = t.FileName,
-                object_name = t.ObjectName,
-                object_type = t.ObjectType,
-                duration_ms = t.Duration / 1000, /* Duration is in microseconds, convert to ms */
-                severity = t.Severity,
-                success = t.Success,
-                error = t.Error,
-                text_data = t.TextData,
-                file_growth = t.IntegerData, /* Size of growth in Data/Log Auto Grow event */
-                is_auto = t.IsSystem,
-                spid = t.SPID
-            FROM sys.fn_trace_gettable(@trace_path, DEFAULT) AS t
-            WHERE
-            (
-                /* Auto-grow and auto-shrink events */
-                t.EventClass IN (92, 93, 94, 95)
-                /* DBCC Events */
-                OR
+            /*
+            Get relevant events from the default trace. On Linux SQL Server
+            sys.traces still lists a default trace, but fn_trace_gettable cannot
+            read it there and raises Msg 19049; the same guard also covers a
+            missing or unreadable trace file. On failure, leave #trace_events
+            empty - the trace-based checks below then simply find nothing - and
+            record one informational note, rather than letting the error abort
+            the whole procedure before it returns any findings.
+            */
+            BEGIN TRY
+                INSERT INTO
+                    #trace_events
                 (
-                      t.EventClass = 116
-                  AND
-                  (
-                         t.TextData LIKE N'%FREEPROCCACHE%'
-                      OR t.TextData LIKE N'%FREESYSTEMCACHE%'
-                      OR t.TextData LIKE N'%DROPCLEANBUFFERS%'
-                      OR t.TextData LIKE N'%SHRINKDATABASE%'
-                      OR t.TextData LIKE N'%SHRINKFILE%'
-                      OR t.TextData LIKE N'%WRITEPAGE%'
-                  )
+                    event_time,
+                    event_class,
+                    event_subclass,
+                    database_name,
+                    database_id,
+                    file_name,
+                    object_name,
+                    object_type,
+                    duration_ms,
+                    severity,
+                    success,
+                    error,
+                    text_data,
+                    file_growth,
+                    is_auto,
+                    spid
                 )
-                /* Server memory change events */
-                OR t.EventClass = 137
-                /* Deadlock events - typically not in default trace but including for completeness */
-                OR t.EventClass = 148
-            )
-            /* Look back at the past 7 days of events at most */
-            AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+                SELECT
+                    event_time = t.StartTime,
+                    event_class = t.EventClass,
+                    event_subclass = t.EventSubClass,
+                    database_name = DB_NAME(t.DatabaseID),
+                    database_id = t.DatabaseID,
+                    file_name = t.FileName,
+                    object_name = t.ObjectName,
+                    object_type = t.ObjectType,
+                    duration_ms = t.Duration / 1000, /* Duration is in microseconds, convert to ms */
+                    severity = t.Severity,
+                    success = t.Success,
+                    error = t.Error,
+                    text_data = t.TextData,
+                    file_growth = t.IntegerData, /* Size of growth in Data/Log Auto Grow event */
+                    is_auto = t.IsSystem,
+                    spid = t.SPID
+                FROM sys.fn_trace_gettable(@trace_path, DEFAULT) AS t
+                WHERE
+                (
+                    /* Auto-grow and auto-shrink events */
+                    t.EventClass IN (92, 93, 94, 95)
+                    /* DBCC Events */
+                    OR
+                    (
+                          t.EventClass = 116
+                      AND
+                      (
+                             t.TextData LIKE N'%FREEPROCCACHE%'
+                          OR t.TextData LIKE N'%FREESYSTEMCACHE%'
+                          OR t.TextData LIKE N'%DROPCLEANBUFFERS%'
+                          OR t.TextData LIKE N'%SHRINKDATABASE%'
+                          OR t.TextData LIKE N'%SHRINKFILE%'
+                          OR t.TextData LIKE N'%WRITEPAGE%'
+                      )
+                    )
+                    /* Server memory change events */
+                    OR t.EventClass = 137
+                    /* Deadlock events - typically not in default trace but including for completeness */
+                    OR t.EventClass = 148
+                )
+                /* Look back at the past 7 days of events at most */
+                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+            END TRY
+            BEGIN CATCH
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                VALUES
+                (
+                    5004,
+                    50, /* Informational: platform limitation, not a problem */
+                    N'Default Trace',
+                    N'Default Trace Not Readable',
+                    N'The default trace is registered but could not be read (' +
+                    ERROR_MESSAGE() +
+                    N'). Its auto-grow, auto-shrink, and DBCC findings are ' +
+                    N'unavailable. This is expected on Linux SQL Server, where ' +
+                    N'the default trace cannot be read via fn_trace_gettable.',
+                    N'https://erikdarling.com/sp_perfcheck/'
+                );
+            END CATCH;
 
             /* Update event names from map */
             UPDATE
@@ -2006,7 +2228,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #wait_stats.wait_time_percent_of_uptime =
                 (wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0));
 
-        /* Add only waits that represent >=10% of server uptime */
+        /*
+        Surface the significant waits as a health-check diagnosis rather than a
+        flat list. Name each finding by what the wait means for the server
+        (Storage / Lock / Memory / TempDB / CPU / Log / Parallelism ...), put the
+        specific wait type and its plain-English meaning in object_name, and
+        calibrate severity by category: resource-pressure waits (locking, memory,
+        storage, tempdb, log, CPU) earn High by dominating uptime OR by long
+        average waits; parallelism is usually a cost threshold / MAXDOP symptom,
+        so it takes a very high share just to reach Medium; everything else stays
+        Low. SLEEP_TASK is collected for context but not surfaced as a finding.
+        */
         INSERT INTO
             #results
         (
@@ -2014,44 +2246,89 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             priority,
             category,
             finding,
+            object_name,
             details,
             url
         )
-        SELECT TOP (10) /* Limit to top 10 most significant waits */
+        SELECT TOP (10) /* the ten most significant waits */
             6001,
             priority =
                 CASE
-                    WHEN ws.wait_time_percent_of_uptime > 100
-                    THEN 20 /* High: >100% of uptime */
-                    WHEN ws.wait_time_percent_of_uptime > 75
-                    THEN 20 /* High: >75% of uptime */
-                    WHEN ws.wait_time_percent_of_uptime >= 50
-                    THEN 30 /* Medium: >=50% of uptime */
-                    ELSE 40 /* Low: >=10% of uptime */
+                    WHEN ws.category IN (N'Locking', N'Memory', N'I/O', N'TempDB Contention', N'Transaction Log', N'CPU')
+                    THEN
+                        CASE
+                            WHEN ws.wait_time_percent_of_uptime >= @wait_high_pct
+                            OR   ws.avg_wait_ms >= 1000.0
+                            THEN 20 /* High: dominates uptime, or each wait is very long */
+                            WHEN ws.wait_time_percent_of_uptime >= @wait_medium_pct
+                            OR   ws.avg_wait_ms >= 250.0
+                            THEN 30 /* Medium */
+                            ELSE 40 /* Low */
+                        END
+                    WHEN ws.category = N'Parallelism'
+                    THEN
+                        CASE
+                            WHEN ws.wait_time_percent_of_uptime >= 100.0
+                            THEN 30 /* Medium at most: usually a cost threshold / MAXDOP symptom */
+                            ELSE 40 /* Low */
+                        END
+                    ELSE 40 /* Low: network, query execution, stats, AG, throttling, other */
                 END,
             category = N'Wait Statistics',
             finding =
-                N'High Impact Wait Type: ' +
+                CASE ws.category
+                    WHEN N'I/O'                THEN N'Storage-Related Waits'
+                    WHEN N'Memory'             THEN N'Memory-Related Waits'
+                    WHEN N'Parallelism'        THEN N'Parallelism Waits'
+                    WHEN N'CPU'                THEN N'CPU / Scheduling Waits'
+                    WHEN N'TempDB Contention'  THEN N'TempDB Contention Waits'
+                    WHEN N'Locking'            THEN N'Lock / Blocking Waits'
+                    WHEN N'Transaction Log'    THEN N'Transaction Log Waits'
+                    WHEN N'Query Execution'    THEN N'Query Execution Waits'
+                    WHEN N'Network'            THEN N'Network / Client Waits'
+                    WHEN N'Availability Groups' THEN N'Availability Group Waits'
+                    WHEN N'Azure SQL Throttling' THEN N'Azure SQL Throttling Waits'
+                    WHEN N'Index Management'    THEN N'Index Maintenance Waits'
+                    WHEN N'Statistics'         THEN N'Statistics Update Waits'
+                    ELSE N'Other Significant Waits'
+                END,
+            object_name =
                 ws.wait_type +
                 N' (' +
-                ws.category +
+                ws.description +
                 N')',
             details =
-                N'Wait type: ' +
+                N'Wait type ' +
                 ws.wait_type +
-                N' represents ' +
+                N' accounts for ' +
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.wait_time_percent_of_uptime)) +
                 N'% of server uptime (' +
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ws.wait_time_minutes)) +
-                N' minutes). ' +
-                N'Average wait: ' +
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ws.wait_time_hours)) +
+                N' hours), averaging ' +
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.avg_wait_ms)) +
                 N' ms per wait. ' +
-                N'Description: ' +
-                ws.description,
+                CASE ws.category
+                    WHEN N'Locking'
+                    THEN N'Time lost to blocking. Investigate long-running transactions and blocking chains; sp_PressureDetector shows live blockers.'
+                    WHEN N'Memory'
+                    THEN N'Queries are waiting on memory. Review max server memory and query memory grants; oversized grants force RESOURCE_SEMAPHORE waits.'
+                    WHEN N'I/O'
+                    THEN N'Reads are waiting on storage. Check the per-file latency findings and whether the working set fits in the buffer pool.'
+                    WHEN N'TempDB Contention'
+                    THEN N'Allocation-page contention in tempdb. Use equal-sized tempdb data files, and memory-optimized tempdb metadata on 2019+.'
+                    WHEN N'Transaction Log'
+                    THEN N'Commits are waiting on the log. Check log storage latency, transaction sizes, and log backup frequency.'
+                    WHEN N'CPU'
+                    THEN N'Scheduling pressure. Review parallelism settings and plan quality; THREADPOOL specifically means worker-thread exhaustion.'
+                    WHEN N'Parallelism'
+                    THEN N'Usually a cost threshold for parallelism / MAXDOP tuning issue rather than a problem in itself.'
+                    WHEN N'Network'
+                    THEN N'Usually client-side: the application consuming results slowly or a slow network, not the server.'
+                    ELSE N'Description: ' + ws.description + N'.'
+                END,
             url = N'https://erikdarling.com/sp_perfcheck/#WaitStats'
         FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include waits that are at least 10% of uptime */
+        WHERE ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
@@ -2063,13 +2340,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @has_view_server_state = 1
     BEGIN
         /* Calculate pagelatch wait time for TempDB contention check.
-           Split into two scalar SELECTs — the previous version mixed an
-           aggregated value (@pagelatch_wait_hours) with a non-aggregated
-           one (@server_uptime_hours) in the same SELECT by joining
-           wait_stats to sys_info and GROUP BY'ing on the uptime
-           expression. It worked only because sys_info is always a
-           single-row view, and the GROUP BY on a scalar expression
-           reads oddly. */
+           Deliberately two scalar SELECTs. Assigning the aggregated value
+           (@pagelatch_wait_hours) and the non-aggregated one
+           (@server_uptime_hours) in a single SELECT would mean joining
+           wait_stats to sys_info and grouping by the uptime expression,
+           which only works because sys_info is always a single-row view
+           and reads as though the GROUP BY were meaningful. Keep them
+           separate. */
         SELECT
             @server_uptime_hours =
                 DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) / 3600.0
@@ -2408,6 +2685,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     priority,
                     category,
                     finding,
+                    object_name,
                     details,
                     url
                 )
@@ -2415,9 +2693,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     check_id = 6003,
                     priority = 50, /* Informational: memory context */
                     category = N'Memory Usage',
-                    finding =
-                        N'Top Memory Consumer: ' +
-                        domc.type,
+                    finding = N'Top Memory Consumer',
+                    object_name = domc.type,
                     details =
                         N'Memory clerk "' +
                         domc.type +
@@ -2625,7 +2902,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             i.avg_io_stall_ms DESC;
 
-        /* Check 6201 (High Database I/O Stalls) removed — duplicated by file-level checks 3001/3002/3003 */
+        /* Check 6201 (High Database I/O Stalls) removed: duplicated by file-level checks 3001/3002/3003 */
     END;
 
     /*
@@ -2777,15 +3054,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 3001,
         priority =
             CASE
-                WHEN i.avg_read_latency_ms > @slow_read_ms * 2
-                THEN 20 /* High: >1000ms is severe */
-                ELSE 30 /* Medium: >500ms is significant */
+                WHEN i.avg_read_latency_ms > @slow_read_ms * 5
+                THEN 20 /* High: >100ms average reads (5x threshold) is bad storage */
+                ELSE 30 /* Medium: over the 20ms threshold, worth investigating */
             END,
         category = N'Storage Performance',
         finding = N'Slow Read Latency',
         database_name = i.database_name,
         object_name =
-            i.file_name +
+            /*
+            Drive/volume plus the physical file name on disk. This makes a file
+            finding self-contained, tells apart every file (logical names repeat
+            across databases and don't say where the file lives), and lines up
+            with the drive-level rollup (check_id 3003), which shows the same
+            drive. For blob storage drive_location already holds the whole URL, so
+            use it as-is; otherwise take the last path segment after the final
+            separator.
+            */
+            CASE
+                WHEN i.drive_location = i.physical_name
+                THEN i.physical_name
+                ELSE
+                    ISNULL(i.drive_location + N' ', N'') +
+                    RIGHT
+                    (
+                        i.physical_name,
+                        CHARINDEX(N'\', REVERSE(i.physical_name) + N'\') - 1
+                    )
+            END +
             N' (' +
             i.type_desc +
             N')',
@@ -2820,15 +3116,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 3002,
         priority =
             CASE
-                WHEN i.avg_write_latency_ms > @slow_write_ms * 2
-                THEN 20 /* High: >1000ms is severe */
-                ELSE 30 /* Medium: >500ms is significant */
+                WHEN i.avg_write_latency_ms > @slow_write_ms * 5
+                THEN 20 /* High: >100ms average writes (5x threshold) is bad storage */
+                ELSE 30 /* Medium: over the 20ms threshold, worth investigating */
             END,
         category = N'Storage Performance',
         finding = N'Slow Write Latency',
         database_name = i.database_name,
         object_name =
-            i.file_name +
+            /*
+            Drive/volume plus the physical file name on disk. This makes a file
+            finding self-contained, tells apart every file (logical names repeat
+            across databases and don't say where the file lives), and lines up
+            with the drive-level rollup (check_id 3003), which shows the same
+            drive. For blob storage drive_location already holds the whole URL, so
+            use it as-is; otherwise take the last path segment after the final
+            separator.
+            */
+            CASE
+                WHEN i.drive_location = i.physical_name
+                THEN i.physical_name
+                ELSE
+                    ISNULL(i.drive_location + N' ', N'') +
+                    RIGHT
+                    (
+                        i.physical_name,
+                        CHARINDEX(N'\', REVERSE(i.physical_name) + N'\') - 1
+                    )
+            END +
             N' (' +
             i.type_desc +
             N')',
@@ -2854,6 +3169,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         priority,
         category,
         finding,
+        object_name,
         details,
         url
     )
@@ -2861,9 +3177,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 3003,
         priority = 20, /* High: systemic storage problem */
         category = N'Storage Performance',
-        finding =
-            N'Multiple Slow Files on Storage Location ' +
-            i.drive_location,
+        /*
+        Stable label; the drive/volume that varies per row goes in object_name so
+        this finding groups and the identity lives in a column, not the sentence.
+        */
+        finding = N'Multiple Slow Files on Storage Location',
+        object_name = i.drive_location,
         details =
             N'Storage location ' +
             i.drive_location +
@@ -3057,82 +3376,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @azure_sql_db = 0 /* Skip these checks for Azure SQL DB */
     BEGIN
-        /* Check for non-default configuration values */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            details,
-            url
-        )
-        SELECT
-            check_id = 1000,
-            priority = 50, /* Informational: non-default config */
-            category = N'Server Configuration',
-            finding = N'Non-Default Configuration: ' + c.name,
-            details =
-                N'Configuration option "' + c.name +
-                N'" has been changed from the default. Current: ' +
-                CONVERT(nvarchar(50), c.value_in_use) +
-                CASE
-                    /* Configuration options from your lists */
-                    WHEN c.name = N'access check cache bucket count' THEN N', Default: 0'
-                    WHEN c.name = N'access check cache quota' THEN N', Default: 0'
-                    WHEN c.name = N'Ad Hoc Distributed Queries' THEN N', Default: 0'
-                    WHEN c.name = N'ADR cleaner retry timeout (min)' THEN N', Default: 120'
-                    WHEN c.name = N'ADR Cleaner Thread Count' THEN N', Default: 1'
-                    WHEN c.name = N'ADR Preallocation Factor' THEN N', Default: 4'
-                    WHEN c.name = N'affinity mask' THEN N', Default: 0'
-                    WHEN c.name = N'affinity I/O mask' THEN N', Default: 0'
-                    WHEN c.name = N'affinity64 mask' THEN N', Default: 0'
-                    WHEN c.name = N'affinity64 I/O mask' THEN N', Default: 0'
-                    WHEN c.name = N'cost threshold for parallelism' THEN N', Default: 5'
-                    WHEN c.name = N'max degree of parallelism' THEN N', Default: 0'
-                    WHEN c.name = N'max server memory (MB)' THEN N', Default: 2147483647'
-                    WHEN c.name = N'max worker threads' THEN N', Default: 0'
-                    WHEN c.name = N'min memory per query (KB)' THEN N', Default: 1024'
-                    WHEN c.name = N'min server memory (MB)' THEN N', Default: 0'
-                    WHEN c.name = N'optimize for ad hoc workloads' THEN N', Default: 0'
-                    WHEN c.name = N'priority boost' THEN N', Default: 0'
-                    WHEN c.name = N'query governor cost limit' THEN N', Default: 0'
-                    WHEN c.name = N'recovery interval (min)' THEN N', Default: 0'
-                    WHEN c.name = N'tempdb metadata memory-optimized' THEN N', Default: 0'
-                    WHEN c.name = N'lightweight pooling' THEN N', Default: 0'
-                    ELSE N', Default: Unknown'
-                END,
-            url = N'https://erikdarling.com/sp_perfcheck/#ServerSettings'
-        FROM sys.configurations AS c
-        WHERE
-            /* Access check cache settings */
-               (c.name = N'access check cache bucket count' AND c.value_in_use <> 0)
-            OR (c.name = N'access check cache quota' AND c.value_in_use <> 0)
-            OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)
-            /* ADR settings */
-            OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (0, 15, 120))
-            OR (c.name = N'ADR Cleaner Thread Count' AND c.value_in_use <> 1)
-            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use NOT IN (0, 4))
-            /* Affinity settings */
-            OR (c.name = N'affinity mask' AND c.value_in_use <> 0)
-            OR (c.name = N'affinity I/O mask' AND c.value_in_use <> 0)
-            OR (c.name = N'affinity64 mask' AND c.value_in_use <> 0)
-            OR (c.name = N'affinity64 I/O mask' AND c.value_in_use <> 0)
-            /* Common performance settings */
-            OR (c.name = N'cost threshold for parallelism' AND c.value_in_use <> 5)
-            OR (c.name = N'max degree of parallelism' AND c.value_in_use <> 0)
-            OR (c.name = N'max server memory (MB)' AND c.value_in_use <> 2147483647)
-            OR (c.name = N'max worker threads' AND c.value_in_use <> 0)
-            OR (c.name = N'min memory per query (KB)' AND c.value_in_use <> 1024)
-            OR (c.name = N'min server memory (MB)' AND c.value_in_use NOT IN (0, 16))
-            OR (c.name = N'optimize for ad hoc workloads' AND c.value_in_use <> 0)
-            OR (c.name = N'priority boost' AND c.value_in_use <> 0)
-            OR (c.name = N'query governor cost limit' AND c.value_in_use <> 0)
-            OR (c.name = N'recovery interval (min)' AND c.value_in_use <> 0)
-            OR (c.name = N'tempdb metadata memory-optimized' AND c.value_in_use <> 0)
-            OR (c.name = N'lightweight pooling' AND c.value_in_use <> 0);
-
         /*
         TempDB Configuration Checks (not applicable to Azure SQL DB)
         */
@@ -3540,7 +3783,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1002,
-                20, /* High priority — OS-starvation risk */
+                20, /* High priority: OS-starvation risk */
                 N'Server Configuration',
                 N'Max Server Memory Too Close To Physical Memory',
                 N'Max server memory (' +
@@ -3579,8 +3822,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             );
         END;
 
-        /* Cost Threshold for Parallelism check */
-        IF @cost_threshold <= 5
+        /*
+        Cost threshold for parallelism set too low. The default of 5 is far too
+        low for modern hardware: it shoves trivial queries into parallel plans,
+        burning CPU and worker threads on work that runs faster single-threaded.
+        Flag anything under 50 (a sane starting point), escalating when it is
+        still at or near the terrible default.
+        */
+        IF @cost_threshold < 50
         BEGIN
             INSERT INTO
                 #results
@@ -3595,12 +3844,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1004,
-                40, /* Low: config recommendation */
+                CASE
+                    WHEN @cost_threshold <= 5
+                    THEN 20 /* High: still at or near the default of 5 */
+                    ELSE 40 /* Low: configured, but lower than recommended */
+                END,
                 N'Server Configuration',
-                N'Low Cost Threshold for Parallelism',
+                N'Cost Threshold for Parallelism Too Low',
                 N'Cost threshold for parallelism is set to ' +
                 CONVERT(nvarchar(10), @cost_threshold) +
-                N'. Low values can cause excessive parallelism for small queries.',
+                N'. Low values push trivial queries into parallel plans, wasting CPU ' +
+                N'and worker threads on work that runs faster single-threaded. A ' +
+                N'starting point of 50 is far more reasonable than the default of 5.',
                 N'https://erikdarling.com/sp_perfcheck/#CostThreshold'
             );
         END;
@@ -4238,6 +4493,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             category,
             finding,
             database_name,
+            object_name,
             details,
             url
         )
@@ -4245,10 +4501,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 7003,
             priority = 20, /* High: apps can't connect */
             category = N'Database Configuration',
-            finding =
-                N'Restricted Access Mode: ' +
-                d.user_access_desc,
+            finding = N'Restricted Access Mode',
             database_name = d.name,
+            object_name = d.user_access_desc,
             details =
                 N'Database is not in MULTI_USER mode. Current mode: ' +
                 d.user_access_desc +
@@ -4304,51 +4559,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
              d.is_auto_create_stats_on = 0
           OR d.is_auto_update_stats_on = 0
-        );
-
-        /* Check ANSI settings that might cause issues */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 7005,
-            priority = 50, /* Informational */
-            category = N'Database Configuration',
-            finding = N'ANSI Settings Require Review',
-            database_name = d.name,
-            details =
-                N'One or more ANSI settings differ from recommended best practices: ' +
-                      CASE WHEN d.is_ansi_null_default_on = 0 THEN N'ANSI_NULL_DEFAULT OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_nulls_on = 0 THEN N'ANSI_NULLS OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_padding_on = 0 THEN N'ANSI_PADDING OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_warnings_on = 0 THEN N'ANSI_WARNINGS OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_arithabort_on = 0 THEN N'ARITHABORT OFF (recommended ON in many contexts), ' ELSE N'' END +
-                      CASE WHEN d.is_concat_null_yields_null_on = 0 THEN N'CONCAT_NULL_YIELDS_NULL OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON (recommended OFF), ' ELSE N'' END +
-                      CASE WHEN d.is_quoted_identifier_on = 0 THEN N'QUOTED_IDENTIFIER OFF (recommended ON), ' ELSE N'' END +
-                N'These settings may lead to inconsistent behavior, reduced feature compatibility, or unexpected query results ' +
-                N'if they do not align with recommended best practices.',
-            url = N'https://erikdarling.com/sp_perfcheck/#ANSISettings'
-        FROM #databases AS d
-        WHERE d.database_id = @current_database_id
-        AND
-        (
-             d.is_ansi_null_default_on = 0
-          OR d.is_ansi_nulls_on = 0
-          OR d.is_ansi_padding_on = 0
-          OR d.is_ansi_warnings_on = 0
-          OR d.is_arithabort_on = 0
-          OR d.is_concat_null_yields_null_on = 0
-          OR d.is_numeric_roundabort_on = 1
-          OR d.is_quoted_identifier_on = 0
         );
 
         /* Check Query Store Status */
@@ -4441,6 +4651,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN 0 THEN N''No specific reason identified.''
                         WHEN 2 THEN N''Database is in single user mode.''
                         WHEN 4 THEN N''Database is in emergency mode.''
+                        WHEN 1 THEN N''Database is in read-only mode.''
                         WHEN 8 THEN N''Database is an Availability Group secondary.''
                         WHEN 65536 THEN N''Query Store has reached maximum size: '' +
                                         CONVERT(nvarchar(20), qso.current_storage_size_mb) +
@@ -4457,7 +4668,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE qso.desired_state <> 0 /* Not intentionally OFF */
             AND   qso.readonly_reason <> 8 /* Ignore AG secondaries */
             AND   qso.desired_state <> qso.actual_state /* States don''t match */
-            AND   qso.actual_state IN (0, 3); /* Either OFF or READ_ONLY when it shouldn''t be */';
+            /*
+            OFF(0), READ_ONLY(1), or ERROR(3) while the desired state is
+            READ_WRITE. State 1 has to be in this list: a Query Store that
+            auto-flips to READ_ONLY because it filled up (readonly_reason
+            65536) is its most common failure mode, and omitting 1 means that
+            case is never flagged. AG secondaries (readonly_reason 8) and
+            intentional READ_ONLY (desired = actual) are already excluded by
+            the predicates above.
+            */
+            AND   qso.actual_state IN (0, 1, 3);';
 
             IF @debug = 1
             BEGIN
@@ -4595,11 +4815,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (@current_database_id, @current_database_name, 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1),
-                    /* SQL Server 2025 options - IDs to be verified against actual SQL Server 2025 instance */
-                    (@current_database_id, @current_database_name, 40, N''PREVIEW_FEATURES'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 41, N''OPTIMIZED_SP_EXECUTESQL'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 42, N''FULLTEXT_INDEX_VERSION'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 43, N''OPTIONAL_PARAMETER_OPTIMIZATION'', NULL, NULL, 1);
+                    /* SQL Server 2025 options, real configuration_ids from the catalog (17.0). */
+                    (@current_database_id, @current_database_name, 42, N''OPTIMIZED_SP_EXECUTESQL'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 44, N''FULLTEXT_INDEX_VERSION'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 47, N''OPTIONAL_PARAMETER_OPTIMIZATION'', NULL, NULL, 1);
 
                 /* Get actual non-default settings */
                 INSERT INTO
@@ -4642,10 +4861,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         WHEN sc.name = N''OPTIMIZED_PLAN_FORCING'' AND CONVERT(integer, sc.value) = 1 THEN 1
-                        WHEN sc.name = N''DOP_FEEDBACK'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        /* DOP_FEEDBACK default flipped from 0 (2019-2022) to 1 (2025+); inject the version-appropriate default so it is not flagged non-default on every 2025 database. */
+                        WHEN sc.name = N''DOP_FEEDBACK'' AND CONVERT(integer, sc.value) = ' + CASE WHEN @product_version_major >= 17 THEN N'1' ELSE N'0' END + N' THEN 1
                         WHEN sc.name = N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CONVERT(integer, sc.value) = 0 THEN 1
-                        /* SQL Server 2025 options */
-                        WHEN sc.name = N''PREVIEW_FEATURES'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        /* SQL Server 2025 options. PREVIEW_FEATURES was dropped: its real default is 1, not 0, and it is not evaluated here. These three defaults match the live 2025 catalog (0, 2, 1). */
                         WHEN sc.name = N''OPTIMIZED_SP_EXECUTESQL'' AND CONVERT(integer, sc.value) = 0 THEN 1
                         WHEN sc.name = N''FULLTEXT_INDEX_VERSION'' AND CONVERT(integer, sc.value) = 2 THEN 1
                         WHEN sc.name = N''OPTIONAL_PARAMETER_OPTIMIZATION'' AND CONVERT(integer, sc.value) = 1 THEN 1
@@ -4657,7 +4876,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         1, 2, 3, 4, 7, 8, 9,
                         10, 13, 16, 17, 18, 19, 20, 24,
                         27, 28, 31, 33, 34, 35, 37, 39,
-                        40, 41, 42, 43  /* SQL Server 2025 options */
+                        /*
+                        SQL Server 2025 options, using the real
+                        configuration_ids from the catalog. 42, 44, and 47
+                        are the three the CASE above actually evaluates.
+                        40 and 41 do not belong here: they are
+                        READABLE_SECONDARY_TEMPORARY_STATS_AUTO_CREATE and
+                        _UPDATE, which the CASE has no entry for, so pulling
+                        them flags every 2025 database non-default even at
+                        their default of 1. 43 does not exist.
+                        */
+                        42, 44, 47
                       );
             END;';
 
@@ -4735,33 +4964,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END;
         END CATCH;
 
-        /* Check for non-default target recovery time */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 7007,
-            priority = 50, /* Informational */
-            category = N'Database Configuration',
-            finding = N'Non-Default Target Recovery Time',
-            database_name = d.name,
-            details =
-                N'Database target recovery time is ' +
-                CONVERT(nvarchar(20), d.target_recovery_time_in_seconds) +
-                N' seconds, which differs from the default of 60 seconds. This affects checkpoint frequency and recovery time.',
-            url = N'https://erikdarling.com/sp_perfcheck/#RecoveryTime'
-        FROM #databases AS d
-        WHERE d.database_id = @current_database_id
-        AND   d.target_recovery_time_in_seconds <> 60;
-
         /* Check transaction durability */
         INSERT INTO
             #results
@@ -4771,6 +4973,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             category,
             finding,
             database_name,
+            object_name,
             details,
             url
         )
@@ -4778,8 +4981,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 7008,
             priority = 30, /* Medium: data loss risk on crash */
             category = N'Database Configuration',
-            finding = N'Delayed Durability: ' + d.delayed_durability_desc,
+            finding = N'Delayed Durability',
             database_name = d.name,
+            object_name = d.delayed_durability_desc,
             details =
                 N'Database uses ' +
                 d.delayed_durability_desc +
@@ -4789,36 +4993,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE d.database_id = @current_database_id
         AND   d.delayed_durability_desc <> N'DISABLED';
 
-        /* Check if the database has accelerated database recovery disabled with SI/RCSI enabled */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 7009,
-            priority = 40, /* Low: recommendation */
-            category = N'Database Configuration',
-            finding = N'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
-            database_name = d.name,
-            details =
-                N'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
-                N'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
-            url = N'https://erikdarling.com/sp_perfcheck/#ADR'
-        FROM #databases AS d
-        WHERE d.database_id = @current_database_id
-        AND   d.is_accelerated_database_recovery_on = 0
-        AND
-        (
-              d.snapshot_isolation_state_desc = N'ON'
-           OR d.is_read_committed_snapshot_on = 1
-        );
+        /*
+        Check if the database has accelerated database recovery disabled
+        with SI/RCSI enabled.
+
+        Gated on the column actually existing. Accelerated Database
+        Recovery arrived in SQL Server 2019; on 2016 and 2017 the
+        is_accelerated_database_recovery_on column does not exist, so the
+        #databases builder hardcodes it to 0 for every database. The gate is
+        what keeps the "= 0" predicate below from being trivially true on
+        those versions, where the check would recommend enabling a feature
+        they do not have for every database running snapshot isolation or
+        RCSI.
+        */
+        IF @has_is_accelerated_database_recovery = 1
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                details,
+                url
+            )
+            SELECT
+                check_id = 7009,
+                priority = 40, /* Low: recommendation */
+                category = N'Database Configuration',
+                finding = N'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
+                database_name = d.name,
+                details =
+                    N'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
+                    N'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
+                url = N'https://erikdarling.com/sp_perfcheck/#ADR'
+            FROM #databases AS d
+            WHERE d.database_id = @current_database_id
+            AND   d.is_accelerated_database_recovery_on = 0
+            AND
+            (
+                  d.snapshot_isolation_state_desc = N'ON'
+               OR d.is_read_committed_snapshot_on = 1
+            );
+        END;
 
         /* Check if ledger is enabled */
         INSERT INTO
@@ -5115,11 +5334,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         r.check_id;
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0
-        BEGIN
-            ROLLBACK;
-        END;
-
+        /*
+        No ROLLBACK. This procedure only reads diagnostics and builds a result
+        set - it opens no transaction of its own, so a ROLLBACK here could only
+        unwind the CALLER's transaction on an internal error, destroying work it
+        had no part in. That is the standard error-handling template misapplied
+        to a read-only procedure.
+        */
         THROW;
     END CATCH;
 END;
