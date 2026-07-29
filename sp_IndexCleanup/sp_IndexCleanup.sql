@@ -3710,6 +3710,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   ISNULL(ia2_inner.filter_definition, N'') = ISNULL(ia1.filter_definition, N'')
             AND   NOT (ia1.is_unique = 1 AND ia2_inner.is_unique = 0)
             AND   ia2_inner.consolidation_rule IS NULL
+            /* Same usage floor as the outer join below: an index that missed
+               @min_reads / @min_writes cannot serve as the merge target. */
+            AND   ia2_inner.meets_usage_floor = 1
             AND EXISTS
             (
                 SELECT
@@ -4327,7 +4330,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND   ps_uq.partition_columns IS NOT NULL
           AND   CHARINDEX(ps_uq.partition_columns, ia_nc.key_columns) = 0
       )
-    WHERE NOT EXISTS
+    /* Both sides must have cleared @min_reads / @min_writes on their own */
+    WHERE ia_uc.meets_usage_floor = 1
+    AND   ia_nc.meets_usage_floor = 1
+    AND NOT EXISTS
     (
         /* Don't propose replacing a unique constraint that backs an inbound
            foreign key. Dropping it would be blocked by SQL Server, and
@@ -4372,6 +4378,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id_nc.is_unique_constraint = 0 /* This is not a unique constraint */
     /* Same filtered-index guard as the DISABLE marking above. */
     WHERE ia_nc.filter_definition IS NULL
+    /* Same usage floor as the DISABLE marking above: this index is the one
+       being rewritten as unique, so it must have cleared @min_reads /
+       @min_writes on its own. */
+    AND   ia_nc.meets_usage_floor = 1
     /* Same Msg 1908 guard as the DISABLE marking above. */
     AND NOT EXISTS
     (
@@ -4395,6 +4405,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           ON  id_uc.index_hash = ia_uc.index_hash
           AND id_uc.is_unique_constraint = 1
         WHERE ia_uc.scope_hash = ia_nc.scope_hash
+        /* And the constraint has to clear the floor too. The DISABLE marking
+           above passed on any that didn't, so promoting this index would
+           leave a MAKE UNIQUE with no constraint to replace. */
+        AND   ia_uc.meets_usage_floor = 1
         /* Check that both indexes have EXACTLY the same key columns */
         AND   ia_uc.key_columns = ia_nc.key_columns
     )
@@ -4478,6 +4492,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia_loser.consolidation_rule = N'Unique Constraint Replacement'
     AND   ia_keeper.action = N'KEEP'
     AND   ia_keeper.consolidation_rule = N'Unique Constraint Replacement'
+    /* Both sides must have cleared @min_reads / @min_writes on their own */
+    AND   ia_loser.meets_usage_floor = 1
+    AND   ia_keeper.meets_usage_floor = 1
     /* Both rows must be unique constraints (not regular nonclustered indexes
        that Rule 7 also marked KEEP for some reason) */
     AND EXISTS
@@ -4579,6 +4596,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia_winner.consolidation_rule = N'Unique Constraint Replacement'
     WHERE ia_dup.consolidation_rule IS NULL
     AND   ia_dup.action IS NULL
+    /* Both sides must have cleared @min_reads / @min_writes on their own */
+    AND   ia_dup.meets_usage_floor = 1
+    AND   ia_winner.meets_usage_floor = 1
     /* Exclude unique constraints (they're handled separately) */
     AND NOT EXISTS
     (

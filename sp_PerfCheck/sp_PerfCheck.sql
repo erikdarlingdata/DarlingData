@@ -65,6 +65,8 @@ ALTER PROCEDURE
     @wait_medium_pct decimal(38, 2) = 20.0, /* Resource wait at/above this % of uptime is Medium */
     @memory_grant_warning integer = 100, /* Forced grants at/above this count are Medium */
     @memory_grant_critical integer = 10000, /* Forced grants at/above this count are High */
+    @memory_grant_timeout_warning decimal(38, 2) = 10.0, /* Grant timeouts above this count are Medium */
+    @memory_grant_timeout_critical decimal(38, 2) = 100.0, /* Grant timeouts above this count are High */
     @help bit = 0, /*For helpfulness*/
     @debug bit = 0, /* Print diagnostic messages */
     @version varchar(30) = NULL OUTPUT, /* Returns version */
@@ -125,6 +127,8 @@ BEGIN
                     WHEN N'@wait_medium_pct' THEN 'a resource wait at or above this percent of uptime is Medium priority'
                     WHEN N'@memory_grant_warning' THEN 'forced memory grants at or above this cumulative count are Medium'
                     WHEN N'@memory_grant_critical' THEN 'forced memory grants at or above this cumulative count are High'
+                    WHEN N'@memory_grant_timeout_warning' THEN 'memory grant timeouts above this cumulative count are Medium'
+                    WHEN N'@memory_grant_timeout_critical' THEN 'memory grant timeouts above this cumulative count are High'
                     ELSE NULL
                 END,
             valid_inputs =
@@ -142,6 +146,8 @@ BEGIN
                     WHEN N'@wait_medium_pct' THEN 'any positive percentage'
                     WHEN N'@memory_grant_warning' THEN 'any positive integer'
                     WHEN N'@memory_grant_critical' THEN 'any positive integer'
+                    WHEN N'@memory_grant_timeout_warning' THEN 'any positive number'
+                    WHEN N'@memory_grant_timeout_critical' THEN 'any positive number'
                     ELSE NULL
                 END,
             defaults =
@@ -159,6 +165,8 @@ BEGIN
                     WHEN N'@wait_medium_pct' THEN '20.0'
                     WHEN N'@memory_grant_warning' THEN '100'
                     WHEN N'@memory_grant_critical' THEN '10000'
+                    WHEN N'@memory_grant_timeout_warning' THEN '10.0'
+                    WHEN N'@memory_grant_timeout_critical' THEN '100.0'
                     ELSE NULL
                 END
         FROM sys.all_parameters AS ap
@@ -250,6 +258,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN @memory_grant_critical >= 0
                 THEN @memory_grant_critical
                 ELSE 10000
+            END,
+        @memory_grant_timeout_warning =
+            CASE
+                WHEN @memory_grant_timeout_warning >= 0
+                THEN @memory_grant_timeout_warning
+                ELSE 10.0
+            END,
+        @memory_grant_timeout_critical =
+            CASE
+                WHEN @memory_grant_timeout_critical >= 0
+                THEN @memory_grant_timeout_critical
+                ELSE 100.0
             END;
 
     /*
@@ -494,8 +514,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE d.name = @database_name
         )
         BEGIN
+            /*
+            Severity 11 hands control to the CATCH block at the end of the
+            procedure, whose THROW re-raises this to the caller, so no
+            RETURN is needed (or reachable) here.
+            */
             RAISERROR(N'The database %s does not exist on this server. Check the name and try again.', 11, 1, @database_name) WITH NOWAIT;
-            RETURN;
         END;
 
         IF NOT EXISTS
@@ -507,8 +531,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   d.state = 0 /* ONLINE */
         )
         BEGIN
+            /*
+            Severity 11 hands control to the CATCH block at the end of the
+            procedure, whose THROW re-raises this to the caller, so no
+            RETURN is needed (or reachable) here.
+            */
             RAISERROR(N'The database %s exists but is not ONLINE, so its configuration cannot be analyzed. Run without @database_name for the server-level checks.', 11, 1, @database_name) WITH NOWAIT;
-            RETURN;
         END;
     END;
 
@@ -534,19 +562,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_auto_create_stats_incremental_on bit NOT NULL,
         is_auto_update_stats_on bit NOT NULL,
         is_auto_update_stats_async_on bit NOT NULL,
-        is_ansi_null_default_on bit NOT NULL,
         is_ansi_nulls_on bit NOT NULL,
-        is_ansi_padding_on bit NOT NULL,
         is_ansi_warnings_on bit NOT NULL,
-        is_arithabort_on bit NOT NULL,
         is_concat_null_yields_null_on bit NOT NULL,
-        is_numeric_roundabort_on bit NOT NULL,
         is_quoted_identifier_on bit NOT NULL,
         is_parameterization_forced bit NOT NULL,
         is_query_store_on bit NOT NULL,
         is_distributor bit NOT NULL,
         is_cdc_enabled bit NOT NULL,
-        target_recovery_time_in_seconds integer NULL,
         delayed_durability_desc nvarchar(60) NULL,
         /*
         Nullable on purpose. A database that is closed (AUTO_CLOSE), OFFLINE, or
@@ -1098,9 +1121,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 4103,
             priority =
                 CASE
-                    WHEN MAX(ders.timeout_error_count) > 100
+                    WHEN MAX(ders.timeout_error_count) > @memory_grant_timeout_critical
                     THEN 20 /* High: queries repeatedly failing to get memory */
-                    WHEN MAX(ders.timeout_error_count) > 10
+                    WHEN MAX(ders.timeout_error_count) > @memory_grant_timeout_warning
                     THEN 30 /* Medium */
                     ELSE 40 /* Low: a few since startup, likely transient */
                 END,
@@ -4087,19 +4110,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         d.is_auto_create_stats_incremental_on,
         d.is_auto_update_stats_on,
         d.is_auto_update_stats_async_on,
-        d.is_ansi_null_default_on,
         d.is_ansi_nulls_on,
-        d.is_ansi_padding_on,
         d.is_ansi_warnings_on,
-        d.is_arithabort_on,
         d.is_concat_null_yields_null_on,
-        d.is_numeric_roundabort_on,
         d.is_quoted_identifier_on,
         d.is_parameterization_forced,
         d.is_query_store_on,
         d.is_distributor,
         d.is_cdc_enabled,
-        d.target_recovery_time_in_seconds,
         d.delayed_durability_desc,';
 
     /* Handle accelerated database recovery column */
@@ -4174,19 +4192,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_auto_create_stats_incremental_on,
         is_auto_update_stats_on,
         is_auto_update_stats_async_on,
-        is_ansi_null_default_on,
         is_ansi_nulls_on,
-        is_ansi_padding_on,
         is_ansi_warnings_on,
-        is_arithabort_on,
         is_concat_null_yields_null_on,
-        is_numeric_roundabort_on,
         is_quoted_identifier_on,
         is_parameterization_forced,
         is_query_store_on,
         is_distributor,
         is_cdc_enabled,
-        target_recovery_time_in_seconds,
         delayed_durability_desc,
         is_accelerated_database_recovery_on,
         is_ledger_on

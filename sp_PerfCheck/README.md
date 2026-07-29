@@ -30,6 +30,8 @@
 | @wait_medium_pct | decimal(38, 2) | 20.0 | A resource wait at or above this percent of uptime is Medium priority |
 | @memory_grant_warning | integer | 100 | Forced memory grants at or above this cumulative count are Medium |
 | @memory_grant_critical | integer | 10000 | Forced memory grants at or above this cumulative count are High |
+| @memory_grant_timeout_warning | decimal(38, 2) | 10.0 | Memory grant timeouts above this cumulative count are Medium |
+| @memory_grant_timeout_critical | decimal(38, 2) | 100.0 | Memory grant timeouts above this cumulative count are High |
 | @help | bit | 0 | Displays help information |
 | @debug | bit | 0 | Print diagnostic messages and intermediate query results |
 | @version | varchar(30) | NULL OUTPUT | Returns version number |
@@ -132,7 +134,7 @@ respectively, so a barely-used file cannot trip them on a handful of slow sample
 | 4001 | Offline CPU Schedulers | Critical (10) | CPUs offline, reducing processing power |
 | 4101 | Memory-Starved Queries: Forced Grants | High (20) / Medium (30) / Low (40) | Graduated on @memory_grant_critical (10000) and @memory_grant_warning (100) |
 | 4102 | Memory Dumps Detected In Last 90 Days | Critical (10) | Server crashing in the last 90 days |
-| 4103 | Memory-Starved Queries: Grant Timeouts | High (20) / Medium (30) / Low (40) | More than 100 = High, more than 10 = Medium, otherwise Low |
+| 4103 | Memory-Starved Queries: Grant Timeouts | High (20) / Medium (30) / Low (40) | Graduated on @memory_grant_timeout_critical (100.0) and @memory_grant_timeout_warning (10.0) |
 | 4104 | Large Security Token Cache | High (20) / Medium (30) / Low (40) | Over 5 GB = High, over 2 GB = Medium, fires at 1 GB |
 | 4105 | Lock Pages in Memory Not Enabled | Low (40) | Best practice for servers with 32 GB or more of RAM |
 | 4106 | Instant File Initialization Disabled | Low (40) | Best practice for file creation and growth operations |

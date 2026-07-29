@@ -262,7 +262,49 @@ DECLARE
     @new bit = 0,
     @current_table nvarchar(100),
     @include_plans_seeded bit = 0,
-    @match nvarchar(max) = N''
+    @match nvarchar(max) = N'';
+
+/*
+Attempt at overloading procedure name so it can accept a schema.procedure or
+db.schema.procedure pasted from the results of sp_QuickieStore or another run of
+this procedure.
+PARSENAME copes with bracketed ([dbo].[proc]) and unbracketed (dbo.proc) forms
+alike; the old LIKE '[[]%].[[]%]' pattern only matched the fully bracketed
+two-part form, so an unbracketed dbo.proc fell through and was later QUOTENAME'd
+whole into a single mangled [dbo.proc] identifier that could never resolve.
+This runs before the @database_name default below so a three-part paste can
+supply its own database, matching sp_QuickieStore.
+The blank string cleanup for these two parameters happens here rather than with
+the rest of the parameters further down, because the parsing keys off
+@procedure_schema being NULL.
+*/
+SELECT
+    @procedure_schema =
+        NULLIF(@procedure_schema, ''),
+    @procedure_name =
+        NULLIF(@procedure_name, '');
+
+IF  @procedure_name IS NOT NULL
+AND @procedure_schema IS NULL
+AND PARSENAME(@procedure_name, 2) IS NOT NULL
+BEGIN
+    /*
+    A three-part db.schema.proc paste: adopt its database when the caller didn't
+    pass @database_name, rather than dropping it (which looked the procedure up
+    in the wrong database) or refusing to split it (a false 'not found').
+    An explicitly passed @database_name always wins.
+    */
+    IF  PARSENAME(@procedure_name, 3) IS NOT NULL
+    AND @database_name IS NULL
+    BEGIN
+        SELECT
+            @database_name = PARSENAME(@procedure_name, 3);
+    END;
+
+    SELECT
+        @procedure_schema = PARSENAME(@procedure_name, 2),
+        @procedure_name   = PARSENAME(@procedure_name, 1);
+END;
 
 /*Fix NULL @database_name*/
 IF
@@ -577,13 +619,11 @@ BEGIN
 END;
 
 /*
-NULLIF blank strings to NULL for consistent handling
+NULLIF blank strings to NULL for consistent handling.
+@procedure_schema and @procedure_name are cleaned up earlier, alongside the
+procedure name parsing that depends on them.
 */
 SELECT
-    @procedure_schema =
-        NULLIF(@procedure_schema, ''),
-    @procedure_name =
-        NULLIF(@procedure_name, ''),
     @include_plan_ids =
         NULLIF(@include_plan_ids, ''),
     @include_query_ids =
@@ -608,26 +648,6 @@ SELECT
         NULLIF(@query_text_search, ''),
     @query_text_search_not =
         NULLIF(@query_text_search_not, '');
-
-/*
-Parse schema from procedure name if provided in schema.procedure format.
-PARSENAME copes with bracketed ([dbo].[proc]) and unbracketed (dbo.proc)
-alike; the old LIKE '[[]%].[[]%]' pattern only matched the fully bracketed
-form, so an unbracketed dbo.proc fell through and was later QUOTENAME'd whole
-into a single mangled [dbo.proc] identifier that could never resolve.
-Only split when the caller didn't pass @procedure_schema separately, the name
-has a schema part, and it's exactly two parts (part 3 NULL) so a stray
-three-part name doesn't silently drop its database component here.
-*/
-IF  @procedure_name IS NOT NULL
-AND @procedure_schema IS NULL
-AND PARSENAME(@procedure_name, 2) IS NOT NULL
-AND PARSENAME(@procedure_name, 3) IS NULL
-BEGIN
-    SELECT
-        @procedure_schema = PARSENAME(@procedure_name, 2),
-        @procedure_name   = PARSENAME(@procedure_name, 1);
-END;
 
 /*Initialize procedure variables*/
 IF @procedure_name IS NOT NULL
