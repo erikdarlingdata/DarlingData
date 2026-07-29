@@ -3540,6 +3540,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
             (error 1222, plausible under the very plan-cache churn being
             diagnosed) would abort the entire procedure, losing every
             section after this one. Degrade to a warning instead.
+
+            This branch only runs when @log_to_table = 0, so the caller is
+            a human watching the results and a severity 10 note is the
+            right outcome. The logging path below raises instead, because
+            nobody is watching an Agent job.
             */
             BEGIN TRY
                 EXECUTE sys.sp_executesql
@@ -3614,14 +3619,23 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 PRINT @insert_sql;
             END;
 
-            /* Same plan-fetch TRY/CATCH as the client path above. */
+            /*
+            Same plan-fetch TRY/CATCH as the client path above, except this
+            branch only runs when @log_to_table = 1. A logging failure here
+            (dropped table, revoked permission, schema drift) means nothing
+            was recorded, and severity 10 is informational: an Agent job
+            would swallow it and report success with an empty log. Severity
+            11 returns a real error so the job step fails and somebody finds
+            out. Execution still continues past the RAISERROR, so the rest of
+            the collection is unaffected.
+            */
             BEGIN TRY
                 EXECUTE sys.sp_executesql
                     @insert_sql;
             END TRY
             BEGIN CATCH
                 SET @pd_catch_msg = ERROR_MESSAGE();
-                RAISERROR(N'Memory-grant query logging skipped: %s', 10, 1, @pd_catch_msg) WITH NOWAIT;
+                RAISERROR(N'Memory-grant query logging skipped: %s', 11, 1, @pd_catch_msg) WITH NOWAIT;
             END CATCH;
         END;
     END;
@@ -4370,7 +4384,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             IF @log_to_table = 0
             BEGIN
-                /* Same plan-fetch TRY/CATCH as the memory-grants path. */
+                /*
+                Same plan-fetch TRY/CATCH as the memory-grants path. Client
+                path only (@log_to_table = 0), so a failure stays a severity
+                10 note for the human reading the results.
+                */
                 BEGIN TRY
                     EXECUTE sys.sp_executesql
                         @cpu_sql;
@@ -4443,14 +4461,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     PRINT @insert_sql;
                 END;
 
-                /* Same plan-fetch TRY/CATCH as the client path above. */
+                /*
+                Same plan-fetch TRY/CATCH as the client path above, except
+                this branch only runs when @log_to_table = 1. Severity 11
+                instead of 10 for the same reason as the memory-grant
+                logging path: an informational message lets an Agent job
+                report success while recording nothing, so a logging failure
+                has to come back as a real error.
+                */
                 BEGIN TRY
                     EXECUTE sys.sp_executesql
                         @insert_sql;
                 END TRY
                 BEGIN CATCH
                     SET @pd_catch_msg = ERROR_MESSAGE();
-                    RAISERROR(N'CPU query logging skipped: %s', 10, 1, @pd_catch_msg) WITH NOWAIT;
+                    RAISERROR(N'CPU query logging skipped: %s', 11, 1, @pd_catch_msg) WITH NOWAIT;
                 END CATCH;
             END;
         END; /*End not skipping queries*/
