@@ -521,10 +521,14 @@ def build_cases():
 
     # Same, with a scaled type in the text: the declared numeric(10,2) must not
     # be split on its internal comma while being carried into the declaration.
+    # The "?, ?" check is the one that can actually fail: with the comma-space
+    # form unsplit, @b vanishes from the value list and only one ? is emitted.
+    # The declaration side rebuilds as "numeric(10,2), @b int" either way, so a
+    # substring check on it alone cannot distinguish merged from split.
     add("qmark:scaled_fillin",
         make_plan("(@a numeric(10,2), @b int)SELECT c = COUNT_BIG(*) FROM sys.all_columns AS ac "
                   "WHERE ac.column_id = @b", params=None),
-        {"expect_qmark": True, "decls_contain": ["numeric(10,2)"]})
+        {"expect_qmark": True, "decls_contain": ["numeric(10,2)", "@b int", "?, ?"]})
 
     # ---------- First-ParameterList-wins hazard ----------------------------
     # E6-style control: real ParameterList first, decoy second -> binds 555.

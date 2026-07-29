@@ -105,7 +105,7 @@ BEGIN
     SELECT 'i extract query text and parameters from query plans' UNION ALL
     SELECT 'and set them up to run with sp_executesql' UNION ALL
     SELECT '' UNION ALL
-    SELECT 'from your loving sql server consultant, erik darling: erikdarling@hey.com';
+    SELECT 'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
     /*Parameters*/
     SELECT
@@ -202,6 +202,38 @@ BEGIN
     ORDER BY
         ap.parameter_id
     OPTION(RECOMPILE);
+
+    /*
+    License to F5
+    */
+    SELECT
+        mit_license_yo =
+           'i am MIT licensed, so like, do whatever'
+    UNION ALL
+
+    SELECT
+        mit_license_yo =
+            'see printed messages for full license';
+
+    RAISERROR('
+MIT License
+
+Copyright 2026 Darling Data, LLC
+
+https://www.erikdarling.com/
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+', 0, 1) WITH NOWAIT;
 
     RETURN;
 END;
@@ -530,11 +562,16 @@ BEGIN
                 7,
                 @start_date
             ),
+        /*
+        Same seven days as @end_date above, mirroring sp_QuickieStore:
+        a different span here would record a window the queries did not
+        actually use
+        */
         @end_date_original =
             DATEADD
             (
                 DAY,
-                1,
+                7,
                 @start_date_original
             );
 END;
@@ -4195,7 +4232,7 @@ SELECT
     param_data_type =
         cr.c.value(N'@ParameterDataType', N'sysname'),
     param_compiled_value =
-        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')
+        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
@@ -4374,7 +4411,7 @@ CROSS APPLY
                 query with a scaled-type parameter.
                 */
                 N'<p>' +
-                REPLACE(prefix.param_prefix, N',@', N'</p><p>@') +
+                REPLACE(REPLACE(prefix.param_prefix, N', @', N',@'), N',@', N'</p><p>@') +
                 N'</p>' AS xml
             )
 ) AS px
@@ -5202,6 +5239,15 @@ BEGIN
     FROM #query_store_runtime_stats AS qsrs
     ORDER BY
         qsrs.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#parameter_shred',
+        ps.*
+    FROM #parameter_shred AS ps
+    ORDER BY
+        ps.plan_id
     OPTION(RECOMPILE);
 
     SELECT
