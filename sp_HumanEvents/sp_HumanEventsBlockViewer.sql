@@ -287,11 +287,12 @@ IF EXISTS
 AND @session_name NOT LIKE N'system%health'
 /*
 Table-source mode reads blocked process report XML somebody already
-captured into a table — the server's CURRENT threshold setting has no
-bearing on that, and this gate used to refuse the whole run over it.
-The exemption mirrors the routing condition exactly (@target_table AND
-@target_column both supplied): a partial table-parameter call falls
-back to reading an XE session, where the gate still applies.
+captured into a table, so the server's CURRENT threshold setting has
+no bearing on it. The exemption checks @target_table AND @target_column
+because table-mode routing guarantees both by the time any work
+happens: supplying either one auto-promotes @target_type to table mode
+further down, and a call with only one of the two routes to table mode
+and fails its parameter validation before any reading starts.
 */
 AND (@target_table IS NULL OR @target_column IS NULL)
 BEGIN
@@ -768,7 +769,7 @@ BEGIN
 
     /*
     QUOTENAME returns NULL for any input over 128 characters, and a NULL
-    table name turns every logging statement below into a silent no-op —
+    table name turns every logging statement below into a silent no-op:
     no table, no rows, no error. The one suffix appended to the prefix,
     _BlockedProcessReport, is 21 characters, so the prefix gets 107.
     */
@@ -776,7 +777,7 @@ BEGIN
        count toward the 128-character identifier limit inside QUOTENAME. */
     IF DATALENGTH(@log_table_name_prefix) > 214
     BEGIN
-        RAISERROR('@log_table_name_prefix is limited to 107 characters, so the table name suffix (_BlockedProcessReport) still fits in an identifier. Logging will be disabled.', 11, 1) WITH NOWAIT;
+        RAISERROR(N'@log_table_name_prefix is limited to 107 characters, so the table name suffix (_BlockedProcessReport) still fits in an identifier. Shorten it and run me again.', 11, 1) WITH NOWAIT;
         RETURN;
     END;
 
@@ -789,7 +790,7 @@ BEGIN
         WHERE d.name = @log_database_name
     )
     BEGIN
-        RAISERROR('The specified logging database %s does not exist. Logging will be disabled.', 11, 1, @log_database_name) WITH NOWAIT;
+        RAISERROR(N'The specified logging database %s does not exist. Fix @log_database_name and run me again.', 11, 1, @log_database_name) WITH NOWAIT;
         RETURN;
     END;
 
