@@ -10633,8 +10633,16 @@ BEGIN
         total_query_wait_time_ms =
             SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    /*
+    Joining on plan_id alone would sum waits across all of
+    Query Store history, multiplied by the number of in-window
+    runtime stats rows. Interval and execution type scope the
+    waits to the rows the WHERE clause qualifies.
+    */
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-      ON qsrs.plan_id = qsws.plan_id
+      ON  qsrs.plan_id = qsws.plan_id
+      AND qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+      AND qsrs.execution_type = qsws.execution_type
     WHERE 1 = 1
     '
    + CASE WHEN @regression_mode = 1
@@ -10760,8 +10768,15 @@ BEGIN
         total_query_wait_time_ms =
             MAX(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    /*
+    Joining on plan_id alone would take the max wait across
+    all of Query Store history rather than the requested
+    time window.
+    */
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-      ON qsrs.plan_id = qsws.plan_id
+      ON  qsrs.plan_id = qsws.plan_id
+      AND qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+      AND qsrs.execution_type = qsws.execution_type
     WHERE 1 = 1
     AND qsws.wait_category = '  +
     CASE @sort_order
