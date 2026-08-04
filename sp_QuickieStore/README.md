@@ -127,7 +127,11 @@ EXECUTE dbo.sp_QuickieStore
 
 -- Find parameter sensitive plan shapes: same plan, wildly different runtimes.
 -- Results are one row per query_hash + query_plan_hash, ranked by how
--- volatile the @sort_order metric is (coefficient of variation)
+-- volatile the @sort_order metric is (coefficient of variation), weighted
+-- by the log of the shape's total work so trivial-cost queries with big
+-- relative swings don't crowd out expensive ones. The hash-based
+-- include/ignore lists are honored, so recurring noise (maintenance
+-- queries, known offenders) can be filtered out
 EXECUTE dbo.sp_QuickieStore
     @find_parameter_sensitive = 1;
 

@@ -479,6 +479,65 @@ def parameter_sensitive_tests(server, password, R):
     R.check("ParamSensitive", "@execution_count impossibly high returns no shapes",
             ps_detail_rows(out) == 0, "got %d rows" % ps_detail_rows(out))
 
+    # The hash-based include/ignore lists are honored in this mode: shapes are
+    # keyed by (query_hash, query_plan_hash), so the lists filter shapes
+    # directly, before the top-N cut. Extract the sniffed shape's query_hash
+    # from a default run's detail row (the first two 0x tokens in a detail row
+    # are query_hash and query_plan_hash), then prove both directions on the
+    # hash VALUE in detail rows -- object names can also appear in other
+    # shapes' query text, hash values cannot.
+    out, combined = run_qs(server, password, ", @find_parameter_sensitive = 1")
+    sniff_line = next((line for line in out.splitlines()
+                       if line.startswith(TEST_DB + "\t")
+                       and "qs_sniff_proc" in line), "")
+    hashes = re.findall(r"0x[0-9A-Fa-f]{16}", sniff_line)
+    R.check("ParamSensitive", "sniffed shape's hashes are extractable",
+            len(hashes) >= 2, "found %d hash tokens" % len(hashes))
+    if len(hashes) >= 2:
+        query_hash = hashes[0]
+        out, combined = run_qs(server, password,
+                               ", @find_parameter_sensitive = 1, "
+                               "@ignore_query_hashes = '%s'" % query_hash)
+        errs = find_sql_errors(combined)
+        R.check("ParamSensitive", "@ignore_query_hashes executes cleanly",
+                not errs and PS_SUMMARY_MARKER in out, str(errs[:2]))
+        R.check("ParamSensitive",
+                "@ignore_query_hashes removes the ignored shape",
+                not any(query_hash in line for line in out.splitlines()
+                        if line.startswith(TEST_DB + "\t")),
+                "ignored query_hash still present in detail rows")
+        out, combined = run_qs(server, password,
+                               ", @find_parameter_sensitive = 1, "
+                               "@include_query_hashes = '%s'" % query_hash)
+        detail = [line for line in out.splitlines()
+                  if line.startswith(TEST_DB + "\t")]
+        R.check("ParamSensitive",
+                "@include_query_hashes keeps only the included shape",
+                len(detail) >= 1
+                and all(query_hash in line for line in detail),
+                "got %d detail rows, not all matching the included hash"
+                % len(detail))
+    out, combined = run_qs(server, password,
+                           ", @find_parameter_sensitive = 1, "
+                           "@include_query_hashes = '0xDEADBEEFDEADBEEF'")
+    R.check("ParamSensitive",
+            "@include_query_hashes nobody has: summary still returned "
+            "(positive control for the absence below)",
+            PS_SUMMARY_MARKER in out, "summary header missing")
+    R.check("ParamSensitive",
+            "@include_query_hashes nobody has returns no shapes",
+            ps_detail_rows(out) == 0, "got %d rows" % ps_detail_rows(out))
+
+    # Ranking is work-weighted volatility; the summary explains top_waits
+    # availability; the internal sort_value column must not leak into output.
+    out, combined = run_qs(server, password, ", @find_parameter_sensitive = 1")
+    R.check("ParamSensitive", "ranked_on says the ranking is work-weighted",
+            "volatility, work-weighted" in out, "work-weighted marker missing")
+    R.check("ParamSensitive", "summary explains top_waits availability",
+            "wait_stats" in out, "wait_stats summary column missing")
+    R.check("ParamSensitive", "internal sort_value column does not leak",
+            "sort_value" not in out, "sort_value column leaked into output")
+
     for extra, what in (
             (", @find_parameter_sensitive = 1, @find_high_impact = 1",
              "@find_high_impact"),
