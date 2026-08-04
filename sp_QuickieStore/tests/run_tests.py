@@ -415,6 +415,73 @@ def bidirectional_tests(server, password, R):
 
 PS_SUMMARY_MARKER = "multi_shape_query_hashes"
 
+HI_SUMMARY_MARKER = "workload_profile"
+
+
+def hi_detail_rows(stdout):
+    """Detail rows from @find_high_impact output: one per query_hash, each
+    beginning with the analyzed database name."""
+    return sum(1 for line in stdout.splitlines()
+               if line.startswith(TEST_DB + "\t"))
+
+
+def high_impact_tests(server, password, R):
+    """@find_high_impact is the other takeover mode: a workload concentration
+    summary plus one row per query_hash, top-N per resource dimension. These
+    are its first assertions: clean execution, output shape (including the
+    absolute total_* columns), the query-hash include/ignore lists filtering
+    before the top-N picks, and the zero-value spills diagnostic staying
+    quiet."""
+    out, combined = run_qs(server, password, ", @find_high_impact = 1")
+    errs = find_sql_errors(combined)
+    R.check("HighImpact", "default run executes cleanly", not errs, str(errs[:2]))
+    R.check("HighImpact", "default run returns the summary result set",
+            HI_SUMMARY_MARKER in out, "summary header missing")
+    R.check("HighImpact", "default run returns detail rows",
+            hi_detail_rows(out) > 0, "no hashes surfaced from the workload")
+    R.check("HighImpact", "absolute total columns are in the output",
+            "total_cpu_ms" in out and "total_duration_ms" in out,
+            "total_* columns missing")
+    R.check("HighImpact", "spills diagnostic does not fire at 0.0 MB/exec",
+            "(0.0 MB/exec)" not in out, "zero-value spills diagnostic fired")
+
+    # Query-hash include/ignore: extract a surfaced hash (first 0x token in a
+    # detail row is query_hash) and prove both directions on the hash VALUE.
+    line = next((l for l in out.splitlines()
+                 if l.startswith(TEST_DB + "\t") and "0x" in l), "")
+    hashes = re.findall(r"0x[0-9A-Fa-f]{16}", line)
+    R.check("HighImpact", "a surfaced hash is extractable",
+            len(hashes) >= 1, "no hash token found in detail rows")
+    if hashes:
+        query_hash = hashes[0]
+        out, combined = run_qs(server, password,
+                               ", @find_high_impact = 1, "
+                               "@ignore_query_hashes = '%s'" % query_hash)
+        errs = find_sql_errors(combined)
+        R.check("HighImpact", "@ignore_query_hashes executes cleanly",
+                not errs and HI_SUMMARY_MARKER in out, str(errs[:2]))
+        R.check("HighImpact", "@ignore_query_hashes removes the ignored hash",
+                not any(query_hash in l for l in out.splitlines()
+                        if l.startswith(TEST_DB + "\t")),
+                "ignored query_hash still present in detail rows")
+        out, combined = run_qs(server, password,
+                               ", @find_high_impact = 1, "
+                               "@include_query_hashes = '%s'" % query_hash)
+        detail = [l for l in out.splitlines() if l.startswith(TEST_DB + "\t")]
+        R.check("HighImpact", "@include_query_hashes keeps only the included hash",
+                len(detail) >= 1 and all(query_hash in l for l in detail),
+                "got %d detail rows, not all matching the included hash"
+                % len(detail))
+    out, combined = run_qs(server, password,
+                           ", @find_high_impact = 1, "
+                           "@include_query_hashes = '0xDEADBEEFDEADBEEF'")
+    R.check("HighImpact",
+            "@include_query_hashes nobody has: summary still returned "
+            "(positive control for the absence below)",
+            HI_SUMMARY_MARKER in out, "summary header missing")
+    R.check("HighImpact", "@include_query_hashes nobody has returns no hashes",
+            hi_detail_rows(out) == 0, "got %d rows" % hi_detail_rows(out))
+
 
 def ps_detail_rows(stdout):
     """Detail rows from @find_parameter_sensitive output: one per plan shape,
@@ -608,6 +675,7 @@ def main():
             filter_matrix(args.server, args.password, R)
             bidirectional_tests(args.server, args.password, R)
             parameter_sensitive_tests(args.server, args.password, R)
+            high_impact_tests(args.server, args.password, R)
     finally:
         out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL)
         R.check("Fixture", "scratch database dropped",
