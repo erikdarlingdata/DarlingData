@@ -418,6 +418,32 @@ PS_SUMMARY_MARKER = "multi_shape_query_hashes"
 HI_SUMMARY_MARKER = "workload_profile"
 
 
+def hash_totals_tests(server, password, R):
+    """@include_query_hash_totals adds *_by_query_hash columns whose totals
+    are scoped to the requested date window (they used to sum all of Query
+    Store history, which sat next to window-scoped columns in the same row)."""
+    out, combined = run_qs(server, password, ", @include_query_hash_totals = 1")
+    errs = find_sql_errors(combined)
+    R.check("HashTotals", "@include_query_hash_totals executes cleanly",
+            not errs and completed(out), str(errs[:2]))
+    R.check("HashTotals", "by_query_hash columns are in the output",
+            "count_executions_by_query_hash" in out
+            and "total_cpu_time_ms_by_query_hash" in out,
+            "by_query_hash columns missing")
+
+    # Window scoping: a window that predates the fixture workload returns no
+    # rows at all, so the totals cannot be sourcing outside the window.
+    out, combined = run_qs(server, password,
+                           ", @include_query_hash_totals = 1, "
+                           "@start_date = '2001-01-01', @end_date = '2001-01-02'")
+    errs = find_sql_errors(combined)
+    R.check("HashTotals",
+            "empty window with hash totals completes cleanly",
+            not errs, str(errs[:2]))
+    R.check("HashTotals", "empty window returns no detail rows",
+            ps_detail_rows(out) == 0, "got %d rows" % ps_detail_rows(out))
+
+
 def hi_detail_rows(stdout):
     """Detail rows from @find_high_impact output: one per query_hash, each
     beginning with the analyzed database name."""
@@ -674,6 +700,7 @@ def main():
             mode_matrix(args.server, args.password, R)
             filter_matrix(args.server, args.password, R)
             bidirectional_tests(args.server, args.password, R)
+            hash_totals_tests(args.server, args.password, R)
             parameter_sensitive_tests(args.server, args.password, R)
             high_impact_tests(args.server, args.password, R)
     finally:
