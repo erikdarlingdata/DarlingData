@@ -490,8 +490,10 @@ BEGIN
     SELECT '    so recompiles of the same plan are analyzed together. Wild metric swings within one shape mean' UNION ALL
     SELECT '    the same plan is fast for some parameter values and slow for others: classic parameter sensitivity.' UNION ALL
     SELECT '    Only regular executions feed the statistics; aborted and exception executions are counted separately.' UNION ALL
-    SELECT '    This mode honors @top, @sort_order, @execution_count, and @duration_ms; the other filter' UNION ALL
-    SELECT '    parameters (@procedure_name, @query_text_search, include/ignore lists, etc.) do not apply here.' UNION ALL
+    SELECT '    This mode honors @top, @sort_order, @execution_count, @duration_ms, and the hash-based' UNION ALL
+    SELECT '    include/ignore lists (@include_query_hashes, @ignore_query_hashes, @include_plan_hashes,' UNION ALL
+    SELECT '    @ignore_plan_hashes), which filter shapes before the top-N cut. The other filter parameters' UNION ALL
+    SELECT '    (@procedure_name, @query_text_search, the id-based lists, etc.) do not apply here.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'database_name: the database being analyzed' UNION ALL
     SELECT 'start_date, end_date: the time window analyzed' UNION ALL
@@ -507,15 +509,22 @@ BEGIN
     SELECT 'query_id_list, plan_id_list: comma-separated IDs for drilling into Query Store views' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'ranked_on, volatility_score: results are ranked by the coefficient of variation (stdev / average) of the' UNION ALL
-    SELECT '    @sort_order metric (cpu, duration, physical reads, writes, memory, rows, tempdb; anything else = cpu).' UNION ALL
-    SELECT '    The stdev is properly combined across runtime stat intervals, weighted by executions, so one weird' UNION ALL
-    SELECT '    interval does not dominate. 0 = perfectly stable, 1 = the stdev equals the average, bigger = wilder.' UNION ALL
+    SELECT '    @sort_order metric (cpu, duration, physical reads, writes, memory, rows, tempdb; anything else = cpu),' UNION ALL
+    SELECT '    multiplied by the log of the total work the shape did in the window for that metric. Volatility alone' UNION ALL
+    SELECT '    is scale-blind (a 3ms query that sometimes hits 60ms would outrank a 2 second query that sometimes' UNION ALL
+    SELECT '    hits 40 seconds), so a shape has to be both volatile and expensive to rank highly.' UNION ALL
+    SELECT '    volatility_score is the raw coefficient of variation: the stdev is properly combined across runtime' UNION ALL
+    SELECT '    stat intervals, weighted by executions, so one weird interval does not dominate.' UNION ALL
+    SELECT '    0 = perfectly stable, 1 = the stdev equals the average, bigger = wilder.' UNION ALL
     SELECT 'signals: rule-based reads on the swings. Nx means max is N times min for that metric' UNION ALL
-    SELECT '    (tiny mins are floored at 0.001 ms / 1 row first, so extreme ratios are lower bounds):' UNION ALL
+    SELECT '    (tiny mins are floored at 0.001 ms / 1 row first, so extreme ratios are lower bounds; displayed' UNION ALL
+    SELECT '    ratios cap at 9999+, and "rows flat" means the shape never returned a row):' UNION ALL
     SELECT '    parameter sensitive (cpu Nx, rows Nx) - big cpu swings while rows barely move. The plan does wildly' UNION ALL
     SELECT '        different amounts of work for similar-sized results: the strongest sniffing signal.' UNION ALL
     SELECT '    row driven (cpu Nx, rows Nx) - cpu swings track row count swings. Work scales with honest data volume,' UNION ALL
     SELECT '        so this is probably not a parameter sensitivity problem.' UNION ALL
+    SELECT '    mixed swings (cpu Nx, rows Nx) - cpu moves more than the row count swings alone explain, but not' UNION ALL
+    SELECT '        decisively; look for parameter sensitivity layered on top of honest data-volume variance.' UNION ALL
     SELECT '    intermittent waits (duration Nx, cpu Nx) - duration swings without cpu swings: blocking, grants, or I/O,' UNION ALL
     SELECT '        not parameter sensitivity. Check top_waits.' UNION ALL
     SELECT '    memory grant swings (Nx) / tempdb swings (Nx) - grant or spill behavior varies between executions.' UNION ALL
@@ -538,9 +547,10 @@ BEGIN
     SELECT 'SHAPE VOLATILITY SUMMARY (separate result set, returned before the query details):' UNION ALL
     SELECT 'total_shapes: how many plan shapes had regular executions in the time window' UNION ALL
     SELECT 'shapes_past_floors: how many cleared the noise floors (executions and minimum cpu/duration)' UNION ALL
-    SELECT 'surfaced_shapes: how many made it into the detail result set after top-N ranking' UNION ALL
+    SELECT 'surfaced_shapes: how many made it into the detail result set after hash filters and top-N ranking' UNION ALL
     SELECT 'multi_shape_query_hashes: how many query_hashes compiled to more than one plan shape in the window' UNION ALL
-    SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order';
+    SELECT 'wait_stats: whether the per-shape top_waits column is available, and why not when it is not' UNION ALL
+    SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order (work-weighted)';
 
     /*
     Limitations
@@ -858,7 +868,10 @@ END;
 /*
 @find_parameter_sensitive is a takeover mode like @find_high_impact,
 so the two of them can't be combined, and it can't be combined with
-the things @find_high_impact can't be combined with either
+the things @find_high_impact can't be combined with either.
+The hash-based include and ignore lists are honored in this mode
+(shapes are keyed by query_hash + query_plan_hash); the id-based
+lists and text filters are not
 */
 IF
 (
@@ -7215,6 +7228,7 @@ BEGIN
         rows_volatility decimal(19, 4) NULL,
         last_execution_time datetimeoffset(7) NULL,
         variance_metrics xml NULL,
+        sort_value float NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash)
     );
@@ -7242,6 +7256,97 @@ BEGIN
                 THEN @sort_order
                 ELSE N'cpu'
             END;
+
+    /*
+    The hash-based include and ignore lists apply in this mode, because
+    plan shapes are keyed by the same columns (query_hash + query_plan_hash).
+    The main filter-processing section is never reached from here (this mode
+    returns at the end of its block), so the lists are parsed locally with
+    the same splitter. The id-based lists and text filters do not apply:
+    shapes aggregate across query and plan ids.
+    */
+    IF
+    (
+       @include_query_hashes IS NOT NULL
+    OR @ignore_query_hashes  IS NOT NULL
+    OR @include_plan_hashes  IS NOT NULL
+    OR @ignore_plan_hashes   IS NOT NULL
+    )
+    BEGIN
+        SELECT
+            @include_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@include_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @ignore_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@ignore_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @include_plan_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@include_plan_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @ignore_plan_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@ignore_plan_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N'');
+
+        IF @include_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #include_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @include_query_hashes;
+        END;
+
+        IF @ignore_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #ignore_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @ignore_query_hashes;
+        END;
+
+        IF @include_plan_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #include_plan_hashes WITH (TABLOCK)
+            (
+                plan_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @include_plan_hashes;
+        END;
+
+        IF @ignore_plan_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #ignore_plan_hashes WITH (TABLOCK)
+            (
+                plan_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @ignore_plan_hashes;
+        END;
+    END;
 
     /*Step 1a: Stage interval IDs for the time window*/
     SELECT
@@ -7689,10 +7794,17 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
         ps.query_hash;
 
     /*
-    Step 3: Pick the top N shapes by volatility of the ranking metric.
+    Step 3: Pick the top N shapes by the volatility of the ranking metric,
+    weighted by the log of the total work the shape did in the window.
+    The coefficient of variation alone is scale-blind: a 3ms query that
+    sometimes hits 60ms would outrank a 2 second query that sometimes hits
+    40 seconds. On a quiet system where every shape is tiny the weight is
+    nearly uniform and ranking stays effectively pure volatility; on a busy
+    system a shape has to be both volatile and expensive to make the cut.
     The noise floors keep trivia out: a shape must have enough executions
     for variance to mean anything, and must have done a measurable amount
     of work at least once. @duration_ms takes over the work floor when set.
+    The hash-based include and ignore lists filter here, before the top-N.
     */
     INSERT
         #ps_interesting WITH (TABLOCK)
@@ -7721,6 +7833,52 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             )
         )
     )
+    AND
+    (
+        NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+        )
+     OR EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+            WHERE iqh.query_hash = ps.query_hash
+        )
+    )
+    AND
+    (
+        NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_plan_hashes AS iph
+        )
+     OR EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_plan_hashes AS iph
+            WHERE iph.plan_hash = ps.query_plan_hash
+        )
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ignore_query_hashes AS igh
+        WHERE igh.query_hash = ps.query_hash
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ignore_plan_hashes AS igp
+        WHERE igp.plan_hash = ps.query_plan_hash
+    )
     ORDER BY
         CASE @ps_rank_metric
             WHEN N'duration' THEN ps.duration_volatility
@@ -7730,7 +7888,24 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             WHEN N'rows' THEN ps.rows_volatility
             WHEN N'tempdb' THEN ps.tempdb_volatility
             ELSE ps.cpu_volatility
-        END DESC,
+        END *
+        LOG10
+        (
+            10. +
+            ISNULL
+            (
+                CASE @ps_rank_metric
+                    WHEN N'duration' THEN ps.total_duration_ms
+                    WHEN N'physical reads' THEN ps.avg_physical_reads_mb * ps.total_executions
+                    WHEN N'writes' THEN ps.avg_writes_mb * ps.total_executions
+                    WHEN N'memory' THEN ps.avg_memory_mb * ps.total_executions
+                    WHEN N'rows' THEN ps.avg_rows * ps.total_executions
+                    WHEN N'tempdb' THEN ps.avg_tempdb_mb * ps.total_executions
+                    ELSE ps.total_cpu_ms
+                END,
+                0.
+            )
+        ) DESC,
         ps.total_cpu_ms DESC,
         ps.query_hash,
         ps.query_plan_hash;
@@ -7779,8 +7954,16 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
                 FROM #ps_query_rollup AS qr
                 WHERE qr.shape_count > 1
             ),
+        wait_stats =
+            CASE
+                WHEN @new = 0
+                THEN N'top_waits is not available before SQL Server 2017; the column is omitted'
+                WHEN @query_store_waits_enabled = 0
+                THEN N'query store wait stats capture is off for this database; the top_waits column is omitted'
+                ELSE N'top_waits shows the top 3 wait categories per shape'
+            END,
         ranked_on =
-            @ps_rank_metric + N' volatility';
+            @ps_rank_metric + N' volatility, work-weighted';
 
     /*
     Step 4: Stage query and plan ids for the interesting shapes.
@@ -8315,7 +8498,8 @@ OPTION(RECOMPILE);' + @nc10;
         max_rows,
         rows_volatility,
         last_execution_time,
-        variance_metrics
+        variance_metrics,
+        sort_value
     )
     SELECT
         qi.object_name,
@@ -8335,7 +8519,7 @@ OPTION(RECOMPILE);' + @nc10;
         qi.query_id_list,
         qi.plan_id_list,
         ranked_on =
-            @ps_rank_metric + N' volatility',
+            @ps_rank_metric + N' volatility, work-weighted',
         volatility_score =
             CASE @ps_rank_metric
                 WHEN N'duration' THEN ps.duration_volatility
@@ -8357,10 +8541,20 @@ OPTION(RECOMPILE);' + @nc10;
                          AND ps.max_cpu_ms >= 10
                          AND sw.cpu_ratio >= sw.rows_ratio * 10
                         THEN N'parameter sensitive (cpu ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio)) +
+                             CASE
+                                 WHEN sw.cpu_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio))
+                             END +
                              N'x, rows ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) +
-                             N'x)'
+                             CASE
+                                 WHEN ps.max_rows = 0
+                                 THEN N'flat'
+                                 WHEN sw.rows_ratio > 9999.
+                                 THEN N'9999+x'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) + N'x'
+                             END +
+                             N')'
                     END,
                     N''
                 ) +
@@ -8371,9 +8565,45 @@ OPTION(RECOMPILE);' + @nc10;
                         WHEN sw.rows_ratio >= 20
                          AND sw.cpu_ratio <= sw.rows_ratio * 2
                         THEN N'row driven (cpu ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio)) +
+                             CASE
+                                 WHEN sw.cpu_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio))
+                             END +
                              N'x, rows ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) +
+                             CASE
+                                 WHEN sw.rows_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio))
+                             END +
+                             N'x)'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN sw.cpu_ratio >= 20
+                         AND ps.max_cpu_ms >= 10
+                         AND sw.cpu_ratio < sw.rows_ratio * 10
+                         AND
+                         (
+                              sw.rows_ratio < 20
+                           OR sw.cpu_ratio > sw.rows_ratio * 2
+                         )
+                        THEN N'mixed swings (cpu ' +
+                             CASE
+                                 WHEN sw.cpu_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio))
+                             END +
+                             N'x, rows ' +
+                             CASE
+                                 WHEN sw.rows_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio))
+                             END +
                              N'x)'
                     END,
                     N''
@@ -8386,7 +8616,11 @@ OPTION(RECOMPILE);' + @nc10;
                          AND ps.max_duration_ms >= 1000
                          AND sw.cpu_ratio < 3
                         THEN N'intermittent waits (duration ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.duration_ratio)) +
+                             CASE
+                                 WHEN sw.duration_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.duration_ratio))
+                             END +
                              N'x, cpu ' +
                              CONVERT(nvarchar(20), CONVERT(decimal(5, 1), sw.cpu_ratio)) +
                              N'x)'
@@ -8400,7 +8634,11 @@ OPTION(RECOMPILE);' + @nc10;
                         WHEN sw.memory_ratio >= 10
                          AND ps.max_memory_mb >= 8
                         THEN N'memory grant swings (' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.memory_ratio)) +
+                             CASE
+                                 WHEN sw.memory_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.memory_ratio))
+                             END +
                              N'x)'
                     END,
                     N''
@@ -8412,7 +8650,11 @@ OPTION(RECOMPILE);' + @nc10;
                         WHEN sw.tempdb_ratio >= 10
                          AND ps.max_tempdb_mb >= 8
                         THEN N'tempdb swings (' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.tempdb_ratio)) +
+                             CASE
+                                 WHEN sw.tempdb_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.tempdb_ratio))
+                             END +
                              N'x)'
                     END,
                     N''
@@ -8507,7 +8749,39 @@ OPTION(RECOMPILE);' + @nc10;
                 XML
                 PATH(N'metrics'),
                 TYPE
-        )
+        ),
+        /*
+        The same work-weighted volatility expression that picked the top-N
+        in step 3, kept so the final result set presents in rank order.
+        volatility_score stays the raw coefficient of variation.
+        */
+        sort_value =
+            CASE @ps_rank_metric
+                WHEN N'duration' THEN ps.duration_volatility
+                WHEN N'physical reads' THEN ps.physical_reads_volatility
+                WHEN N'writes' THEN ps.writes_volatility
+                WHEN N'memory' THEN ps.memory_volatility
+                WHEN N'rows' THEN ps.rows_volatility
+                WHEN N'tempdb' THEN ps.tempdb_volatility
+                ELSE ps.cpu_volatility
+            END *
+            LOG10
+            (
+                10. +
+                ISNULL
+                (
+                    CASE @ps_rank_metric
+                        WHEN N'duration' THEN ps.total_duration_ms
+                        WHEN N'physical reads' THEN ps.avg_physical_reads_mb * ps.total_executions
+                        WHEN N'writes' THEN ps.avg_writes_mb * ps.total_executions
+                        WHEN N'memory' THEN ps.avg_memory_mb * ps.total_executions
+                        WHEN N'rows' THEN ps.avg_rows * ps.total_executions
+                        WHEN N'tempdb' THEN ps.avg_tempdb_mb * ps.total_executions
+                        ELSE ps.total_cpu_ms
+                    END,
+                    0.
+                )
+            )
     FROM #ps_shape_stats AS ps
     JOIN #ps_interesting AS i
         ON  i.query_hash = ps.query_hash
@@ -8700,7 +8974,7 @@ OUTER APPLY
     WHERE qp0.n = 1
 ) AS qp
 ORDER BY
-    o.volatility_score DESC,
+    o.sort_value DESC,
     o.query_hash,
     o.query_plan_hash
 OPTION(RECOMPILE);' + @nc10;
