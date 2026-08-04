@@ -32,7 +32,10 @@ each run *executes* what it built:
 - The **`@expert_mode` x `@format_output` grid**, which rewrites the column list,
   plus several sort orders combined with expert mode.
 - **`@find_parameter_sensitive`**, the plan-shape volatility mode: ranking by
-  each volatility metric, the mode grids, floors, mode-conflict guard errors,
+  each volatility metric (work-weighted), the mode grids, floors,
+  mode-conflict guard errors, the hash-based include/ignore lists filtering
+  shapes bidirectionally (ignore removes the sniffed shape's hash from the
+  detail rows, include keeps only it, a hash nobody has returns zero shapes),
   and a fixture procedure (`qs_sniff_proc`) skewed hard enough that the
   `parameter sensitive` signal must fire on a real conviction.
 
