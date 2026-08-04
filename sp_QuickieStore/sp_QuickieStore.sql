@@ -10096,7 +10096,21 @@ BEGIN
 SELECT TOP (@top)
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+/*
+Restricting waits to the runtime stats rows the date range
+qualifies keeps the filter from matching queries whose waits
+of this category happened entirely outside of it, and keeps
+the TOP ranked by in-range wait totals rather than
+all-history ones. Matches the date semantics of the main
+where clause and the wait sort order joins.
+*/
+JOIN  ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+  ON  qsws.plan_id = qsrs.plan_id
+  AND qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+  AND qsws.execution_type = qsrs.execution_type
 WHERE 1 = 1
+AND   qsrs.last_execution_time >= @start_date
+AND   qsrs.last_execution_time <  @end_date
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
@@ -10140,8 +10154,12 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@top bigint',
-        @top;
+      N'@top bigint,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @top,
+        @start_date,
+        @end_date;
 
     IF @troubleshoot_performance = 1
     BEGIN
