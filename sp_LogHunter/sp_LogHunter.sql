@@ -58,6 +58,7 @@ ALTER PROCEDURE
     @custom_message_only bit = 0, /*If you only want to search for this specific thing*/
     @first_log_only bit = 0, /*If you only want to search the first log file*/
     @language_id integer = 1033, /*If you want to use a language other than English*/
+    @skip_sysadmin_check bit = 0, /*Skip the sysadmin check. Not recommended. Can be used when the user has access to xp_readerrlog*/
     @help bit = 0, /*Get help*/
     @debug bit = 0, /*Prints messages and selects from temp tables*/
     @version varchar(30) = NULL OUTPUT,
@@ -180,6 +181,7 @@ BEGIN
             sa = ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0)
     ) = 0
     AND OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NULL
+    AND @skip_sysadmin_check = 0
     BEGIN
        RAISERROR(N'Current user is not a member of sysadmin, so we can''t read the error log', 11, 1) WITH NOWAIT;
        RETURN;
