@@ -2794,6 +2794,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_io_virtual_file_stats
         (' +
         CASE
+            WHEN @filter_database_id IS NOT NULL
+            THEN N'
+            @filter_database_id'
             WHEN @azure_sql_db = 1
             THEN N'
             DB_ID()'
@@ -2817,14 +2820,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ' +
         CASE
             WHEN @filter_database_id IS NOT NULL
-            THEN N'fs.database_id = @filter_database_id'
+            THEN N'1 = 1' /* Already narrowed by the database_id handed to the DMV above */
             WHEN @azure_sql_db = 1
             THEN N'1 = 1' /* Always true for Azure SQL DB since we only have the current database */
             ELSE N'fs.database_id > 4
           OR fs.database_id = 2'
         END +
         N'
-        ) /* User databases or TempDB */
+        ) /* User databases or tempdb, unless @database_name narrowed it to one */
         GROUP BY
             fs.database_id
         HAVING
@@ -2854,7 +2857,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 total_size_mb
             )
             EXECUTE sys.sp_executesql
-                @io_sql, 
+                @io_sql,
               N'@filter_database_id integer',
                 @filter_database_id;
         END TRY
@@ -3046,8 +3049,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             physical_name
         )
         EXECUTE sys.sp_executesql
-            @file_io_sql, 
-          N'@filter_database_id integer', 
+            @file_io_sql,
+          N'@filter_database_id integer',
             @filter_database_id;
     END TRY
     BEGIN CATCH
@@ -3282,8 +3285,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 value
             )
             EXECUTE sys.sp_executesql
-                @db_size_sql, 
-              N'@filter_database_id integer', 
+                @db_size_sql,
+              N'@filter_database_id integer',
                 @filter_database_id;
         END;
     END TRY
