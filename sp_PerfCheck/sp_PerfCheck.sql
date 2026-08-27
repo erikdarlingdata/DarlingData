@@ -440,7 +440,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     FROM sys.dm_os_sys_info AS osi;
                 ',
                 N'@has_view_server_state bit OUTPUT',
-                @has_view_server_state OUTPUT;
+                  @has_view_server_state OUTPUT;
         END TRY
         BEGIN CATCH
             SET @has_view_server_state = 0;
@@ -2854,7 +2854,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 total_size_mb
             )
             EXECUTE sys.sp_executesql
-                  @io_sql, 
+                @io_sql, 
                 N'@filter_database_id integer',
                   @filter_database_id;
         END TRY
@@ -3046,7 +3046,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             physical_name
         )
         EXECUTE sys.sp_executesql
-              @file_io_sql, 
+            @file_io_sql, 
             N'@filter_database_id integer', 
               @filter_database_id;
     END TRY
@@ -3282,7 +3282,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 value
             )
             EXECUTE sys.sp_executesql
-                  @db_size_sql, 
+                @db_size_sql, 
                 N'@filter_database_id integer', 
                   @filter_database_id;
         END;
@@ -4229,7 +4229,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_ledger_on
     )
     EXECUTE sys.sp_executesql
-          @sql,
+        @sql,
         N'@filter_database_id integer',
           @filter_database_id;
 
@@ -4396,7 +4396,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END;
 
                 EXECUTE sys.sp_executesql
-                      @sql,
+                    @sql,
                     N'@has_tables bit OUTPUT',
                       @has_tables OUTPUT;
             END TRY
@@ -4663,7 +4663,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                  @sql,
+                @sql,
                 N'@current_database_name sysname',
                   @current_database_name;
         END;
@@ -4733,7 +4733,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                  @sql,
+                @sql,
                 N'@current_database_name sysname',
                   @current_database_name;
 
@@ -4795,7 +4795,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                  @sql,
+                @sql,
                 N'@current_database_name sysname',
                   @current_database_name;
 
@@ -4944,7 +4944,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END;
 
             EXECUTE sys.sp_executesql
-                  @sql,
+                @sql,
                 N'@current_database_id integer,
                   @current_database_name sysname',
                   @current_database_id,
@@ -5146,7 +5146,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                  @sql,
+                @sql,
                 N'@current_database_name sysname',
                   @current_database_name;
 
@@ -5192,7 +5192,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                  @sql,
+                @sql,
                 N'@current_database_name sysname',
                   @current_database_name;
 
@@ -5240,7 +5240,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     url
                 )
                 EXECUTE sys.sp_executesql
-                      @sql,
+                    @sql,
                     N'@current_database_name sysname',
                       @current_database_name;
             END;
@@ -5295,7 +5295,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                  @sql,
+                @sql,
                 N'@current_database_name sysname',
                   @current_database_name;
         END TRY
