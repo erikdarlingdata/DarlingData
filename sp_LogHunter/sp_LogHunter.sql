@@ -173,15 +173,30 @@ BEGIN
         RETURN;
     END;
 
-    /*Check if we have sa permissisions, but not care in RDS*/
+    /*
+    Don't test for sysadmin here. An account can hold EXECUTE on
+    xp_readerrorlog without being one, and IS_SRVROLEMEMBER answers
+    no while the procedure runs fine. Ask about the permission we
+    actually need instead.
+    */
     IF
     (
         SELECT
-            sa = ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0)
+            can_read =
+                ISNULL
+                (
+                    HAS_PERMS_BY_NAME
+                    (
+                        N'master.dbo.xp_readerrorlog',
+                        N'OBJECT',
+                        N'EXECUTE'
+                    ),
+                    0
+                )
     ) = 0
     AND OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NULL
     BEGIN
-       RAISERROR(N'Current user is not a member of sysadmin, so we can''t read the error log', 11, 1) WITH NOWAIT;
+       RAISERROR(N'Current user does not have EXECUTE permission on xp_readerrorlog, so we can''t read the error log', 11, 1) WITH NOWAIT;
        RETURN;
     END;
 
@@ -451,14 +466,46 @@ BEGIN
     );
 
     /*get all the error logs*/
-    INSERT
-        #enum
-    (
-        archive,
-        log_date,
-        log_size
-    )
-    EXECUTE sys.sp_enumerrorlogs;
+    BEGIN TRY
+        INSERT
+            #enum
+        (
+            archive,
+            log_date,
+            log_size
+        )
+        EXECUTE sys.sp_enumerrorlogs;
+    END TRY
+    BEGIN CATCH
+        /*
+        27219: sp_enumerrorlogs needs securityadmin, which EXECUTE on
+        xp_readerrorlog does not imply, and no GRANT substitutes for
+        (it checks the role itself). Read the current log rather than
+        failing outright, since xp_readerrorlog can do that much.
+        */
+        IF ERROR_NUMBER() = 27219
+        BEGIN
+            INSERT
+                #enum
+            (
+                archive,
+                log_date,
+                log_size
+            )
+            VALUES
+            (
+                0,
+                SYSDATETIME(),
+                0
+            );
+
+            RAISERROR(N'Not a member of securityadmin, so archived error logs cannot be enumerated. Reading the current log only.', 0, 1) WITH NOWAIT;
+        END
+        ELSE
+        BEGIN
+            ;THROW;
+        END;
+    END CATCH;
 
     IF @debug = 1 BEGIN SELECT table_name = '#enum before delete', e.* FROM #enum AS e; END;
 
