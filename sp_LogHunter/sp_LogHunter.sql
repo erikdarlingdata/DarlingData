@@ -466,14 +466,46 @@ BEGIN
     );
 
     /*get all the error logs*/
-    INSERT
-        #enum
-    (
-        archive,
-        log_date,
-        log_size
-    )
-    EXECUTE sys.sp_enumerrorlogs;
+    BEGIN TRY
+        INSERT
+            #enum
+        (
+            archive,
+            log_date,
+            log_size
+        )
+        EXECUTE sys.sp_enumerrorlogs;
+    END TRY
+    BEGIN CATCH
+        /*
+        27219: sp_enumerrorlogs needs securityadmin, which EXECUTE on
+        xp_readerrorlog does not imply, and no GRANT substitutes for
+        (it checks the role itself). Read the current log rather than
+        failing outright, since xp_readerrorlog can do that much.
+        */
+        IF ERROR_NUMBER() = 27219
+        BEGIN
+            INSERT
+                #enum
+            (
+                archive,
+                log_date,
+                log_size
+            )
+            VALUES
+            (
+                0,
+                SYSDATETIME(),
+                0
+            );
+
+            RAISERROR(N'Not a member of securityadmin, so archived error logs cannot be enumerated. Reading the current log only.', 0, 1) WITH NOWAIT;
+        END
+        ELSE
+        BEGIN
+            ;THROW;
+        END;
+    END CATCH;
 
     IF @debug = 1 BEGIN SELECT table_name = '#enum before delete', e.* FROM #enum AS e; END;
 
