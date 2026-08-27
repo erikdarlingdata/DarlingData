@@ -363,6 +363,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ),
         @current_database_name sysname,
         @current_database_id integer,
+        @filter_database_id integer,
         @processors integer,
         @message nvarchar(4000),
         /* Memory configuration variables */
@@ -538,6 +539,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             */
             RAISERROR(N'The database %s exists but is not ONLINE, so its configuration cannot be analyzed. Run without @database_name for the server-level checks.', 11, 1, @database_name) WITH NOWAIT;
         END;
+
+        SELECT TOP (1) @filter_database_id = d.database_id
+        FROM sys.databases AS d
+        WHERE d.name = @database_name
+        AND   d.state = 0; /* ONLINE */
     END;
 
     /*
@@ -1764,7 +1770,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     OR t.EventClass = 148
                 )
                 /* Look back at the past 7 days of events at most */
-                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME())
+                AND (t.DatabaseID = @filter_database_id OR @filter_database_id IS NULL);
             END TRY
             BEGIN CATCH
                 INSERT INTO
@@ -2787,6 +2794,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_io_virtual_file_stats
         (' +
         CASE
+            WHEN @filter_database_id IS NOT NULL
+            THEN N'
+            @filter_database_id'
             WHEN @azure_sql_db = 1
             THEN N'
             DB_ID()'
@@ -2809,13 +2819,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             ' +
         CASE
+            WHEN @filter_database_id IS NOT NULL
+            THEN N'1 = 1' /* Already narrowed by the database_id handed to the DMV above */
             WHEN @azure_sql_db = 1
             THEN N'1 = 1' /* Always true for Azure SQL DB since we only have the current database */
             ELSE N'fs.database_id > 4
           OR fs.database_id = 2'
         END +
         N'
-        ) /* User databases or TempDB */
+        ) /* User databases or tempdb, unless @database_name narrowed it to one */
         GROUP BY
             fs.database_id
         HAVING
@@ -2845,7 +2857,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 total_size_mb
             )
             EXECUTE sys.sp_executesql
-                @io_sql;
+                @io_sql,
+              N'@filter_database_id integer',
+                @filter_database_id;
         END TRY
         BEGIN CATCH
             IF @debug = 1
@@ -2980,6 +2994,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM sys.dm_io_virtual_file_stats
     (' +
     CASE
+        WHEN @filter_database_id IS NOT NULL
+        THEN N'
+        @filter_database_id'
         WHEN @azure_sql_db = 1
         THEN N'
         DB_ID()'
@@ -3032,7 +3049,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             physical_name
         )
         EXECUTE sys.sp_executesql
-            @file_io_sql;
+            @file_io_sql,
+          N'@filter_database_id integer',
+            @filter_database_id;
     END TRY
     BEGIN CATCH
         IF @debug = 1
@@ -3245,6 +3264,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE f.type_desc = N''ROWS'''
                 ELSE N'sys.master_files AS f
             WHERE f.type_desc = N''ROWS'''
+            END +
+            CASE
+                WHEN @filter_database_id IS NOT NULL
+                THEN N'
+            AND f.database_id = @filter_database_id'
+                ELSE N''
             END;
 
             IF @debug = 1
@@ -3260,7 +3285,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 value
             )
             EXECUTE sys.sp_executesql
-                @db_size_sql;
+                @db_size_sql,
+              N'@filter_database_id integer',
+                @filter_database_id;
         END;
     END TRY
     BEGIN CATCH
@@ -4153,7 +4180,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END
     ELSE
     BEGIN
-        IF @database_name IS NULL
+        IF @filter_database_id IS NULL
         BEGIN
             SET @sql += N'
     FROM sys.databases AS d
@@ -4163,7 +4190,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             SET @sql += N'
     FROM sys.databases AS d
-    WHERE d.name = @database_name;';
+    WHERE d.database_id = @filter_database_id;';
         END
     END;
 
@@ -4206,8 +4233,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_name sysname',
-        @database_name;
+      N'@filter_database_id integer',
+        @filter_database_id;
 
     IF @debug = 1
     BEGIN
@@ -4255,7 +4282,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ELSE
     BEGIN
         /* For non-Azure SQL DB, build list from all accessible databases */
-        IF @database_name IS NULL
+        IF @filter_database_id IS NULL
         BEGIN
             /* All user databases */
             INSERT
@@ -4320,7 +4347,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 create_date = d.create_date,
                 can_access = 1 /* Default to accessible, will check individually later */
             FROM sys.databases AS d
-            WHERE d.name = @database_name
+            WHERE d.database_id = @filter_database_id
             AND   d.state = 0; /* Only online databases */
         END;
 
