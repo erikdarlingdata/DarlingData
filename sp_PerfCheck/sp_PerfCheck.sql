@@ -4397,8 +4397,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
                 EXECUTE sys.sp_executesql
                     @sql,
-                    N'@has_tables bit OUTPUT',
-                      @has_tables OUTPUT;
+                  N'@has_tables bit OUTPUT',
+                    @has_tables OUTPUT;
             END TRY
             BEGIN CATCH
                 /* If we can't access it, mark it */
@@ -4664,8 +4664,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             EXECUTE sys.sp_executesql
                 @sql,
-                N'@current_database_name sysname',
-                  @current_database_name;
+              N'@current_database_name sysname',
+                @current_database_name;
         END;
 
         /* Check for Query Store in problematic state */
@@ -4734,8 +4734,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             EXECUTE sys.sp_executesql
                 @sql,
-                N'@current_database_name sysname',
-                  @current_database_name;
+              N'@current_database_name sysname',
+                @current_database_name;
 
             /* Check for Query Store with potentially problematic settings */
             SET @sql = N'
@@ -4796,8 +4796,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             EXECUTE sys.sp_executesql
                 @sql,
-                N'@current_database_name sysname',
-                  @current_database_name;
+              N'@current_database_name sysname',
+                @current_database_name;
 
             /* Check for non-default database scoped configurations */
             /* First check if the sys.database_scoped_configurations view exists */
@@ -4945,10 +4945,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             EXECUTE sys.sp_executesql
                 @sql,
-                N'@current_database_id integer,
-                  @current_database_name sysname',
-                  @current_database_id,
-                  @current_database_name;
+              N'@current_database_id integer,
+                @current_database_name sysname',
+                @current_database_id,
+                @current_database_name;
 
                 /* Add results for non-default configurations */
                 INSERT INTO
@@ -5147,8 +5147,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             EXECUTE sys.sp_executesql
                 @sql,
-                N'@current_database_name sysname',
-                  @current_database_name;
+              N'@current_database_name sysname',
+                @current_database_name;
 
             /* Check for percentage growth settings on log files */
             SET @sql = N'
@@ -5193,8 +5193,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             EXECUTE sys.sp_executesql
                 @sql,
-                N'@current_database_name sysname',
-                  @current_database_name;
+              N'@current_database_name sysname',
+                @current_database_name;
 
             /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
             IF @product_version_major >= 16
@@ -5241,8 +5241,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
                 EXECUTE sys.sp_executesql
                     @sql,
-                    N'@current_database_name sysname',
-                      @current_database_name;
+                  N'@current_database_name sysname',
+                    @current_database_name;
             END;
 
             /* Check for very large fixed growth settings (>10GB) */
@@ -5296,8 +5296,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             EXECUTE sys.sp_executesql
                 @sql,
-                N'@current_database_name sysname',
-                  @current_database_name;
+              N'@current_database_name sysname',
+                @current_database_name;
         END TRY
         BEGIN CATCH
             IF @debug = 1
