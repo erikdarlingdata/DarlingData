@@ -434,13 +434,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         BEGIN TRY
             EXECUTE sys.sp_executesql
-                @stmt = N'
+                N'
                     SELECT
                         @has_view_server_state = 1
                     FROM sys.dm_os_sys_info AS osi;
                 ',
-                @params = N'@has_view_server_state bit OUTPUT',
-                @has_view_server_state = @has_view_server_state OUTPUT;
+                N'@has_view_server_state bit OUTPUT',
+                @has_view_server_state OUTPUT;
         END TRY
         BEGIN CATCH
             SET @has_view_server_state = 0;
@@ -1480,7 +1480,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 session
             )
             EXECUTE sys.sp_executesql
-                @stmt = N'DBCC TRACESTATUS WITH NO_INFOMSGS';
+                N'DBCC TRACESTATUS WITH NO_INFOMSGS';
         END TRY
         BEGIN CATCH
             IF @debug = 1
@@ -2597,14 +2597,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND @has_view_server_state = 1
             BEGIN
                 EXECUTE sys.sp_executesql
-                    @stmt = N'
+                    N'
                     SELECT
                         @health_history_count = COUNT_BIG(*)
                     FROM sys.dm_os_memory_health_history AS hh
                     WHERE hh.severity_level > 1;
                     ',
-                    @params = N'@health_history_count bigint OUTPUT',
-                    @health_history_count = @health_history_count OUTPUT;
+                    N'@health_history_count bigint OUTPUT',
+                    @health_history_count OUTPUT;
             END;
 
             /* Add buffer pool info to server_info */
@@ -2854,7 +2854,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 total_size_mb
             )
             EXECUTE sys.sp_executesql
-                @stmt = @io_sql, @params = N'@filter_database_id INT', @filter_database_id = @filter_database_id;
+                  @io_sql, 
+                N'@filter_database_id integer',
+                  @filter_database_id;
         END TRY
         BEGIN CATCH
             IF @debug = 1
@@ -3044,7 +3046,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             physical_name
         )
         EXECUTE sys.sp_executesql
-            @stmt = @file_io_sql, @params = N'@filter_database_id INT', @filter_database_id = @filter_database_id;
+              @file_io_sql, 
+            N'@filter_database_id integer', 
+              @filter_database_id;
     END TRY
     BEGIN CATCH
         IF @debug = 1
@@ -3278,7 +3282,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 value
             )
             EXECUTE sys.sp_executesql
-                @stmt = @db_size_sql, @params = N'@filter_database_id INT', @filter_database_id = @filter_database_id;
+                  @db_size_sql, 
+                N'@filter_database_id integer', 
+                  @filter_database_id;
         END;
     END TRY
     BEGIN CATCH
@@ -3472,7 +3478,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 is_percent_growth
             )
             EXECUTE sys.sp_executesql
-                @stmt = @tempdb_files_sql;
+                @tempdb_files_sql;
         END TRY
         BEGIN CATCH
             IF @debug = 1
@@ -4223,9 +4229,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_ledger_on
     )
     EXECUTE sys.sp_executesql
-        @stmt = @sql,
-        @params = N'@filter_database_id INT',
-        @filter_database_id = @filter_database_id;
+          @sql,
+        N'@filter_database_id integer',
+          @filter_database_id;
 
     IF @debug = 1
     BEGIN
@@ -4390,9 +4396,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END;
 
                 EXECUTE sys.sp_executesql
-                    @stmt = @sql,
-                    @params = N'@has_tables bit OUTPUT',
-                    @has_tables = @has_tables OUTPUT;
+                      @sql,
+                    N'@has_tables bit OUTPUT',
+                      @has_tables OUTPUT;
             END TRY
             BEGIN CATCH
                 /* If we can't access it, mark it */
@@ -4657,9 +4663,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                @stmt = @sql,
-                @params = N'@current_database_name sysname',
-                @current_database_name = @current_database_name;
+                  @sql,
+                N'@current_database_name sysname',
+                  @current_database_name;
         END;
 
         /* Check for Query Store in problematic state */
@@ -4727,9 +4733,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                @stmt = @sql,
-                @params = N'@current_database_name sysname',
-                @current_database_name = @current_database_name;
+                  @sql,
+                N'@current_database_name sysname',
+                  @current_database_name;
 
             /* Check for Query Store with potentially problematic settings */
             SET @sql = N'
@@ -4789,9 +4795,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                @stmt = @sql,
-                @params = N'@current_database_name sysname',
-                @current_database_name = @current_database_name;
+                  @sql,
+                N'@current_database_name sysname',
+                  @current_database_name;
 
             /* Check for non-default database scoped configurations */
             /* First check if the sys.database_scoped_configurations view exists */
@@ -4938,11 +4944,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END;
 
             EXECUTE sys.sp_executesql
-                @stmt = @sql,
-                @params = N'@current_database_id integer,
-                @current_database_name sysname',
-                @current_database_id = @current_database_id,
-                @current_database_name = @current_database_name;
+                  @sql,
+                N'@current_database_id integer,
+                  @current_database_name sysname',
+                  @current_database_id,
+                  @current_database_name;
 
                 /* Add results for non-default configurations */
                 INSERT INTO
@@ -5140,9 +5146,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                @stmt = @sql,
-                @params = N'@current_database_name sysname',
-                @current_database_name = @current_database_name;
+                  @sql,
+                N'@current_database_name sysname',
+                  @current_database_name;
 
             /* Check for percentage growth settings on log files */
             SET @sql = N'
@@ -5186,9 +5192,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                @stmt = @sql,
-                @params = N'@current_database_name sysname',
-                @current_database_name = @current_database_name;
+                  @sql,
+                N'@current_database_name sysname',
+                  @current_database_name;
 
             /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
             IF @product_version_major >= 16
@@ -5234,9 +5240,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     url
                 )
                 EXECUTE sys.sp_executesql
-                    @stmt = @sql,
-                    @params = N'@current_database_name sysname',
-                    @current_database_name = @current_database_name;
+                      @sql,
+                    N'@current_database_name sysname',
+                      @current_database_name;
             END;
 
             /* Check for very large fixed growth settings (>10GB) */
@@ -5289,9 +5295,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url
             )
             EXECUTE sys.sp_executesql
-                @stmt = @sql,
-                @params = N'@current_database_name sysname',
-                @current_database_name = @current_database_name;
+                  @sql,
+                N'@current_database_name sysname',
+                  @current_database_name;
         END TRY
         BEGIN CATCH
             IF @debug = 1
