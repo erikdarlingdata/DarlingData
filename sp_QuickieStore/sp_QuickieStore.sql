@@ -99,7 +99,7 @@ ALTER PROCEDURE
     @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
-    @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
+    @include_query_hash_totals bit = 0, /*will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
     @include_maintenance bit = 0, /*Set this bit to 1 to add maintenance operations such as index creation to the result set*/
     @find_high_impact bit = 0, /*finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions*/
     @primary_window nvarchar(20) = NULL, /*with @find_high_impact, restricts results to queries whose majority activity is in this window: business, off-hours, or weekend*/
@@ -203,7 +203,7 @@ BEGIN
                 WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
-                WHEN N'@include_query_hash_totals' THEN N'will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
+                WHEN N'@include_query_hash_totals' THEN N'will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
                 WHEN N'@include_maintenance' THEN N'Set this bit to 1 to add maintenance operations such as index creation to the result set'
                 WHEN N'@find_high_impact' THEN N'finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions'
                 WHEN N'@primary_window' THEN N'with @find_high_impact, restricts results to queries whose majority activity is in this window (business, off-hours, or weekend)'
@@ -419,8 +419,14 @@ BEGIN
         high_impact_columns =
            'when using @find_high_impact = 1, the result set contains these columns:' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'this mode honors @top, @sort_order (as a tiebreak), @work_start/@work_end, and @primary_window; the other' UNION ALL
-    SELECT '    filter parameters (@procedure_name, @query_text_search, include/ignore lists, etc.) do not apply here.' UNION ALL
+    SELECT 'this mode honors @top, @sort_order (as a tiebreak), @work_start/@work_end, @primary_window, and the' UNION ALL
+    SELECT '    query-hash include/ignore lists (@include_query_hashes, @ignore_query_hashes), which filter before' UNION ALL
+    SELECT '    the top-N picks so filtered-out hashes do not consume slots. Shares and percentiles are still' UNION ALL
+    SELECT '    computed over the FULL workload: ignoring a query does not change what percent of the server' UNION ALL
+    SELECT '    another query consumed. Results here are query_hash-grained, so the plan-hash lists and the other' UNION ALL
+    SELECT '    filter parameters do not apply.' UNION ALL
+    SELECT '    @top is per resource dimension (top N by cpu, by duration, by reads, etc., unioned), so the result' UNION ALL
+    SELECT '    set typically contains several times @top rows.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'database_name: the database being analyzed' UNION ALL
     SELECT 'start_date, end_date: the time window analyzed (UTC)' UNION ALL
@@ -447,6 +453,9 @@ BEGIN
     SELECT 'cpu_share, duration_share, physical_reads_share, writes_share, memory_share, executions_share:' UNION ALL
     SELECT '    what percentage of the server''s total for that metric this single query_hash consumed.' UNION ALL
     SELECT '    This is the 80/20 answer: "this one query is X% of all CPU on the server."' UNION ALL
+    SELECT 'total_cpu_ms, total_duration_ms, total_physical_reads_mb, total_writes_mb, total_memory_mb,' UNION ALL
+    SELECT '    total_tempdb_mb, total_rows, max_dop: absolute window totals, so a big share on a quiet server' UNION ALL
+    SELECT '    is not mistaken for a big number. Shares answer "how dominant"; these answer "how much".' UNION ALL
     SELECT 'resource_metrics: clickable XML rollup of total/avg/min/max for cpu, duration, physical reads, writes, memory,' UNION ALL
     SELECT '    tempdb, executions, rows, and max DOP. Click the column in SSMS to see the full breakdown.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -457,7 +466,7 @@ BEGIN
     SELECT '        Classic parameter sniffing: one plan shape that works for some parameter values but not others.' UNION ALL
     SELECT '    plan instability (N plans) - multiple plans with fewer than 5 executions per plan, excluding RECOMPILE hints.' UNION ALL
     SELECT '        The optimizer keeps recompiling frequently, which usually means inconsistent performance.' UNION ALL
-    SELECT '    spills/spools (N MB/exec) - writes detected on a SELECT-like query (no INSERT/UPDATE/DELETE/MERGE).' UNION ALL
+    SELECT '    spills/spools (N MB/exec) - at least 1 MB/exec of writes on a SELECT-like query (no INSERT/UPDATE/DELETE/MERGE).' UNION ALL
     SELECT '        This typically means tempdb spills from underestimated memory grants, or worktable spools.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'volatile_metrics: flags metrics with extreme variance: (max - min) / avg > 10x.' UNION ALL
@@ -5039,6 +5048,69 @@ BEGIN
         max_dop bigint NULL
     );
 
+    CREATE TABLE
+        #hi_eligible
+    (
+        query_hash binary(8) NOT NULL
+            PRIMARY KEY CLUSTERED
+    );
+
+    /*
+    The query-hash include and ignore lists apply in this mode (results
+    are query_hash-grained, so the plan-hash lists do not). They are
+    parsed locally with the same splitter (the main filter-processing
+    section is never reached from here: this mode returns at the end of
+    its block). The lists gate which hashes are ELIGIBLE for the top-N
+    picks in step 2 — before the TOP, so a filtered-out hash does not
+    consume a slot. Shares and percentiles in step 3 are still computed
+    over the full workload on purpose: ignoring a query must not change
+    what percent of the server another query consumed.
+    */
+    IF
+    (
+       @include_query_hashes IS NOT NULL
+    OR @ignore_query_hashes  IS NOT NULL
+    )
+    BEGIN
+        SELECT
+            @include_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@include_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @ignore_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@ignore_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N'');
+
+        IF @include_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #include_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @include_query_hashes;
+        END;
+
+        IF @ignore_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #ignore_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @ignore_query_hashes;
+        END;
+    END;
+
     /*Step 1a: Stage interval IDs for the time window*/
     CREATE TABLE
         #hi_intervals
@@ -5383,6 +5455,43 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
+    /*
+    Stage the hashes eligible for the top-N picks. With no lists set this
+    is every hash; the include/ignore lists narrow it here, before the
+    TOP picks, so a filtered-out hash never consumes a slot.
+    */
+    INSERT
+        #hi_eligible WITH (TABLOCK)
+    (
+        query_hash
+    )
+    SELECT
+        qs.query_hash
+    FROM #hi_query_stats AS qs
+    WHERE
+    (
+        NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+        )
+     OR EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+            WHERE iqh.query_hash = qs.query_hash
+        )
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ignore_query_hashes AS igh
+        WHERE igh.query_hash = qs.query_hash
+    );
+
     /*Step 2: Top N per metric (static SQL, temp tables only)*/
     INSERT
         #hi_interesting WITH (TABLOCK)
@@ -5396,6 +5505,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_cpu_ms DESC
 
         UNION
@@ -5403,6 +5519,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_duration_ms DESC
 
         UNION
@@ -5410,6 +5533,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_physical_reads_mb DESC
 
         UNION
@@ -5417,6 +5547,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_writes_mb DESC
 
         UNION
@@ -5424,6 +5561,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_memory_mb DESC
 
         UNION
@@ -5431,6 +5575,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_executions DESC
 
         UNION
@@ -5439,6 +5590,13 @@ OPTION(RECOMPILE);' + @nc10;
             qs.query_hash
         FROM #hi_query_stats AS qs
         WHERE qs.total_tempdb_mb > 0
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_tempdb_mb DESC
 
         UNION
@@ -5447,6 +5605,13 @@ OPTION(RECOMPILE);' + @nc10;
             qs.query_hash
         FROM #hi_query_stats AS qs
         WHERE qs.total_rows > 0
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_rows DESC
     ) AS qs;
 
@@ -6552,7 +6717,12 @@ OPTION(RECOMPILE);' + @nc10;
                 (
                     N' | ' +
                     CASE
-                        WHEN s.total_writes_mb > 0
+                        /*
+                        The per-exec floor keeps this from firing as
+                        "spills/spools (0.0 MB/exec)" when a huge execution
+                        count carries a few stray KB of writes.
+                        */
+                        WHEN s.total_writes_mb / NULLIF(s.total_executions, 0) >= 1
                          AND rt.query_sql_text NOT LIKE N'%INSERT%'
                          AND rt.query_sql_text NOT LIKE N'%UPDATE%'
                          AND rt.query_sql_text NOT LIKE N'%DELETE%'
@@ -6937,6 +7107,14 @@ SELECT
     o.executions_share,
     o.tempdb_share,
     o.rows_share,
+    o.total_cpu_ms,
+    o.total_duration_ms,
+    o.total_physical_reads_mb,
+    o.total_writes_mb,
+    o.total_memory_mb,
+    o.total_tempdb_mb,
+    o.total_rows,
+    o.max_dop,
     o.diagnostics,
     o.volatile_metrics,
     o.resource_metrics
@@ -12618,6 +12796,15 @@ BEGIN
         FROM #query_store_query AS qsq2
         WHERE qsq2.query_hash = qsq.query_hash
     )
+    /*
+    Without the date restriction these totals sum every runtime stats row
+    in Query Store history for the hash, which sits next to window-scoped
+    columns in the same output row and inflates by however long Query
+    Store retention is. Matches the date semantics of the main where
+    clause and the wait sort order joins.
+    */
+    AND qsrs.last_execution_time >= @start_date
+    AND qsrs.last_execution_time < @end_date
     GROUP BY
         qsq.query_hash
     OPTION(RECOMPILE);
@@ -12651,8 +12838,12 @@ BEGIN
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id integer',
-        @database_id;
+      N'@database_id integer,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @database_id,
+        @start_date,
+        @end_date;
 
     IF @troubleshoot_performance = 1
     BEGIN
