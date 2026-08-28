@@ -1,0 +1,54 @@
+name: Publish Dev Install-All Build
+# Install-All/DarlingData.sql is only regenerated and committed on main:
+# rebuilding it on dev used to make every dev -> main merge conflict inside a
+# 2+ MB generated file. This workflow gives dev a fresh compiled build WITHOUT
+# committing anything: it regenerates the file and publishes it as an asset on
+# a rolling 'dev-latest' prerelease. The tracked copy on dev stays untouched
+# (and stale), so merges never see it change.
+#
+# Consumers:
+#   gh release download dev-latest -p DarlingData.sql -R erikdarlingdata/DarlingData
+# or the stable URL:
+#   https://github.com/erikdarlingdata/DarlingData/releases/download/dev-latest/DarlingData.sql
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - '**/*.sql'
+      - '.github/workflows/dev-installall-artifact.yml'
+permissions:
+  contents: write
+jobs:
+  publish-dev-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile SQL File
+        shell: pwsh
+        run: |
+          cd Install-All
+          ./Merge-All.ps1
+
+      - name: Point the dev-latest tag at this commit
+        run: |
+          git config user.name 'Darling Data'
+          git config user.email 'erik@erikdarling.com'
+          git tag -f dev-latest
+          git push -f origin dev-latest
+
+      - name: Publish as rolling prerelease asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view dev-latest --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create dev-latest \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "Dev build (rolling)" \
+              --notes "Automatically compiled Install-All from the latest dev push. Not a release: main's tagged releases remain the supported builds."
+          fi
+          gh release upload dev-latest Install-All/DarlingData.sql \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
