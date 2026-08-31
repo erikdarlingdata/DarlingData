@@ -75,8 +75,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.8',
-        @version_date = '20260801';
+        @version = '2.9',
+        @version_date = '20260901';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
