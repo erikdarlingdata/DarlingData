@@ -1,4 +1,4 @@
--- Compile Date: 07/29/2026 11:53:15 UTC
+-- Compile Date: 08/31/2026 10:02:30 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -81,8 +81,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.8',
-        @version_date = '20260801';
+        @version = '3.9',
+        @version_date = '20260901';
 
     IF @help = 1
     BEGIN
@@ -6607,8 +6607,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.8',
-    @version_date = '20260801';
+    @version = '7.9',
+    @version_date = '20260901';
 
 IF @help = 1
 BEGIN
@@ -12053,8 +12053,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.8',
-    @version_date = '20260801';
+    @version = '5.9',
+    @version_date = '20260901';
 
 IF @help = 1
 BEGIN
@@ -16859,8 +16859,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.8',
-        @version_date = '20260801';
+        @version = '2.9',
+        @version_date = '20260901';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -25109,8 +25109,8 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '3.8',
-        @version_date = '20260801';
+        @version = '3.9',
+        @version_date = '20260901';
 
     IF @help = 1
     BEGIN
@@ -25209,15 +25209,30 @@ BEGIN
         RETURN;
     END;
 
-    /*Check if we have sa permissisions, but not care in RDS*/
+    /*
+    Don't test for sysadmin here. An account can hold EXECUTE on
+    xp_readerrorlog without being one, and IS_SRVROLEMEMBER answers
+    no while the procedure runs fine. Ask about the permission we
+    actually need instead.
+    */
     IF
     (
         SELECT
-            sa = ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0)
+            can_read =
+                ISNULL
+                (
+                    HAS_PERMS_BY_NAME
+                    (
+                        N'master.dbo.xp_readerrorlog',
+                        N'OBJECT',
+                        N'EXECUTE'
+                    ),
+                    0
+                )
     ) = 0
     AND OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NULL
     BEGIN
-       RAISERROR(N'Current user is not a member of sysadmin, so we can''t read the error log', 11, 1) WITH NOWAIT;
+       RAISERROR(N'Current user does not have EXECUTE permission on xp_readerrorlog, so we can''t read the error log', 11, 1) WITH NOWAIT;
        RETURN;
     END;
 
@@ -25487,14 +25502,46 @@ BEGIN
     );
 
     /*get all the error logs*/
-    INSERT
-        #enum
-    (
-        archive,
-        log_date,
-        log_size
-    )
-    EXECUTE sys.sp_enumerrorlogs;
+    BEGIN TRY
+        INSERT
+            #enum
+        (
+            archive,
+            log_date,
+            log_size
+        )
+        EXECUTE sys.sp_enumerrorlogs;
+    END TRY
+    BEGIN CATCH
+        /*
+        27219: sp_enumerrorlogs needs securityadmin, which EXECUTE on
+        xp_readerrorlog does not imply, and no GRANT substitutes for
+        (it checks the role itself). Read the current log rather than
+        failing outright, since xp_readerrorlog can do that much.
+        */
+        IF ERROR_NUMBER() = 27219
+        BEGIN
+            INSERT
+                #enum
+            (
+                archive,
+                log_date,
+                log_size
+            )
+            VALUES
+            (
+                0,
+                SYSDATETIME(),
+                0
+            );
+
+            RAISERROR(N'Not a member of securityadmin, so archived error logs cannot be enumerated. Reading the current log only.', 0, 1) WITH NOWAIT;
+        END
+        ELSE
+        BEGIN
+            ;THROW;
+        END;
+    END CATCH;
 
     IF @debug = 1 BEGIN SELECT table_name = '#enum before delete', e.* FROM #enum AS e; END;
 
@@ -26052,8 +26099,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.8',
-        @version_date = N'20260801';
+        @version = N'2.9',
+        @version_date = N'20260901';
 
     /*
     Help section, for help.
@@ -26332,6 +26379,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ),
         @current_database_name sysname,
         @current_database_id integer,
+        @filter_database_id integer,
         @processors integer,
         @message nvarchar(4000),
         /* Memory configuration variables */
@@ -26507,6 +26555,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             */
             RAISERROR(N'The database %s exists but is not ONLINE, so its configuration cannot be analyzed. Run without @database_name for the server-level checks.', 11, 1, @database_name) WITH NOWAIT;
         END;
+
+        SELECT TOP (1) @filter_database_id = d.database_id
+        FROM sys.databases AS d
+        WHERE d.name = @database_name
+        AND   d.state = 0; /* ONLINE */
     END;
 
     /*
@@ -27733,7 +27786,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     OR t.EventClass = 148
                 )
                 /* Look back at the past 7 days of events at most */
-                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME())
+                AND (t.DatabaseID = @filter_database_id OR @filter_database_id IS NULL);
             END TRY
             BEGIN CATCH
                 INSERT INTO
@@ -28756,6 +28810,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_io_virtual_file_stats
         (' +
         CASE
+            WHEN @filter_database_id IS NOT NULL
+            THEN N'
+            @filter_database_id'
             WHEN @azure_sql_db = 1
             THEN N'
             DB_ID()'
@@ -28778,13 +28835,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             ' +
         CASE
+            WHEN @filter_database_id IS NOT NULL
+            THEN N'1 = 1' /* Already narrowed by the database_id handed to the DMV above */
             WHEN @azure_sql_db = 1
             THEN N'1 = 1' /* Always true for Azure SQL DB since we only have the current database */
             ELSE N'fs.database_id > 4
           OR fs.database_id = 2'
         END +
         N'
-        ) /* User databases or TempDB */
+        ) /* User databases or tempdb, unless @database_name narrowed it to one */
         GROUP BY
             fs.database_id
         HAVING
@@ -28814,7 +28873,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 total_size_mb
             )
             EXECUTE sys.sp_executesql
-                @io_sql;
+                @io_sql,
+              N'@filter_database_id integer',
+                @filter_database_id;
         END TRY
         BEGIN CATCH
             IF @debug = 1
@@ -28949,6 +29010,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM sys.dm_io_virtual_file_stats
     (' +
     CASE
+        WHEN @filter_database_id IS NOT NULL
+        THEN N'
+        @filter_database_id'
         WHEN @azure_sql_db = 1
         THEN N'
         DB_ID()'
@@ -29001,7 +29065,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             physical_name
         )
         EXECUTE sys.sp_executesql
-            @file_io_sql;
+            @file_io_sql,
+          N'@filter_database_id integer',
+            @filter_database_id;
     END TRY
     BEGIN CATCH
         IF @debug = 1
@@ -29214,6 +29280,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE f.type_desc = N''ROWS'''
                 ELSE N'sys.master_files AS f
             WHERE f.type_desc = N''ROWS'''
+            END +
+            CASE
+                WHEN @filter_database_id IS NOT NULL
+                THEN N'
+            AND f.database_id = @filter_database_id'
+                ELSE N''
             END;
 
             IF @debug = 1
@@ -29229,7 +29301,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 value
             )
             EXECUTE sys.sp_executesql
-                @db_size_sql;
+                @db_size_sql,
+              N'@filter_database_id integer',
+                @filter_database_id;
         END;
     END TRY
     BEGIN CATCH
@@ -30122,7 +30196,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END
     ELSE
     BEGIN
-        IF @database_name IS NULL
+        IF @filter_database_id IS NULL
         BEGIN
             SET @sql += N'
     FROM sys.databases AS d
@@ -30132,7 +30206,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             SET @sql += N'
     FROM sys.databases AS d
-    WHERE d.name = @database_name;';
+    WHERE d.database_id = @filter_database_id;';
         END
     END;
 
@@ -30175,8 +30249,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_name sysname',
-        @database_name;
+      N'@filter_database_id integer',
+        @filter_database_id;
 
     IF @debug = 1
     BEGIN
@@ -30224,7 +30298,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ELSE
     BEGIN
         /* For non-Azure SQL DB, build list from all accessible databases */
-        IF @database_name IS NULL
+        IF @filter_database_id IS NULL
         BEGIN
             /* All user databases */
             INSERT
@@ -30289,7 +30363,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 create_date = d.create_date,
                 can_access = 1 /* Default to accessible, will check individually later */
             FROM sys.databases AS d
-            WHERE d.name = @database_name
+            WHERE d.database_id = @filter_database_id
             AND   d.state = 0; /* Only online databases */
         END;
 
@@ -31407,8 +31481,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.8',
-    @version_date = '20260801';
+    @version = '6.9',
+    @version_date = '20260901';
 
 
 IF @help = 1
@@ -36370,8 +36444,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.8',
-    @version_date = '20260801';
+    @version = '1.9',
+    @version_date = '20260901';
 
 /*Help*/
 IF @help = 1
@@ -41743,8 +41817,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.8',
-        @version_date = '20260801';
+        @version = '1.9',
+        @version_date = '20260901';
 
     /*
     ╔══════════════════════════════════════════════════╗
@@ -44598,7 +44672,7 @@ ALTER PROCEDURE
     @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
-    @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
+    @include_query_hash_totals bit = 0, /*will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
     @include_maintenance bit = 0, /*Set this bit to 1 to add maintenance operations such as index creation to the result set*/
     @find_high_impact bit = 0, /*finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions*/
     @primary_window nvarchar(20) = NULL, /*with @find_high_impact, restricts results to queries whose majority activity is in this window: business, off-hours, or weekend*/
@@ -44627,8 +44701,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.8',
-    @version_date = '20260801';
+    @version = '6.9',
+    @version_date = '20260901';
 
 /*
 Helpful section! For help.
@@ -44702,7 +44776,7 @@ BEGIN
                 WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
-                WHEN N'@include_query_hash_totals' THEN N'will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
+                WHEN N'@include_query_hash_totals' THEN N'will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
                 WHEN N'@include_maintenance' THEN N'Set this bit to 1 to add maintenance operations such as index creation to the result set'
                 WHEN N'@find_high_impact' THEN N'finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions'
                 WHEN N'@primary_window' THEN N'with @find_high_impact, restricts results to queries whose majority activity is in this window (business, off-hours, or weekend)'
@@ -44722,7 +44796,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits, rows, total cpu, total logical reads, total physical reads, total writes, total duration, total memory, total tempdb, total rows (avg/average prefix also accepted, e.g. avg cpu, average duration)'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, log, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits, rows, total cpu, total logical reads, total physical reads, total writes, total duration, total memory, total log, total tempdb, total rows (avg/average prefix also accepted, e.g. avg cpu, average duration)'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -44918,8 +44992,14 @@ BEGIN
         high_impact_columns =
            'when using @find_high_impact = 1, the result set contains these columns:' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'this mode honors @top, @sort_order (as a tiebreak), @work_start/@work_end, and @primary_window; the other' UNION ALL
-    SELECT '    filter parameters (@procedure_name, @query_text_search, include/ignore lists, etc.) do not apply here.' UNION ALL
+    SELECT 'this mode honors @top, @sort_order (as a tiebreak), @work_start/@work_end, @primary_window, and the' UNION ALL
+    SELECT '    query-hash include/ignore lists (@include_query_hashes, @ignore_query_hashes), which filter before' UNION ALL
+    SELECT '    the top-N picks so filtered-out hashes do not consume slots. Shares and percentiles are still' UNION ALL
+    SELECT '    computed over the FULL workload: ignoring a query does not change what percent of the server' UNION ALL
+    SELECT '    another query consumed. Results here are query_hash-grained, so the plan-hash lists and the other' UNION ALL
+    SELECT '    filter parameters do not apply.' UNION ALL
+    SELECT '    @top is per resource dimension (top N by cpu, by duration, by reads, etc., unioned), so the result' UNION ALL
+    SELECT '    set typically contains several times @top rows.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'database_name: the database being analyzed' UNION ALL
     SELECT 'start_date, end_date: the time window analyzed (UTC)' UNION ALL
@@ -44946,6 +45026,9 @@ BEGIN
     SELECT 'cpu_share, duration_share, physical_reads_share, writes_share, memory_share, executions_share:' UNION ALL
     SELECT '    what percentage of the server''s total for that metric this single query_hash consumed.' UNION ALL
     SELECT '    This is the 80/20 answer: "this one query is X% of all CPU on the server."' UNION ALL
+    SELECT 'total_cpu_ms, total_duration_ms, total_physical_reads_mb, total_writes_mb, total_memory_mb,' UNION ALL
+    SELECT '    total_tempdb_mb, total_rows, max_dop: absolute window totals, so a big share on a quiet server' UNION ALL
+    SELECT '    is not mistaken for a big number. Shares answer "how dominant"; these answer "how much".' UNION ALL
     SELECT 'resource_metrics: clickable XML rollup of total/avg/min/max for cpu, duration, physical reads, writes, memory,' UNION ALL
     SELECT '    tempdb, executions, rows, and max DOP. Click the column in SSMS to see the full breakdown.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -44956,7 +45039,7 @@ BEGIN
     SELECT '        Classic parameter sniffing: one plan shape that works for some parameter values but not others.' UNION ALL
     SELECT '    plan instability (N plans) - multiple plans with fewer than 5 executions per plan, excluding RECOMPILE hints.' UNION ALL
     SELECT '        The optimizer keeps recompiling frequently, which usually means inconsistent performance.' UNION ALL
-    SELECT '    spills/spools (N MB/exec) - writes detected on a SELECT-like query (no INSERT/UPDATE/DELETE/MERGE).' UNION ALL
+    SELECT '    spills/spools (N MB/exec) - at least 1 MB/exec of writes on a SELECT-like query (no INSERT/UPDATE/DELETE/MERGE).' UNION ALL
     SELECT '        This typically means tempdb spills from underestimated memory grants, or worktable spools.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'volatile_metrics: flags metrics with extreme variance: (max - min) / avg > 10x.' UNION ALL
@@ -44989,8 +45072,10 @@ BEGIN
     SELECT '    so recompiles of the same plan are analyzed together. Wild metric swings within one shape mean' UNION ALL
     SELECT '    the same plan is fast for some parameter values and slow for others: classic parameter sensitivity.' UNION ALL
     SELECT '    Only regular executions feed the statistics; aborted and exception executions are counted separately.' UNION ALL
-    SELECT '    This mode honors @top, @sort_order, @execution_count, and @duration_ms; the other filter' UNION ALL
-    SELECT '    parameters (@procedure_name, @query_text_search, include/ignore lists, etc.) do not apply here.' UNION ALL
+    SELECT '    This mode honors @top, @sort_order, @execution_count, @duration_ms, and the hash-based' UNION ALL
+    SELECT '    include/ignore lists (@include_query_hashes, @ignore_query_hashes, @include_plan_hashes,' UNION ALL
+    SELECT '    @ignore_plan_hashes), which filter shapes before the top-N cut. The other filter parameters' UNION ALL
+    SELECT '    (@procedure_name, @query_text_search, the id-based lists, etc.) do not apply here.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'database_name: the database being analyzed' UNION ALL
     SELECT 'start_date, end_date: the time window analyzed' UNION ALL
@@ -45006,15 +45091,22 @@ BEGIN
     SELECT 'query_id_list, plan_id_list: comma-separated IDs for drilling into Query Store views' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'ranked_on, volatility_score: results are ranked by the coefficient of variation (stdev / average) of the' UNION ALL
-    SELECT '    @sort_order metric (cpu, duration, physical reads, writes, memory, rows, tempdb; anything else = cpu).' UNION ALL
-    SELECT '    The stdev is properly combined across runtime stat intervals, weighted by executions, so one weird' UNION ALL
-    SELECT '    interval does not dominate. 0 = perfectly stable, 1 = the stdev equals the average, bigger = wilder.' UNION ALL
+    SELECT '    @sort_order metric (cpu, duration, physical reads, writes, memory, rows, tempdb; anything else = cpu),' UNION ALL
+    SELECT '    multiplied by the log of the total work the shape did in the window for that metric. Volatility alone' UNION ALL
+    SELECT '    is scale-blind (a 3ms query that sometimes hits 60ms would outrank a 2 second query that sometimes' UNION ALL
+    SELECT '    hits 40 seconds), so a shape has to be both volatile and expensive to rank highly.' UNION ALL
+    SELECT '    volatility_score is the raw coefficient of variation: the stdev is properly combined across runtime' UNION ALL
+    SELECT '    stat intervals, weighted by executions, so one weird interval does not dominate.' UNION ALL
+    SELECT '    0 = perfectly stable, 1 = the stdev equals the average, bigger = wilder.' UNION ALL
     SELECT 'signals: rule-based reads on the swings. Nx means max is N times min for that metric' UNION ALL
-    SELECT '    (tiny mins are floored at 0.001 ms / 1 row first, so extreme ratios are lower bounds):' UNION ALL
+    SELECT '    (tiny mins are floored at 0.001 ms / 1 row first, so extreme ratios are lower bounds; displayed' UNION ALL
+    SELECT '    ratios cap at 9999+, and "rows flat" means the shape never returned a row):' UNION ALL
     SELECT '    parameter sensitive (cpu Nx, rows Nx) - big cpu swings while rows barely move. The plan does wildly' UNION ALL
     SELECT '        different amounts of work for similar-sized results: the strongest sniffing signal.' UNION ALL
     SELECT '    row driven (cpu Nx, rows Nx) - cpu swings track row count swings. Work scales with honest data volume,' UNION ALL
     SELECT '        so this is probably not a parameter sensitivity problem.' UNION ALL
+    SELECT '    mixed swings (cpu Nx, rows Nx) - cpu moves more than the row count swings alone explain, but not' UNION ALL
+    SELECT '        decisively; look for parameter sensitivity layered on top of honest data-volume variance.' UNION ALL
     SELECT '    intermittent waits (duration Nx, cpu Nx) - duration swings without cpu swings: blocking, grants, or I/O,' UNION ALL
     SELECT '        not parameter sensitivity. Check top_waits.' UNION ALL
     SELECT '    memory grant swings (Nx) / tempdb swings (Nx) - grant or spill behavior varies between executions.' UNION ALL
@@ -45037,9 +45129,10 @@ BEGIN
     SELECT 'SHAPE VOLATILITY SUMMARY (separate result set, returned before the query details):' UNION ALL
     SELECT 'total_shapes: how many plan shapes had regular executions in the time window' UNION ALL
     SELECT 'shapes_past_floors: how many cleared the noise floors (executions and minimum cpu/duration)' UNION ALL
-    SELECT 'surfaced_shapes: how many made it into the detail result set after top-N ranking' UNION ALL
+    SELECT 'surfaced_shapes: how many made it into the detail result set after hash filters and top-N ranking' UNION ALL
     SELECT 'multi_shape_query_hashes: how many query_hashes compiled to more than one plan shape in the window' UNION ALL
-    SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order';
+    SELECT 'wait_stats: whether the per-shape top_waits column is available, and why not when it is not' UNION ALL
+    SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order (work-weighted)';
 
     /*
     Limitations
@@ -45116,6 +45209,7 @@ IF @sort_order NOT IN
        'writes',
        'duration',
        'memory',
+       'log',
        'tempdb',
        'executions',
        'recent',
@@ -45143,6 +45237,7 @@ IF @sort_order NOT IN
        'total writes',
        'total duration',
        'total memory',
+       'total log',
        'total tempdb',
        'total rows'
    )
@@ -45357,7 +45452,10 @@ END;
 /*
 @find_parameter_sensitive is a takeover mode like @find_high_impact,
 so the two of them can't be combined, and it can't be combined with
-the things @find_high_impact can't be combined with either
+the things @find_high_impact can't be combined with either.
+The hash-based include and ignore lists are honored in this mode
+(shapes are keyed by query_hash + query_plan_hash); the id-based
+lists and text filters are not
 */
 IF
 (
@@ -46525,6 +46623,7 @@ VALUES
                  WHEN 'writes' THEN 'qsrs.avg_logical_io_writes_mb'
                  WHEN 'duration' THEN 'qsrs.avg_duration_ms'
                  WHEN 'memory' THEN 'qsrs.avg_query_max_used_memory_mb'
+                 WHEN 'log' THEN 'qsrs.avg_log_bytes_used_mb'
                  WHEN 'tempdb' THEN 'qsrs.avg_tempdb_space_used_mb' /*This gets validated later*/
                  WHEN 'executions' THEN 'qsrs.count_executions'
                  WHEN 'recent' THEN 'qsrs.last_execution_time'
@@ -46535,6 +46634,7 @@ VALUES
                  WHEN 'total writes' THEN 'qsrs.total_logical_io_writes_mb'
                  WHEN 'total duration' THEN 'qsrs.total_duration_ms'
                  WHEN 'total memory' THEN 'qsrs.total_query_max_used_memory_mb'
+                 WHEN 'total log' THEN 'qsrs.total_log_bytes_used_mb'
                  WHEN 'total tempdb' THEN 'qsrs.total_tempdb_space_used_mb' /*This gets validated later*/
                  WHEN 'total rows' THEN 'qsrs.total_rowcount'
                  WHEN 'plan count by hashes' THEN 'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
@@ -49111,7 +49211,7 @@ We do it before the database-level checks because the relevant DMVs may not exis
 IF
 (
   (
-      @sort_order = 'tempdb'
+      @sort_order IN (N'log', N'total log', N'tempdb', N'total tempdb')
    OR @sort_order_is_a_wait = 1
   )
   AND
@@ -49525,6 +49625,69 @@ BEGIN
         max_dop bigint NULL
     );
 
+    CREATE TABLE
+        #hi_eligible
+    (
+        query_hash binary(8) NOT NULL
+            PRIMARY KEY CLUSTERED
+    );
+
+    /*
+    The query-hash include and ignore lists apply in this mode (results
+    are query_hash-grained, so the plan-hash lists do not). They are
+    parsed locally with the same splitter (the main filter-processing
+    section is never reached from here: this mode returns at the end of
+    its block). The lists gate which hashes are ELIGIBLE for the top-N
+    picks in step 2 — before the TOP, so a filtered-out hash does not
+    consume a slot. Shares and percentiles in step 3 are still computed
+    over the full workload on purpose: ignoring a query must not change
+    what percent of the server another query consumed.
+    */
+    IF
+    (
+       @include_query_hashes IS NOT NULL
+    OR @ignore_query_hashes  IS NOT NULL
+    )
+    BEGIN
+        SELECT
+            @include_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@include_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @ignore_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@ignore_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N'');
+
+        IF @include_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #include_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @include_query_hashes;
+        END;
+
+        IF @ignore_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #ignore_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @ignore_query_hashes;
+        END;
+    END;
+
     /*Step 1a: Stage interval IDs for the time window*/
     CREATE TABLE
         #hi_intervals
@@ -49869,6 +50032,43 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
+    /*
+    Stage the hashes eligible for the top-N picks. With no lists set this
+    is every hash; the include/ignore lists narrow it here, before the
+    TOP picks, so a filtered-out hash never consumes a slot.
+    */
+    INSERT
+        #hi_eligible WITH (TABLOCK)
+    (
+        query_hash
+    )
+    SELECT
+        qs.query_hash
+    FROM #hi_query_stats AS qs
+    WHERE
+    (
+        NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+        )
+     OR EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+            WHERE iqh.query_hash = qs.query_hash
+        )
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ignore_query_hashes AS igh
+        WHERE igh.query_hash = qs.query_hash
+    );
+
     /*Step 2: Top N per metric (static SQL, temp tables only)*/
     INSERT
         #hi_interesting WITH (TABLOCK)
@@ -49882,6 +50082,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_cpu_ms DESC
 
         UNION
@@ -49889,6 +50096,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_duration_ms DESC
 
         UNION
@@ -49896,6 +50110,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_physical_reads_mb DESC
 
         UNION
@@ -49903,6 +50124,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_writes_mb DESC
 
         UNION
@@ -49910,6 +50138,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_memory_mb DESC
 
         UNION
@@ -49917,6 +50152,13 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_executions DESC
 
         UNION
@@ -49925,6 +50167,13 @@ OPTION(RECOMPILE);' + @nc10;
             qs.query_hash
         FROM #hi_query_stats AS qs
         WHERE qs.total_tempdb_mb > 0
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_tempdb_mb DESC
 
         UNION
@@ -49933,6 +50182,13 @@ OPTION(RECOMPILE);' + @nc10;
             qs.query_hash
         FROM #hi_query_stats AS qs
         WHERE qs.total_rows > 0
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
         ORDER BY qs.total_rows DESC
     ) AS qs;
 
@@ -51038,7 +51294,12 @@ OPTION(RECOMPILE);' + @nc10;
                 (
                     N' | ' +
                     CASE
-                        WHEN s.total_writes_mb > 0
+                        /*
+                        The per-exec floor keeps this from firing as
+                        "spills/spools (0.0 MB/exec)" when a huge execution
+                        count carries a few stray KB of writes.
+                        */
+                        WHEN s.total_writes_mb / NULLIF(s.total_executions, 0) >= 1
                          AND rt.query_sql_text NOT LIKE N'%INSERT%'
                          AND rt.query_sql_text NOT LIKE N'%UPDATE%'
                          AND rt.query_sql_text NOT LIKE N'%DELETE%'
@@ -51423,6 +51684,14 @@ SELECT
     o.executions_share,
     o.tempdb_share,
     o.rows_share,
+    o.total_cpu_ms,
+    o.total_duration_ms,
+    o.total_physical_reads_mb,
+    o.total_writes_mb,
+    o.total_memory_mb,
+    o.total_tempdb_mb,
+    o.total_rows,
+    o.max_dop,
     o.diagnostics,
     o.volatile_metrics,
     o.resource_metrics
@@ -51714,6 +51983,7 @@ BEGIN
         rows_volatility decimal(19, 4) NULL,
         last_execution_time datetimeoffset(7) NULL,
         variance_metrics xml NULL,
+        sort_value float NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash)
     );
@@ -51741,6 +52011,97 @@ BEGIN
                 THEN @sort_order
                 ELSE N'cpu'
             END;
+
+    /*
+    The hash-based include and ignore lists apply in this mode, because
+    plan shapes are keyed by the same columns (query_hash + query_plan_hash).
+    The main filter-processing section is never reached from here (this mode
+    returns at the end of its block), so the lists are parsed locally with
+    the same splitter. The id-based lists and text filters do not apply:
+    shapes aggregate across query and plan ids.
+    */
+    IF
+    (
+       @include_query_hashes IS NOT NULL
+    OR @ignore_query_hashes  IS NOT NULL
+    OR @include_plan_hashes  IS NOT NULL
+    OR @ignore_plan_hashes   IS NOT NULL
+    )
+    BEGIN
+        SELECT
+            @include_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@include_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @ignore_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@ignore_query_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @include_plan_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@include_plan_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N''),
+            @ignore_plan_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                LTRIM(RTRIM(@ignore_plan_hashes)),
+                CHAR(10), N''), CHAR(13), N''),
+                NCHAR(10), N''), NCHAR(13), N'');
+
+        IF @include_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #include_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @include_query_hashes;
+        END;
+
+        IF @ignore_query_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #ignore_query_hashes WITH (TABLOCK)
+            (
+                query_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @ignore_query_hashes;
+        END;
+
+        IF @include_plan_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #include_plan_hashes WITH (TABLOCK)
+            (
+                plan_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @include_plan_hashes;
+        END;
+
+        IF @ignore_plan_hashes IS NOT NULL
+        BEGIN
+            INSERT
+                #ignore_plan_hashes WITH (TABLOCK)
+            (
+                plan_hash_s
+            )
+            EXECUTE sys.sp_executesql
+                @string_split_strings,
+              N'@ids nvarchar(4000)',
+                @ignore_plan_hashes;
+        END;
+    END;
 
     /*Step 1a: Stage interval IDs for the time window*/
     SELECT
@@ -52188,10 +52549,17 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
         ps.query_hash;
 
     /*
-    Step 3: Pick the top N shapes by volatility of the ranking metric.
+    Step 3: Pick the top N shapes by the volatility of the ranking metric,
+    weighted by the log of the total work the shape did in the window.
+    The coefficient of variation alone is scale-blind: a 3ms query that
+    sometimes hits 60ms would outrank a 2 second query that sometimes hits
+    40 seconds. On a quiet system where every shape is tiny the weight is
+    nearly uniform and ranking stays effectively pure volatility; on a busy
+    system a shape has to be both volatile and expensive to make the cut.
     The noise floors keep trivia out: a shape must have enough executions
     for variance to mean anything, and must have done a measurable amount
     of work at least once. @duration_ms takes over the work floor when set.
+    The hash-based include and ignore lists filter here, before the top-N.
     */
     INSERT
         #ps_interesting WITH (TABLOCK)
@@ -52220,6 +52588,52 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             )
         )
     )
+    AND
+    (
+        NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+        )
+     OR EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_query_hashes AS iqh
+            WHERE iqh.query_hash = ps.query_hash
+        )
+    )
+    AND
+    (
+        NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_plan_hashes AS iph
+        )
+     OR EXISTS
+        (
+            SELECT
+                1/0
+            FROM #include_plan_hashes AS iph
+            WHERE iph.plan_hash = ps.query_plan_hash
+        )
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ignore_query_hashes AS igh
+        WHERE igh.query_hash = ps.query_hash
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ignore_plan_hashes AS igp
+        WHERE igp.plan_hash = ps.query_plan_hash
+    )
     ORDER BY
         CASE @ps_rank_metric
             WHEN N'duration' THEN ps.duration_volatility
@@ -52229,7 +52643,24 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             WHEN N'rows' THEN ps.rows_volatility
             WHEN N'tempdb' THEN ps.tempdb_volatility
             ELSE ps.cpu_volatility
-        END DESC,
+        END *
+        LOG10
+        (
+            10. +
+            ISNULL
+            (
+                CASE @ps_rank_metric
+                    WHEN N'duration' THEN ps.total_duration_ms
+                    WHEN N'physical reads' THEN ps.avg_physical_reads_mb * ps.total_executions
+                    WHEN N'writes' THEN ps.avg_writes_mb * ps.total_executions
+                    WHEN N'memory' THEN ps.avg_memory_mb * ps.total_executions
+                    WHEN N'rows' THEN ps.avg_rows * ps.total_executions
+                    WHEN N'tempdb' THEN ps.avg_tempdb_mb * ps.total_executions
+                    ELSE ps.total_cpu_ms
+                END,
+                0.
+            )
+        ) DESC,
         ps.total_cpu_ms DESC,
         ps.query_hash,
         ps.query_plan_hash;
@@ -52278,8 +52709,16 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
                 FROM #ps_query_rollup AS qr
                 WHERE qr.shape_count > 1
             ),
+        wait_stats =
+            CASE
+                WHEN @new = 0
+                THEN N'top_waits is not available before SQL Server 2017; the column is omitted'
+                WHEN @query_store_waits_enabled = 0
+                THEN N'query store wait stats capture is off for this database; the top_waits column is omitted'
+                ELSE N'top_waits shows the top 3 wait categories per shape'
+            END,
         ranked_on =
-            @ps_rank_metric + N' volatility';
+            @ps_rank_metric + N' volatility, work-weighted';
 
     /*
     Step 4: Stage query and plan ids for the interesting shapes.
@@ -52814,7 +53253,8 @@ OPTION(RECOMPILE);' + @nc10;
         max_rows,
         rows_volatility,
         last_execution_time,
-        variance_metrics
+        variance_metrics,
+        sort_value
     )
     SELECT
         qi.object_name,
@@ -52834,7 +53274,7 @@ OPTION(RECOMPILE);' + @nc10;
         qi.query_id_list,
         qi.plan_id_list,
         ranked_on =
-            @ps_rank_metric + N' volatility',
+            @ps_rank_metric + N' volatility, work-weighted',
         volatility_score =
             CASE @ps_rank_metric
                 WHEN N'duration' THEN ps.duration_volatility
@@ -52856,10 +53296,20 @@ OPTION(RECOMPILE);' + @nc10;
                          AND ps.max_cpu_ms >= 10
                          AND sw.cpu_ratio >= sw.rows_ratio * 10
                         THEN N'parameter sensitive (cpu ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio)) +
+                             CASE
+                                 WHEN sw.cpu_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio))
+                             END +
                              N'x, rows ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) +
-                             N'x)'
+                             CASE
+                                 WHEN ps.max_rows = 0
+                                 THEN N'flat'
+                                 WHEN sw.rows_ratio > 9999.
+                                 THEN N'9999+x'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) + N'x'
+                             END +
+                             N')'
                     END,
                     N''
                 ) +
@@ -52870,9 +53320,45 @@ OPTION(RECOMPILE);' + @nc10;
                         WHEN sw.rows_ratio >= 20
                          AND sw.cpu_ratio <= sw.rows_ratio * 2
                         THEN N'row driven (cpu ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio)) +
+                             CASE
+                                 WHEN sw.cpu_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio))
+                             END +
                              N'x, rows ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio)) +
+                             CASE
+                                 WHEN sw.rows_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio))
+                             END +
+                             N'x)'
+                    END,
+                    N''
+                ) +
+                ISNULL
+                (
+                    N' | ' +
+                    CASE
+                        WHEN sw.cpu_ratio >= 20
+                         AND ps.max_cpu_ms >= 10
+                         AND sw.cpu_ratio < sw.rows_ratio * 10
+                         AND
+                         (
+                              sw.rows_ratio < 20
+                           OR sw.cpu_ratio > sw.rows_ratio * 2
+                         )
+                        THEN N'mixed swings (cpu ' +
+                             CASE
+                                 WHEN sw.cpu_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.cpu_ratio))
+                             END +
+                             N'x, rows ' +
+                             CASE
+                                 WHEN sw.rows_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.rows_ratio))
+                             END +
                              N'x)'
                     END,
                     N''
@@ -52885,7 +53371,11 @@ OPTION(RECOMPILE);' + @nc10;
                          AND ps.max_duration_ms >= 1000
                          AND sw.cpu_ratio < 3
                         THEN N'intermittent waits (duration ' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.duration_ratio)) +
+                             CASE
+                                 WHEN sw.duration_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.duration_ratio))
+                             END +
                              N'x, cpu ' +
                              CONVERT(nvarchar(20), CONVERT(decimal(5, 1), sw.cpu_ratio)) +
                              N'x)'
@@ -52899,7 +53389,11 @@ OPTION(RECOMPILE);' + @nc10;
                         WHEN sw.memory_ratio >= 10
                          AND ps.max_memory_mb >= 8
                         THEN N'memory grant swings (' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.memory_ratio)) +
+                             CASE
+                                 WHEN sw.memory_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.memory_ratio))
+                             END +
                              N'x)'
                     END,
                     N''
@@ -52911,7 +53405,11 @@ OPTION(RECOMPILE);' + @nc10;
                         WHEN sw.tempdb_ratio >= 10
                          AND ps.max_tempdb_mb >= 8
                         THEN N'tempdb swings (' +
-                             CONVERT(nvarchar(20), CONVERT(bigint, sw.tempdb_ratio)) +
+                             CASE
+                                 WHEN sw.tempdb_ratio > 9999.
+                                 THEN N'9999+'
+                                 ELSE CONVERT(nvarchar(20), CONVERT(bigint, sw.tempdb_ratio))
+                             END +
                              N'x)'
                     END,
                     N''
@@ -53006,7 +53504,39 @@ OPTION(RECOMPILE);' + @nc10;
                 XML
                 PATH(N'metrics'),
                 TYPE
-        )
+        ),
+        /*
+        The same work-weighted volatility expression that picked the top-N
+        in step 3, kept so the final result set presents in rank order.
+        volatility_score stays the raw coefficient of variation.
+        */
+        sort_value =
+            CASE @ps_rank_metric
+                WHEN N'duration' THEN ps.duration_volatility
+                WHEN N'physical reads' THEN ps.physical_reads_volatility
+                WHEN N'writes' THEN ps.writes_volatility
+                WHEN N'memory' THEN ps.memory_volatility
+                WHEN N'rows' THEN ps.rows_volatility
+                WHEN N'tempdb' THEN ps.tempdb_volatility
+                ELSE ps.cpu_volatility
+            END *
+            LOG10
+            (
+                10. +
+                ISNULL
+                (
+                    CASE @ps_rank_metric
+                        WHEN N'duration' THEN ps.total_duration_ms
+                        WHEN N'physical reads' THEN ps.avg_physical_reads_mb * ps.total_executions
+                        WHEN N'writes' THEN ps.avg_writes_mb * ps.total_executions
+                        WHEN N'memory' THEN ps.avg_memory_mb * ps.total_executions
+                        WHEN N'rows' THEN ps.avg_rows * ps.total_executions
+                        WHEN N'tempdb' THEN ps.avg_tempdb_mb * ps.total_executions
+                        ELSE ps.total_cpu_ms
+                    END,
+                    0.
+                )
+            )
     FROM #ps_shape_stats AS ps
     JOIN #ps_interesting AS i
         ON  i.query_hash = ps.query_hash
@@ -53199,7 +53729,7 @@ OUTER APPLY
     WHERE qp0.n = 1
 ) AS qp
 ORDER BY
-    o.volatility_score DESC,
+    o.sort_value DESC,
     o.query_hash,
     o.query_plan_hash
 OPTION(RECOMPILE);' + @nc10;
@@ -54595,7 +55125,21 @@ BEGIN
 SELECT TOP (@top)
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+/*
+Restricting waits to the runtime stats rows the date range
+qualifies keeps the filter from matching queries whose waits
+of this category happened entirely outside of it, and keeps
+the TOP ranked by in-range wait totals rather than
+all-history ones. Matches the date semantics of the main
+where clause and the wait sort order joins.
+*/
+JOIN  ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+  ON  qsws.plan_id = qsrs.plan_id
+  AND qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+  AND qsws.execution_type = qsrs.execution_type
 WHERE 1 = 1
+AND   qsrs.last_execution_time >= @start_date
+AND   qsrs.last_execution_time <  @end_date
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
@@ -54639,8 +55183,12 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@top bigint',
-        @top;
+      N'@top bigint,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @top,
+        @start_date,
+        @end_date;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -55132,8 +55680,16 @@ BEGIN
         total_query_wait_time_ms =
             SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    /*
+    Joining on plan_id alone would sum waits across all of
+    Query Store history, multiplied by the number of in-window
+    runtime stats rows. Interval and execution type scope the
+    waits to the rows the WHERE clause qualifies.
+    */
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-      ON qsrs.plan_id = qsws.plan_id
+      ON  qsrs.plan_id = qsws.plan_id
+      AND qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+      AND qsrs.execution_type = qsws.execution_type
     WHERE 1 = 1
     '
    + CASE WHEN @regression_mode = 1
@@ -55259,8 +55815,15 @@ BEGIN
         total_query_wait_time_ms =
             MAX(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    /*
+    Joining on plan_id alone would take the max wait across
+    all of Query Store history rather than the requested
+    time window.
+    */
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-      ON qsrs.plan_id = qsws.plan_id
+      ON  qsrs.plan_id = qsws.plan_id
+      AND qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+      AND qsrs.execution_type = qsws.execution_type
     WHERE 1 = 1
     AND qsws.wait_category = '  +
     CASE @sort_order
@@ -55419,6 +55982,7 @@ BEGIN
                      WHEN 'writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
+                     WHEN 'log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                      /* count_executions per interval is meaningful as a plain mean — it''s a count, not an average-of-averages. */
                      WHEN 'executions' THEN N'AVG(CONVERT(float, qsrs.count_executions))'
@@ -55429,6 +55993,7 @@ BEGIN
                      WHEN 'total writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions)'
                      WHEN 'total duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions)'
                      WHEN 'total memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions)'
+                     WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
                      WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
                      /* Waits and the fallback path — waits are per-interval totals so AVG is correct; fallback mirrors cpu path. */
@@ -55536,6 +56101,7 @@ BEGIN
                      WHEN 'writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
+                     WHEN 'log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                      WHEN 'executions' THEN N'AVG(CONVERT(float, qsrs.count_executions))'
                      WHEN 'rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
@@ -55545,6 +56111,7 @@ BEGIN
                      WHEN 'total writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions)'
                      WHEN 'total duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions)'
                      WHEN 'total memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions)'
+                     WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
                      WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
@@ -55674,6 +56241,7 @@ BEGIN
                      WHEN 'writes' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'duration' THEN N'hashes_with_changes.change_since_regression_time_period / 1000.'
                      WHEN 'memory' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
+                     WHEN 'log' THEN CASE WHEN @new = 1 THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                      WHEN 'executions' THEN N'hashes_with_changes.change_since_regression_time_period'
                      WHEN 'rows' THEN N'hashes_with_changes.change_since_regression_time_period'
@@ -55683,6 +56251,7 @@ BEGIN
                      WHEN 'total writes' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'total duration' THEN N'hashes_with_changes.change_since_regression_time_period / 1000.'
                      WHEN 'total memory' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
+                     WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                      WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                      WHEN 'total rows' THEN N'hashes_with_changes.change_since_regression_time_period'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'hashes_with_changes.change_since_regression_time_period / 1000.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
@@ -55891,6 +56460,7 @@ BEGIN
          WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
          WHEN 'duration' THEN N'qsrs.avg_duration'
          WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
+         WHEN 'log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used' ELSE N'qsrs.avg_cpu_time' END
          WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
          WHEN 'executions' THEN N'qsrs.count_executions'
          WHEN 'recent' THEN N'qsrs.last_execution_time'
@@ -55901,6 +56471,7 @@ BEGIN
          WHEN 'total writes' THEN N'qsrs.avg_logical_io_writes * qsrs.count_executions'
          WHEN 'total duration' THEN N'qsrs.avg_duration * qsrs.count_executions'
          WHEN 'total memory' THEN N'qsrs.avg_query_max_used_memory * qsrs.count_executions'
+         WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
          WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
          WHEN 'total rows' THEN N'qsrs.avg_rowcount * qsrs.count_executions'
          ELSE N'qsrs.avg_cpu_time'
@@ -56319,6 +56890,7 @@ SELECT
              WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
              WHEN 'duration' THEN N'qsrs.avg_duration'
              WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
+             WHEN 'log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
@@ -56329,6 +56901,7 @@ SELECT
              WHEN 'total writes' THEN N'qsrs.avg_logical_io_writes * qsrs.count_executions'
              WHEN 'total duration' THEN N'qsrs.avg_duration * qsrs.count_executions'
              WHEN 'total memory' THEN N'qsrs.avg_query_max_used_memory * qsrs.count_executions'
+             WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
              WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
              WHEN 'total rows' THEN N'qsrs.avg_rowcount * qsrs.count_executions'
              WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
@@ -56810,6 +57383,15 @@ BEGIN
         FROM #query_store_query AS qsq2
         WHERE qsq2.query_hash = qsq.query_hash
     )
+    /*
+    Without the date restriction these totals sum every runtime stats row
+    in Query Store history for the hash, which sits next to window-scoped
+    columns in the same output row and inflates by however long Query
+    Store retention is. Matches the date semantics of the main where
+    clause and the wait sort order joins.
+    */
+    AND qsrs.last_execution_time >= @start_date
+    AND qsrs.last_execution_time < @end_date
     GROUP BY
         qsq.query_hash
     OPTION(RECOMPILE);
@@ -56843,8 +57425,12 @@ BEGIN
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id integer',
-        @database_id;
+      N'@database_id integer,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @database_id,
+        @start_date,
+        @end_date;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -58754,6 +59340,7 @@ ORDER BY
                   WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
                   WHEN 'duration' THEN N'x.avg_duration_ms'
                   WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
+                  WHEN 'log' THEN CASE WHEN @new = 1 THEN N'x.avg_log_bytes_used_mb' ELSE N'x.avg_cpu_time_ms' END
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time_ms' END
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
@@ -58764,6 +59351,7 @@ ORDER BY
                   WHEN 'total writes' THEN N'x.total_logical_io_writes_mb'
                   WHEN 'total duration' THEN N'x.total_duration_ms'
                   WHEN 'total memory' THEN N'x.total_query_max_used_memory_mb'
+                  WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'x.total_log_bytes_used_mb' ELSE N'x.total_cpu_time_ms' END
                   WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'x.total_tempdb_space_used_mb' ELSE N'x.total_cpu_time_ms' END
                   WHEN 'total rows' THEN N'x.total_rowcount'
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC,
@@ -58799,6 +59387,7 @@ ORDER BY
                   WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS decimal(19,2))'
                   WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS decimal(19,2))'
                   WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS decimal(19,2))'
+                  WHEN 'log' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_log_bytes_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS decimal(19,2))'
                   WHEN 'recent' THEN N'x.last_execution_time'
@@ -58809,6 +59398,7 @@ ORDER BY
                   WHEN 'total writes' THEN N'TRY_PARSE(x.total_logical_io_writes_mb AS decimal(19,2))'
                   WHEN 'total duration' THEN N'TRY_PARSE(x.total_duration_ms AS decimal(19,2))'
                   WHEN 'total memory' THEN N'TRY_PARSE(x.total_query_max_used_memory_mb AS decimal(19,2))'
+                  WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.total_log_bytes_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.total_cpu_time_ms AS decimal(19,2))' END
                   WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.total_tempdb_space_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.total_cpu_time_ms AS decimal(19,2))' END
                   WHEN 'total rows' THEN N'TRY_PARSE(x.total_rowcount AS decimal(19,2))'
                   WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS decimal(19,2)) DESC,
