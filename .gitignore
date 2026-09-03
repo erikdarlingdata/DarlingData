@@ -7,6 +7,7 @@
 *.vsidx
 *.lock
 .DS_Store
-.claude/
+.claude/*
+!.claude/skills/
 __pycache__/
 *.pyc
