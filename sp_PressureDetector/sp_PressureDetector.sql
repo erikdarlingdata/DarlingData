@@ -629,11 +629,44 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     description nvarchar(60) NULL,
                     hours_wait_time decimal(38,2) NULL,
                     avg_ms_per_wait decimal(38,2) NULL,
+                    max_wait_time_ms bigint NULL,
                     percent_signal_waits decimal(38,2) NULL,
                     waiting_tasks_count bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + REPLACE(@log_table_waits, N'''', N'''''') + N''') WITH NOWAIT; END;
+            END';
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
+            @table_name sysname,
+            @debug bit',
+            @log_schema_name,
+            @log_table_name_prefix,
+            @debug;
+
+        /*
+        Upgrade path: _Waits tables created before max_wait_time_ms
+        existed need the column added, or the insert below fails
+        */
+        SET @create_sql = N'
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                  ON c.object_id = t.object_id
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_Waits''
+                AND   s.name = @schema_name
+                AND   c.name = N''max_wait_time_ms''
+            )
+            BEGIN
+                ALTER TABLE ' + @log_table_waits + N' ADD max_wait_time_ms bigint NULL;
+                IF @debug = 1 BEGIN RAISERROR(''Added max_wait_time_ms column to %s for wait stats logging.'', 0, 1, ''' + REPLACE(@log_table_waits, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1071,6 +1104,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         description nvarchar(60),
         hours_wait_time decimal(38,2),
         avg_ms_per_wait decimal(38,2),
+        max_wait_time_ms bigint,
         percent_signal_waits decimal(38,2),
         /* Raw ms values so the sample-mode JOIN can compute
            window-local percent_signal_waits as a proper delta ratio
@@ -1225,6 +1259,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             description,
             hours_wait_time,
             avg_ms_per_wait,
+            max_wait_time_ms,
             percent_signal_waits,
             signal_wait_time_ms,
             wait_time_ms,
@@ -1369,6 +1404,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ),
                     0.
                 ),
+            dows.max_wait_time_ms,
             percent_signal_waits =
                 CONVERT
                 (
@@ -1480,6 +1516,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     w.server_hours_cpu_time,
                     w.hours_wait_time,
                     w.avg_ms_per_wait,
+                    max_wait_time_ms =
+                        FORMAT(w.max_wait_time_ms, 'N0'),
                     w.percent_signal_waits,
                     waiting_tasks_count =
                         FORMAT(w.waiting_tasks_count_n, 'N0')
@@ -1526,6 +1564,20 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 0.
                             )
                         ),
+                    /*
+                    max_wait_time_ms is a cumulative high-water mark, not
+                    a rolling counter, so a snapshot delta is meaningless.
+                    Only show it when a new max was recorded during the
+                    sample window; otherwise the server-lifetime max would
+                    masquerade as a window measurement (same reasoning as
+                    percent_signal_waits below).
+                    */
+                    max_wait_time_ms =
+                        CASE
+                            WHEN w2.max_wait_time_ms > w.max_wait_time_ms
+                            THEN FORMAT(w2.max_wait_time_ms, 'N0')
+                            ELSE NULL
+                        END,
                     /*
                     Window-local percent_signal_waits = 100 * signal_delta / total_delta.
                     Previously this averaged the two snapshots' CUMULATIVE
@@ -1597,6 +1649,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         description,
                         hours_wait_time,
                         avg_ms_per_wait,
+                        max_wait_time_ms,
                         percent_signal_waits,
                         waiting_tasks_count
                     )
@@ -1607,6 +1660,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         w.description,
                         w.hours_wait_time,
                         w.avg_ms_per_wait,
+                        w.max_wait_time_ms,
                         w.percent_signal_waits,
                         w.waiting_tasks_count_n
                     FROM #waits AS w;
