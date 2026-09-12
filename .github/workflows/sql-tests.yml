@@ -39,7 +39,7 @@ jobs:
           --health-retries 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install sqlcmd tools
         run: |
