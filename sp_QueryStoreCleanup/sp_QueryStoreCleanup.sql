@@ -261,7 +261,6 @@ SOFTWARE.
         @c CURSOR,
         @query_id bigint,
         @current bigint = 0,
-        @total bigint = 0,
         @removed bigint = 0,
         @failed bigint = 0;
 
@@ -401,7 +400,7 @@ OPTION(RECOMPILE);';
     /*
     Validate custom filter
     */
-    IF @include_custom = 1
+    IF  @include_custom = 1
     AND @custom_query_filter IS NULL
     BEGIN
         RAISERROR('@custom_query_filter is required when @cleanup_targets includes ''custom''.', 16, 1) WITH NOWAIT;
@@ -457,10 +456,22 @@ OPTION(RECOMPILE);';
     Validate that @cleanup_targets and @dedupe_by aren't both none
     That would remove every query in query store
     */
-    IF @no_text_filter = 1
+    IF  @no_text_filter = 1
     AND @no_dedupe = 1
     BEGIN
         RAISERROR('@cleanup_targets = ''none'' and @dedupe_by = ''none'' would remove every query in query store. That''s probably not what you want.', 16, 1) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /*
+    Validate @min_age_days
+    A negative value would push @age_cutoff into the future, which would
+    silently disable the age filter instead of erroring, since nothing
+    has a last_execution_time in the future.
+    */
+    IF @min_age_days <= 0
+    BEGIN
+        RAISERROR('@min_age_days must be a positive integer. You passed: %d', 16, 1, @min_age_days) WITH NOWAIT;
         RETURN;
     END;
 
@@ -741,7 +752,7 @@ OPTION(RECOMPILE);';
     /*
     Check if any duplicates were found (skip when @no_dedupe = 1)
     */
-    IF @no_dedupe = 0
+    IF  @no_dedupe = 0
     AND @query_hash_dupe_count = 0
     AND @plan_hash_dupe_count = 0
     BEGIN
@@ -828,7 +839,7 @@ OPTION(RECOMPILE, HASH JOIN);';
         /*
         Build the EXISTS clause based on which strategies found results
         */
-        IF @dedupe_query_hash = 1
+        IF  @dedupe_query_hash = 1
         AND @query_hash_dupe_count > 0
         BEGIN
             SELECT
@@ -839,7 +850,7 @@ OPTION(RECOMPILE, HASH JOIN);';
     WHERE qd.query_hash = qsq.query_hash';
         END;
 
-        IF @dedupe_plan_hash = 1
+        IF  @dedupe_plan_hash = 1
         AND @plan_hash_dupe_count > 0
         BEGIN
             IF LEN(@exists_clause) > 0
@@ -964,9 +975,6 @@ OPTION(RECOMPILE);';
     Removal mode: cursor through and remove each query
     */
     SELECT
-        @total = @removal_count;
-
-    SELECT
         @remove_sql =
             N'EXECUTE ' +
             @database_name_quoted +
@@ -1009,14 +1017,14 @@ OPTION(RECOMPILE);';
             SELECT
                 @removed += 1;
 
-            RAISERROR('Query %I64d of %I64d: query_id %I64d removed', 0, 1, @current, @total, @query_id) WITH NOWAIT;
+            RAISERROR('Query %I64d of %I64d: query_id %I64d removed', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
         END TRY
         BEGIN CATCH
             SELECT
                 @failed += 1,
                 @error_message = ERROR_MESSAGE();
 
-            RAISERROR('Query %I64d of %I64d: query_id %I64d not removed (%s)', 0, 1, @current, @total, @query_id, @error_message) WITH NOWAIT;
+            RAISERROR('Query %I64d of %I64d: query_id %I64d not removed (%s)', 0, 1, @current, @removal_count, @query_id, @error_message) WITH NOWAIT;
         END CATCH;
 
         FETCH NEXT
@@ -1024,7 +1032,7 @@ OPTION(RECOMPILE);';
         INTO @query_id;
     END;
 
-    RAISERROR('Finished: %I64d of %I64d removed (%I64d failed)', 0, 1, @removed, @total, @failed) WITH NOWAIT;
+    RAISERROR('Finished: %I64d of %I64d removed (%I64d failed)', 0, 1, @removed, @removal_count, @failed) WITH NOWAIT;
 
 END;
 GO
