@@ -53,7 +53,7 @@ ALTER PROCEDURE
     @start_date datetimeoffset(7) = NULL, /*Begin date for events*/
     @end_date datetimeoffset(7) = NULL, /*End date for events*/
     @warnings_only bit = 0, /*Only show results from recorded warnings*/
-    @database_name sysname = NULL, /*Filter to a specific database for blocking)*/
+    @database_name sysname = NULL, /*Filter to a specific database for blocking*/
     @wait_duration_ms bigint = 500, /*Minimum duration to show query waits*/
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
     @skip_locks bit = 0, /*Skip the blocking and deadlocks*/
@@ -221,9 +221,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     DECLARE
-        @sql nvarchar(MAX) =
+        @sql nvarchar(max) =
             N'',
-        @params nvarchar(MAX) =
+        @params nvarchar(max) =
             N'@start_date datetimeoffset(7),
               @end_date datetimeoffset(7)',
         @azure bit  =
@@ -253,15 +253,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @dbid integer =
             DB_ID(@database_name),
         @timestamp_utc_mode tinyint,
-        @sql_template nvarchar(MAX) = N'',
-        @time_filter nvarchar(MAX) = N'',
-        @cross_apply nvarchar(MAX) = N'',
+        @sql_template nvarchar(max) = N'',
+        @time_filter nvarchar(max) = N'',
+        @cross_apply nvarchar(max) = N'',
         @collection_cursor CURSOR,
         @area_name varchar(20),
         @object_name sysname,
         @temp_table sysname,
         @insert_list sysname,
-        @collection_sql nvarchar(MAX),
+        @collection_sql nvarchar(max),
         /*
         Log to table stuff.
 
@@ -286,14 +286,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @log_table_blocking nvarchar(776),
         @log_table_deadlocks nvarchar(776),
         @cleanup_date datetime2(7),
-        @check_sql nvarchar(MAX) = N'',
-        @create_sql nvarchar(MAX) = N'',
-        @insert_sql nvarchar(MAX) = N'',
+        @check_sql nvarchar(max) = N'',
+        @create_sql nvarchar(max) = N'',
+        @insert_sql nvarchar(max) = N'',
         @log_database_schema nvarchar(1024),
         @max_event_time datetime2(7),
-        @dsql nvarchar(MAX) = N'',
-        @mdsql_template nvarchar(MAX) = N'',
-        @mdsql_execute nvarchar(MAX) = N'',
+        @dsql nvarchar(max) = N'',
+        @mdsql_template nvarchar(max) = N'',
+        @mdsql_execute nvarchar(max) = N'',
         @start_date_debug nvarchar(50),
         @end_date_debug nvarchar(50);
 
@@ -2599,9 +2599,26 @@ AND   ca.utc_timestamp < @end_date';
                     '19000101'
                 ),
             td.wait_type,
-            td.waits,
-            td.average_wait_time_ms,
-            td.max_wait_time_ms
+            /*
+            Weighted average rather than AVG(avg), same reasoning as #tc:
+            td.average_wait_time_ms is already a per-event average, so
+            aggregating by the raw metric columns (the prior GROUP BY) was
+            a no-op dedup, not an aggregation - a wait_type recurring with
+            identical metrics across buckets would vanish after its first
+            bucket, and a bucket with multiple distinct readings would
+            surface as un-combined duplicate rows instead of one summary
+            row. NULLIF keeps us safe if every contributing row had
+            waits = 0.
+            */
+            waits = SUM(CONVERT(bigint, td.waits)),
+            average_wait_time_ms =
+                CONVERT
+                (
+                    bigint,
+                    SUM(CONVERT(decimal(38, 2), td.average_wait_time_ms) * CONVERT(decimal(38, 2), td.waits))
+                  / NULLIF(SUM(CONVERT(decimal(38, 2), td.waits)), 0)
+                ),
+            max_wait_time_ms = CONVERT(bigint, MAX(td.max_wait_time_ms))
         INTO #td
         FROM #topwaits_duration AS td
         GROUP BY
@@ -2617,10 +2634,7 @@ AND   ca.utc_timestamp < @end_date';
                 ) / @wait_round_interval_minutes *
                     @wait_round_interval_minutes,
                 '19000101'
-            ),
-            td.waits,
-            td.average_wait_time_ms,
-            td.max_wait_time_ms
+            )
         OPTION(RECOMPILE, MAXDOP 1);
 
         /* Waits by duration logging section */
@@ -2667,85 +2681,41 @@ AND   ca.utc_timestamp < @end_date';
                         ELSE N'finding = ''waits by duration'','
                     END +
               N'
-                x.event_time_rounded,
-                x.wait_type,
-                x.average_wait_time_ms,
-                x.max_wait_time_ms
-            FROM
-            (
-                SELECT
-                    t.finding,
-                    t.event_time_rounded,
-                    t.wait_type,
-                    waits =
-                        REPLACE
+                t.event_time_rounded,
+                t.wait_type,
+                average_wait_time_ms =
+                    REPLACE
+                    (
+                        CONVERT
                         (
+                            nvarchar(30),
                             CONVERT
                             (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    t.waits
-                                ),
-                                1
+                                money,
+                                t.average_wait_time_ms
                             ),
-                        N''.00'',
-                        N''''
+                            1
                         ),
-                    average_wait_time_ms =
-                        REPLACE
+                    N''.00'',
+                    N''''
+                    ),
+                max_wait_time_ms =
+                    REPLACE
+                    (
+                        CONVERT
                         (
+                            nvarchar(30),
                             CONVERT
                             (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    t.average_wait_time_ms
-                                ),
-                                1
-                            ),
-                        N''.00'',
-                        N''''
-                        ),
-                    max_wait_time_ms =
-                        REPLACE
-                        (
-                            CONVERT
-                            (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    t.max_wait_time_ms
-                                ),
-                                1
-                            ),
-                        N''.00'',
-                        N''''
-                        ),
-                    s =
-                        ROW_NUMBER() OVER
-                        (
-                            ORDER BY
-                                t.event_time_rounded DESC,
-                                t.waits DESC
-                        ),
-                    n =
-                        ROW_NUMBER() OVER
-                        (
-                            PARTITION BY
-                                t.wait_type,
-                                t.waits,
-                                t.average_wait_time_ms,
+                                money,
                                 t.max_wait_time_ms
-                            ORDER BY
-                                t.event_time_rounded
-                        )
-                FROM #td AS t
-            ) AS x
-            WHERE x.n = 1';
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    )
+            FROM #td AS t';
 
             /* Add the WHERE clause only for table logging */
             IF @log_to_table = 1
@@ -2779,13 +2749,14 @@ AND   ca.utc_timestamp < @end_date';
                     @max_event_time OUTPUT;
 
                 SET @dsql += N'
-            AND x.event_time_rounded > @max_event_time';
+            WHERE t.event_time_rounded > @max_event_time';
             END;
 
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
-                x.s
+                t.event_time_rounded DESC,
+                t.waits DESC
             OPTION(RECOMPILE);
             ';
 
@@ -5270,12 +5241,11 @@ AND   ca.utc_timestamp < @end_date';
             last_tran_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
             xdes = bd.value('(process/@XDES)[1]', 'sysname'),
             lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-            activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
+            activity = 'blocked',
             blocked_process_report = bd.query('.')
         INTO #blocked
         FROM #blocking_xml AS bx
-        OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-        OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+        OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocked-process') AS bd(bd)
         WHERE bd.exist('process/@spid') = 1
         AND   (bd.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE, MAXDOP 1);
@@ -5347,12 +5317,11 @@ AND   ca.utc_timestamp < @end_date';
             last_tran_started = bg.value('(process/@lasttranstarted)[1]', 'datetime2'),
             xdes = bg.value('(process/@XDES)[1]', 'sysname'),
             lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-            activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
+            activity = 'blocking',
             blocked_process_report = bg.query('.')
         INTO #blocking
         FROM #blocking_xml AS bx
-        OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-        OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+        OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocking-process') AS bg(bg)
         WHERE bg.exist('process/@spid') = 1
         AND   (bg.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE, MAXDOP 1);
@@ -5782,7 +5751,7 @@ AND   ca.utc_timestamp < @end_date';
                     'available plans for blocking',
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(MAX)),
+                    TRY_CAST(b.query_text AS nvarchar(max)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
@@ -5801,7 +5770,7 @@ AND   ca.utc_timestamp < @end_date';
                     CONVERT(varchar(30), 'available plans for blocking'),
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(MAX)),
+                    TRY_CAST(b.query_text AS nvarchar(max)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
