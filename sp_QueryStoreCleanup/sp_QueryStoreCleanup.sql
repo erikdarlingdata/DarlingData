@@ -240,6 +240,7 @@ SOFTWARE.
         @sql nvarchar(max) = N'',
         @database_name_quoted sysname = N'',
         @actual_state integer = NULL,
+        @has_query_store_hints bit = 0,
         @include_system bit = 0,
         @include_maintenance bit = 0,
         @include_custom bit = 0,
@@ -330,6 +331,24 @@ OPTION(RECOMPILE);';
     BEGIN
         RAISERROR('Query Store is in ERROR state for database %s. Cleanup cannot run until Query Store is recovered (see sys.database_query_store_options.readonly_reason).', 16, 1, @database_name) WITH NOWAIT;
         RETURN;
+    END;
+
+    /*
+    sys.query_store_query_hints is SQL Server 2022+ only (same probe pattern
+    sp_QuickieStore uses for its 2022-era catalog views). A query with a
+    forced hint gets the same removal protection as a query with a forced
+    plan, but only where the view exists to check.
+    */
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM sys.all_objects AS ao
+        WHERE ao.name = N'query_store_query_hints'
+    )
+    BEGIN
+        SELECT
+            @has_query_store_hints = 1;
     END;
 
     /*
@@ -592,6 +611,18 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 WHERE qsp.is_forced_plan = 0' +
         CASE
+            WHEN @has_query_store_hints = 1
+            THEN N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+          WHERE qsqh.query_id = qsq.query_id
+      )'
+            ELSE N''
+        END +
+        CASE
             WHEN @no_text_filter = 0
             THEN N'
 AND   EXISTS
@@ -656,6 +687,18 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 WHERE qsp.is_forced_plan = 0' +
         CASE
+            WHEN @has_query_store_hints = 1
+            THEN N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+          WHERE qsqh.query_id = qsq.query_id
+      )'
+            ELSE N''
+        END +
+        CASE
             WHEN @no_text_filter = 0
             THEN N'
 AND   EXISTS
@@ -708,7 +751,7 @@ OPTION(RECOMPILE);';
 
     /*
     Build removal filters applied to both Step 4 paths:
-    forced plan protection + optional age filter
+    forced plan protection + forced hint protection + optional age filter
     */
     SELECT
         @removal_filters = N'
@@ -720,6 +763,19 @@ AND   NOT EXISTS
           WHERE qsp_forced.query_id = qsq.query_id
           AND   qsp_forced.is_forced_plan = 1
       )';
+
+    IF @has_query_store_hints = 1
+    BEGIN
+        SELECT
+            @removal_filters += N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh_forced
+          WHERE qsqh_forced.query_id = qsq.query_id
+      )';
+    END;
 
     IF @min_age_days IS NOT NULL
     BEGIN
@@ -765,7 +821,7 @@ WHERE EXISTS
           FROM #text_targets AS tt
           WHERE tt.query_text_id = qsq.query_text_id
       )' + @removal_filters + N'
-OPTION(RECOMPILE);';
+OPTION(RECOMPILE, HASH JOIN);';
     END;
     ELSE
     BEGIN
@@ -820,7 +876,7 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 WHERE EXISTS
       (' + @exists_clause + N'
       )' + @removal_filters + N'
-OPTION(RECOMPILE);';
+OPTION(RECOMPILE, HASH JOIN);';
     END;
 
     IF @debug = 1

@@ -8,7 +8,7 @@ This procedure identifies and removes duplicate and noisy queries from Query Sto
 
 By default, it targets system queries (`FROM sys.%`), maintenance operations (index rebuilds, statistics updates, DBCC commands, etc.), and removes all copies of duplicated query and plan hashes. You can customize what to target, how to deduplicate, and whether to just report or actually remove.
 
-Queries with forced plans are always protected from removal.
+Queries with forced plans are always protected from removal. On SQL Server 2022 or later, the same protection applies to a query with a forced Query Store hint.
 
 ## Parameters
 
