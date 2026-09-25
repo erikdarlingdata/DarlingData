@@ -3254,7 +3254,8 @@ BEGIN
         Cycle guard: skip a row whose blocked_desc already appears in the
         accumulated sort_order. Two sessions can briefly appear to block each
         other in the same monitor_loop (before the deadlock monitor fires),
-        and without a guard the recursion has no exit. The sort_order string
+        and without a guard the recursion never ends on its own: it hits the
+        recursion limit and the statement fails with Msg 530. The sort_order string
         contains every (SPID:ECID) we've visited on this branch; checking for
         the candidate blocked_desc before we follow it prevents the cycle.
         */
@@ -3271,10 +3272,10 @@ BEGIN
       AND h.blocking_desc = b.blocking_desc
       AND h.blocked_desc = b.blocked_desc
     /*
-    MAXRECURSION 100 (the default) is plenty for real blocking chains and
+    MAXRECURSION 100 is the default, spelled out to match
+    sp_HumanEventsBlockViewer. It is plenty for real blocking chains and
     still acts as a backstop if the cycle guard above is ever bypassed by
-    a blocked_desc that doesn't format the same way as expected. Reverted
-    from MAXRECURSION 0 which gave the runaway case no ceiling at all.
+    a blocked_desc that doesn't format the same way as expected.
     */
     OPTION(RECOMPILE, MAXRECURSION 100);
 
