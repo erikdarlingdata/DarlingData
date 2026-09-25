@@ -4850,7 +4850,8 @@ SELECT
                 END +
                 NCHAR(10) +
                 CASE
-                    WHEN qsrs.context_settings = N''
+                    WHEN qsrs.context_settings IS NULL
+                    OR   qsrs.context_settings = N''
                     THEN N''
                     ELSE
                         N'SET' +
