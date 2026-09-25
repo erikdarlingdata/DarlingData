@@ -1831,9 +1831,9 @@ OPTION(RECOMPILE, MAXDOP 1);';
         query_type = totals.query_type,
         database_name = DB_NAME(totals.database_id),
         object_name =
-            OBJECT_SCHEMA_NAME(totals.object_id, totals.database_id) +
+            QUOTENAME(OBJECT_SCHEMA_NAME(totals.object_id, totals.database_id)) +
             N'.' +
-            OBJECT_NAME(totals.object_id, totals.database_id),
+            QUOTENAME(OBJECT_NAME(totals.object_id, totals.database_id)),
         plan_count = totals.plan_count,
         total_executions = totals.total_executions,
         total_cpu_ms = totals.total_cpu_ms,
