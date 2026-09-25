@@ -3640,7 +3640,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                                 ''''
                             ) +
                             ''</x>''
-                        ).query(''.'')
+                        )
             ) AS ids
                 CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
@@ -3686,7 +3686,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                                 ''''
                             ) +
                             ''</x>''
-                        ).query(''.'')
+                        )
             ) AS ids
                 CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
@@ -11409,8 +11409,8 @@ BEGIN
                      WHEN 'writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
-                     WHEN 'log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
-                     WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
+                     WHEN 'log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
+                     WHEN 'tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      /* count_executions per interval is meaningful as a plain mean — it''s a count, not an average-of-averages. */
                      WHEN 'executions' THEN N'AVG(CONVERT(float, qsrs.count_executions))'
                      WHEN 'rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
@@ -11420,8 +11420,8 @@ BEGIN
                      WHEN 'total writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions)'
                      WHEN 'total duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions)'
                      WHEN 'total memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions)'
-                     WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
-                     WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
+                     WHEN 'total log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)'
+                     WHEN 'total tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)'
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
                      /* Waits and the fallback path — waits are per-interval totals so AVG is correct; fallback mirrors cpu path. */
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
@@ -11529,8 +11529,8 @@ BEGIN
                      WHEN 'writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
-                     WHEN 'log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
-                     WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
+                     WHEN 'log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
+                     WHEN 'tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'executions' THEN N'AVG(CONVERT(float, qsrs.count_executions))'
                      WHEN 'rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'total cpu' THEN N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)'
@@ -11539,8 +11539,8 @@ BEGIN
                      WHEN 'total writes' THEN N'SUM(qsrs.avg_logical_io_writes * qsrs.count_executions)'
                      WHEN 'total duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions)'
                      WHEN 'total memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions)'
-                     WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
-                     WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
+                     WHEN 'total log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)'
+                     WHEN 'total tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)'
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                 END
@@ -11670,8 +11670,8 @@ BEGIN
                      WHEN 'writes' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'duration' THEN N'hashes_with_changes.change_since_regression_time_period / 1000.'
                      WHEN 'memory' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
-                     WHEN 'log' THEN CASE WHEN @new = 1 THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
-                     WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
+                     WHEN 'log' THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.'
+                     WHEN 'tempdb' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'executions' THEN N'hashes_with_changes.change_since_regression_time_period'
                      WHEN 'rows' THEN N'hashes_with_changes.change_since_regression_time_period'
                      WHEN 'total cpu' THEN N'hashes_with_changes.change_since_regression_time_period / 1000.'
@@ -11680,10 +11680,10 @@ BEGIN
                      WHEN 'total writes' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'total duration' THEN N'hashes_with_changes.change_since_regression_time_period / 1000.'
                      WHEN 'total memory' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
-                     WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
-                     WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
+                     WHEN 'total log' THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.'
+                     WHEN 'total tempdb' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'total rows' THEN N'hashes_with_changes.change_since_regression_time_period'
-                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'hashes_with_changes.change_since_regression_time_period / 1000.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
+                     ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.'
                 END
             ELSE N'hashes_with_changes.change_since_regression_time_period' END
         + N'
@@ -11889,8 +11889,8 @@ BEGIN
          WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
          WHEN 'duration' THEN N'qsrs.avg_duration'
          WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
-         WHEN 'log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used' ELSE N'qsrs.avg_cpu_time' END
-         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
+         WHEN 'log' THEN N'qsrs.avg_log_bytes_used'
+         WHEN 'tempdb' THEN N'qsrs.avg_tempdb_space_used'
          WHEN 'executions' THEN N'qsrs.count_executions'
          WHEN 'recent' THEN N'qsrs.last_execution_time'
          WHEN 'rows' THEN N'qsrs.avg_rowcount'
@@ -11900,8 +11900,8 @@ BEGIN
          WHEN 'total writes' THEN N'qsrs.avg_logical_io_writes * qsrs.count_executions'
          WHEN 'total duration' THEN N'qsrs.avg_duration * qsrs.count_executions'
          WHEN 'total memory' THEN N'qsrs.avg_query_max_used_memory * qsrs.count_executions'
-         WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
-         WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
+         WHEN 'total log' THEN N'qsrs.avg_log_bytes_used * qsrs.count_executions'
+         WHEN 'total tempdb' THEN N'qsrs.avg_tempdb_space_used * qsrs.count_executions'
          WHEN 'total rows' THEN N'qsrs.avg_rowcount * qsrs.count_executions'
          ELSE N'qsrs.avg_cpu_time'
     END +
@@ -12319,8 +12319,8 @@ SELECT
              WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
              WHEN 'duration' THEN N'qsrs.avg_duration'
              WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
-             WHEN 'log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used' ELSE N'qsrs.avg_cpu_time' END
-             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
+             WHEN 'log' THEN N'qsrs.avg_log_bytes_used'
+             WHEN 'tempdb' THEN N'qsrs.avg_tempdb_space_used'
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
              WHEN 'rows' THEN N'qsrs.avg_rowcount'
@@ -12330,8 +12330,8 @@ SELECT
              WHEN 'total writes' THEN N'qsrs.avg_logical_io_writes * qsrs.count_executions'
              WHEN 'total duration' THEN N'qsrs.avg_duration * qsrs.count_executions'
              WHEN 'total memory' THEN N'qsrs.avg_query_max_used_memory * qsrs.count_executions'
-             WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_log_bytes_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
-             WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used * qsrs.count_executions' ELSE N'qsrs.avg_cpu_time * qsrs.count_executions' END
+             WHEN 'total log' THEN N'qsrs.avg_log_bytes_used * qsrs.count_executions'
+             WHEN 'total tempdb' THEN N'qsrs.avg_tempdb_space_used * qsrs.count_executions'
              WHEN 'total rows' THEN N'qsrs.avg_rowcount * qsrs.count_executions'
              WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
                 hashes.query_hash'
@@ -14776,8 +14776,8 @@ ORDER BY
                   WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
                   WHEN 'duration' THEN N'x.avg_duration_ms'
                   WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
-                  WHEN 'log' THEN CASE WHEN @new = 1 THEN N'x.avg_log_bytes_used_mb' ELSE N'x.avg_cpu_time_ms' END
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time_ms' END
+                  WHEN 'log' THEN N'x.avg_log_bytes_used_mb'
+                  WHEN 'tempdb' THEN N'x.avg_tempdb_space_used_mb'
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'x.avg_rowcount'
@@ -14787,8 +14787,8 @@ ORDER BY
                   WHEN 'total writes' THEN N'x.total_logical_io_writes_mb'
                   WHEN 'total duration' THEN N'x.total_duration_ms'
                   WHEN 'total memory' THEN N'x.total_query_max_used_memory_mb'
-                  WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'x.total_log_bytes_used_mb' ELSE N'x.total_cpu_time_ms' END
-                  WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'x.total_tempdb_space_used_mb' ELSE N'x.total_cpu_time_ms' END
+                  WHEN 'total log' THEN N'x.total_log_bytes_used_mb'
+                  WHEN 'total tempdb' THEN N'x.total_tempdb_space_used_mb'
                   WHEN 'total rows' THEN N'x.total_rowcount'
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC,
     x.query_hash_from_hash_counting'
@@ -14823,8 +14823,8 @@ ORDER BY
                   WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS decimal(19,2))'
                   WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS decimal(19,2))'
                   WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS decimal(19,2))'
-                  WHEN 'log' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_log_bytes_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
+                  WHEN 'log' THEN N'TRY_PARSE(x.avg_log_bytes_used_mb AS decimal(19,2))'
+                  WHEN 'tempdb' THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS decimal(19,2))'
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS decimal(19,2))'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS decimal(19,2))'
@@ -14834,8 +14834,8 @@ ORDER BY
                   WHEN 'total writes' THEN N'TRY_PARSE(x.total_logical_io_writes_mb AS decimal(19,2))'
                   WHEN 'total duration' THEN N'TRY_PARSE(x.total_duration_ms AS decimal(19,2))'
                   WHEN 'total memory' THEN N'TRY_PARSE(x.total_query_max_used_memory_mb AS decimal(19,2))'
-                  WHEN 'total log' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.total_log_bytes_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.total_cpu_time_ms AS decimal(19,2))' END
-                  WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.total_tempdb_space_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.total_cpu_time_ms AS decimal(19,2))' END
+                  WHEN 'total log' THEN N'TRY_PARSE(x.total_log_bytes_used_mb AS decimal(19,2))'
+                  WHEN 'total tempdb' THEN N'TRY_PARSE(x.total_tempdb_space_used_mb AS decimal(19,2))'
                   WHEN 'total rows' THEN N'TRY_PARSE(x.total_rowcount AS decimal(19,2))'
                   WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS decimal(19,2)) DESC,
     x.query_hash_from_hash_counting'
