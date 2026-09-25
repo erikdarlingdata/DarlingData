@@ -2985,9 +2985,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN mf.physical_name LIKE N''http%''
                 THEN mf.physical_name
-                WHEN mf.physical_name LIKE N''\\\\%''
+                WHEN mf.physical_name LIKE N''\\%''
                 THEN N''UNC: '' +
-                     SUBSTRING(mf.physical_name, 3, CHARINDEX(N''\\'', mf.physical_name, 3) - 3)
+                     SUBSTRING(mf.physical_name, 3, CHARINDEX(N''\'', mf.physical_name, 3) - 3)
                 ELSE UPPER(LEFT(mf.physical_name, 2))
             END,
         physical_name = mf.physical_name
@@ -4752,7 +4752,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 database_name = @current_database_name,
                 details =
                     CASE
-                        WHEN qso.max_storage_size_mb < 1024
+                        WHEN qso.max_storage_size_mb < 1000
                         THEN N''Query Store max size ('' +
                              CONVERT(nvarchar(20), qso.max_storage_size_mb) +
                              '' MB) is less than 1 GB. This may be too small for production databases.''
@@ -5276,6 +5276,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url = N''https://erikdarling.com/sp_perfcheck/#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
+            AND   mf.type_desc IN (N''ROWS'', N''LOG'')
             AND   mf.growth * CONVERT(decimal(18, 2), 8.0) /
                   CONVERT(decimal(18, 2), 1024.0) /
                   CONVERT(decimal(18, 2), 1024.0) > 10.0; /* Growth > 10GB */';
