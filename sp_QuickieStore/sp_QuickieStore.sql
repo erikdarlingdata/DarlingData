@@ -1859,10 +1859,10 @@ VALUES
     (20, 'metadata', 'force_count', 'force_failure_count', 'qsp.force_failure_count', 0, NULL, NULL, 0, NULL),
     (30, 'metadata', 'force_reason', 'last_force_failure_reason_desc', 'qsp.last_force_failure_reason_desc', 0, NULL, NULL, 0, NULL),
     /* SQL 2022 specific columns */
-    (40, 'sql_2022', 'feedback', 'has_query_feedback', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
-    (50, 'sql_2022', 'hints', 'has_query_store_hints', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
+    (40, 'sql_2022', 'feedback', 'has_query_feedback', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id AND qspf.database_id = qsp.database_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
+    (50, 'sql_2022', 'hints', 'has_query_store_hints', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id AND qsqh.database_id = qsp.database_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
     (55, 'sql_2022', 'hints', 'set_query_store_hints', '''EXECUTE ''+ QUOTENAME(DB_NAME(qsp.database_id)) + ''.sys.sp_query_store_set_hints @query_id = '' + CONVERT(nvarchar(20), qsq.query_id) + '', @query_hints = N''''OPTION(older_hints_go_here, USE HINT(''''''''newer_hints_go_here''''''''))'''';''', 1, 'sql_2022_views', 1, 1, NULL),
-    (60, 'sql_2022', 'variants', 'has_plan_variants', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
+    (60, 'sql_2022', 'variants', 'has_plan_variants', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id AND qsqv.database_id = qsp.database_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
     (70, 'sql_2022', 'replay', 'has_compile_replay_script', 'qsp.has_compile_replay_script', 1, 'sql_2022_views', 1, 0, NULL),
     (80, 'sql_2022', 'opt_forcing', 'is_optimized_plan_forcing_disabled', 'qsp.is_optimized_plan_forcing_disabled', 1, 'sql_2022_views', 1, 0, NULL),
     (90, 'sql_2022', 'plan_type', 'plan_type_desc', 'qsp.plan_type_desc', 1, 'sql_2022_views', 1, 0, NULL),
@@ -11435,6 +11435,7 @@ BEGIN
       ON qsp.plan_id = qsrs.plan_id
     LEFT JOIN #plan_ids_with_total_waits AS waits
       ON  qsp.plan_id = waits.plan_id
+      AND waits.database_id = @database_id
       AND waits.from_regression_baseline = ''Yes''
     WHERE 1 = 1
     ' + @regression_where_clause
@@ -11552,6 +11553,7 @@ BEGIN
       ON qsp.plan_id = qsrs.plan_id
     LEFT JOIN #plan_ids_with_total_waits AS waits
       ON  qsp.plan_id = waits.plan_id
+      AND waits.database_id = @database_id
       AND waits.from_regression_baseline = ''No''
     WHERE 1 = 1
     AND EXISTS
@@ -13581,6 +13583,7 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan AS qsp
           WHERE plan_force_flat.regressed_plan_id = qsp.plan_id
+          AND   qsp.database_id = @database_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -13846,6 +13849,7 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan AS qsp
           WHERE qspf.plan_id = qsp.plan_id
+          AND   qsp.database_id = @database_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -13920,6 +13924,7 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan AS qsp
           WHERE qsqv.query_variant_query_id = qsp.query_id
+          AND   qsp.database_id = @database_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -13993,6 +13998,7 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan AS qsp
           WHERE qsqh.query_id = qsp.query_id
+          AND   qsp.database_id = @database_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -14070,6 +14076,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qspfl.query_id = qsp.query_id
           AND   qspfl.plan_id = qsp.plan_id
+          AND   qsp.database_id = @database_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -14141,6 +14148,7 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan_forcing_locations AS qspfl
           WHERE qspfl.replica_group_id = qsr.replica_group_id
+          AND   qspfl.database_id = @database_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -14220,6 +14228,7 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan AS qsp
           WHERE TRY_CAST(datc.type_value AS bigint) = qsp.query_id
+          AND   qsp.database_id = @database_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -15186,7 +15195,8 @@ BEGIN
                         qspfl.replica_group_id
                     FROM #query_store_replicas AS qsr
                     JOIN #query_store_plan_forcing_locations AS qspfl
-                      ON qsr.replica_group_id = qspfl.replica_group_id
+                      ON  qsr.replica_group_id = qspfl.replica_group_id
+                      AND qsr.database_id = qspfl.database_id
                     ORDER BY
                         qsr.replica_group_id
                     OPTION(RECOMPILE);
@@ -16068,6 +16078,7 @@ BEGIN
                       ON  qsp.query_id = qsq.query_id
                       AND qsp.database_id = qsq.database_id
                     WHERE qsws.plan_id = qsrs.plan_id
+                    AND   qsws.database_id = qsrs.database_id
                 ) AS x
                 GROUP BY
                     qsws.wait_category_desc,
