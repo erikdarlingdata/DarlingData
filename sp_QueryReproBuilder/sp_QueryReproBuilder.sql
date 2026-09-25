@@ -4000,13 +4000,13 @@ SELECT
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
     avg_query_wait_time_ms =
-        SUM(qsws_with_lasts.avg_query_wait_time_ms),
+        AVG(qsws_with_lasts.avg_query_wait_time_ms),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
-        SUM(qsws_with_lasts.min_query_wait_time_ms),
+        MIN(qsws_with_lasts.min_query_wait_time_ms),
     max_query_wait_time_ms =
-        SUM(qsws_with_lasts.max_query_wait_time_ms)
+        MAX(qsws_with_lasts.max_query_wait_time_ms)
 FROM
 (
     SELECT
@@ -4025,15 +4025,24 @@ FROM
     FROM #query_store_runtime_stats AS qsrs
     CROSS APPLY
     (
-        SELECT TOP (5)
+        /*
+        Pull every wait category captured for this (interval, plan).
+        A previous TOP (5) ORDER BY avg_query_wait_time_ms DESC here
+        dropped wait categories ranked 6+ per interval before the outer
+        GROUP BY ran, so a category that was (say) 6th worst in one
+        interval but 2nd worst in another would silently have the first
+        interval''s contribution missing from its totals. The outer
+        aggregation groups by (plan_id, wait_category_desc) and the
+        number of wait categories per interval is capped by QS at a
+        small set, so removing the TOP does not explode row counts.
+        */
+        SELECT
             qsws.*
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
         WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
         AND   qsws.plan_id = qsrs.plan_id
         AND   qsws.wait_category > 0
         AND   qsws.min_query_wait_time_ms > 0
-        ORDER BY
-            qsws.avg_query_wait_time_ms DESC
     ) AS qsws
     WHERE qsrs.database_id = @database_id
 ) AS qsws_with_lasts
@@ -4840,14 +4849,16 @@ SELECT
                     ELSE N''
                 END +
                 NCHAR(10) +
-                ISNULL
-                (
-                    N'SET' +
-                    REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
-                    N' ON;' +
-                    NCHAR(10),
-                    N''
-                ) +
+                CASE
+                    WHEN qsrs.context_settings IS NULL
+                    OR   qsrs.context_settings = N''
+                    THEN N''
+                    ELSE
+                        N'SET' +
+                        REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
+                        N' ON;' +
+                        NCHAR(10)
+                END +
                 ISNULL
                 (
                     N'SET LANGUAGE ' +
@@ -4860,12 +4871,12 @@ SELECT
                 (
                     N'SET DATEFORMAT ' +
                     CASE qcs.date_format
-                         WHEN 0 THEN N'mdy'
-                         WHEN 1 THEN N'dmy'
-                         WHEN 2 THEN N'ymd'
-                         WHEN 3 THEN N'ydm'
-                         WHEN 4 THEN N'myd'
-                         WHEN 5 THEN N'dym'
+                         WHEN 1 THEN N'mdy'
+                         WHEN 2 THEN N'dmy'
+                         WHEN 3 THEN N'ymd'
+                         WHEN 4 THEN N'ydm'
+                         WHEN 5 THEN N'myd'
+                         WHEN 6 THEN N'dym'
                          ELSE N'mdy'
                     END +
                     N';' +
