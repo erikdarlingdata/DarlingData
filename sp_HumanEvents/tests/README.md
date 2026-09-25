@@ -41,7 +41,7 @@ Two levers in the proc make that deterministic and fast, with no slow captures:
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Drives `dbo.sp_HumanEvents` over `sqlcmd`, exercising every accepted `@event_type` and a representative filter matrix with `@keep_alive = 1`, and asserts **195** expectations across seven groups. Self-cleaning and idempotent. |
+| `run_tests.py` | Drives `dbo.sp_HumanEvents` over `sqlcmd`, exercising every accepted `@event_type` and a representative filter matrix with `@keep_alive = 1`, and asserts **203** expectations across seven groups. Self-cleaning and idempotent. |
 
 ```
 cd sp_HumanEvents/tests
@@ -49,7 +49,7 @@ python run_tests.py --server SQL2022
 ```
 
 `--server` and `--password` default to `SQL2022` / the standard local `sa`
-password. Expect `195 passed, 0 failed`. The proc must be installed in `master`
+password. Expect `203 passed, 0 failed`. The proc must be installed in `master`
 on the target instance (there is a preflight that fails fast if it is not, and a
 guard that refuses Azure SQL DB, whose sessions are database-scoped).
 
@@ -104,7 +104,7 @@ quiet instance), and that the proc **dropped its own throwaway session**: the
 global count of `HumanEvents%` / `keeper_HumanEvents%` sessions is snapshotted
 before and after the call and must be equal.
 
-**6. Logging-to-table + cleanup (10).** `@keep_alive = 1` with
+**6. Logging-to-table + cleanup (18).** `@keep_alive = 1` with
 `@output_database_name` enters an **unbounded** collector loop that creates
 permanent tables/views for keeper sessions and harvests into them forever. The
 tables are created in the first pass (well under a second), so the harness runs
@@ -113,8 +113,14 @@ the loop **server-side** (verified: a batch cancelled this way does not keep
 running). It then asserts the base table `keeper_HumanEvents_waits` and the three
 `HumanEvents_Waits*` views were created, exercises the proc's own `@cleanup = 1`
 teardown, and asserts the proc removed the session, tables, and views itself.
-Everything is created in and dropped with a throwaway scratch database
-(`sp_HumanEvents_test_scratch`).
+A second case repeats this with `@event_type = 'query', @skip_plans = 1` and
+asserts `keeper_HumanEvents_query` and the `HumanEvents_Queries_np` view are
+created and then removed by `@cleanup = 1` -- a regression test for a bug where
+that view's `#view_check` row was inserted under the literal
+`HumanEvents_Queries` instead of `HumanEvents_Queries_np`, so the view loop's
+schema-qualify step left a stray `_np` outside the brackets and failed view
+creation with Msg 102. Everything is created in and dropped with a throwaway
+scratch database (`sp_HumanEvents_test_scratch`).
 
 **7. Session hygiene (2).** Around the whole run, `sys.server_event_sessions` is
 diffed and the suite asserts **zero net new sessions**, then confirms nothing
@@ -183,12 +189,15 @@ exercised.
 - **Blocking actually captured.** The blocking session's DDL validity is covered;
   inducing a real blocked-process-report event is not.
 
-## Not wired into CI
+## Wired into CI
 
-Like the other DarlingData behavioral suites, this is **not** part of any GitHub
-Actions workflow. It creates and drops server-global Extended Events sessions
-(and, for the blocking cases, will briefly set `blocked process threshold` if it
-is `0`, restoring it afterward), which is not something to run against shared CI
-infrastructure. Run it by hand against a test instance you own. It sweeps every
-session it creates and drops every object it creates, but it is a "run it on a
-box you control" tool by nature.
+`.github/workflows/sql-tests.yml` runs this harness on every push to `dev` and
+every pull request into `dev` or `main`, once per SQL Server version in the
+build matrix (2017, 2019, 2022, 2025). Each matrix job gets its own throwaway
+`mcr.microsoft.com/mssql/server` container, created for that job and discarded
+afterward -- not a shared or persistent instance -- so the server-global
+Extended Events sessions this suite creates and drops (and, for the blocking
+cases, the `blocked process threshold` it briefly sets if it is `0`, restoring
+it afterward) never collide with anything else. Run it by hand the same way
+against any test instance you own; `--server` and `--password` point it at
+whatever box you like.
