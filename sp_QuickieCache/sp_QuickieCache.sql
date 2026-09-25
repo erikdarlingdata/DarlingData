@@ -465,6 +465,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     Shows query hashes that have been compiled into
     multiple cached plans, sorted by plan count descending.
+
+    Grouped by (query_hash, database) rather than query_hash alone.
+    The same query text can hash identically across unrelated databases;
+    without the database in the grouping key, their plan counts and
+    resource totals would blend into one misleadingly-labeled row.
     */
     IF @find_duplicate_plans = 1
     BEGIN
@@ -504,7 +509,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             SELECT TOP (@top)
                 database_name =
-                    DB_NAME(CONVERT(integer, MAX(pa.value))),
+                    DB_NAME(CONVERT(integer, pa.value)),
                 qs.query_hash,
                 plan_count =
                     FORMAT(COUNT_BIG(DISTINCT qs.plan_handle), N'N0'),
@@ -559,7 +564,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   (@start_date IS NULL OR qs.creation_time >= @start_date)
             AND   (@end_date   IS NULL OR qs.creation_time <  @end_date)
             GROUP BY
-                qs.query_hash
+                qs.query_hash,
+                pa.value
             HAVING
                 COUNT_BIG(DISTINCT qs.plan_handle) > 1
             ORDER BY
