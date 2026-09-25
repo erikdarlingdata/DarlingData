@@ -245,6 +245,9 @@ DECLARE
     @database_name_quoted sysname =
         QUOTENAME(@database_name),
     @collation sysname,
+    @text_search_column nvarchar(200),
+    @text_search_open nvarchar(10),
+    @text_search_close nvarchar(100),
     @query_store_exists bit = 'true',
     @procedure_name_quoted nvarchar(1024),
     @procedure_exists bit = 0,
@@ -2704,6 +2707,47 @@ BEGIN
         @sql;
 END;
 
+/*
+Text searches run under a binary collation, which is several times
+cheaper than a linguistic LIKE over query_sql_text. When the database
+collation ignores case, both sides are upper-cased first so the
+matches stay the same.
+*/
+IF
+(
+    @query_text_search IS NOT NULL
+ OR @query_text_search_not IS NOT NULL
+)
+BEGIN
+    IF ISNULL
+       (
+           CONVERT
+           (
+               integer,
+               COLLATIONPROPERTY
+               (
+                   @collation,
+                   'ComparisonStyle'
+               )
+           ),
+           1
+       ) & 1 = 1
+    BEGIN
+        SELECT
+            @text_search_column = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+            @text_search_open = N'UPPER(';
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @text_search_column = N'qsqt.query_sql_text COLLATE Latin1_General_100_BIN2',
+            @text_search_open = N'(';
+    END;
+
+    SELECT
+        @text_search_close = N') COLLATE Latin1_General_100_BIN2';
+END;
+
 /*Process @query_text_search parameter*/
 IF @query_text_search IS NOT NULL
 BEGIN
@@ -2768,7 +2812,7 @@ BEGIN
                           1/0
                       FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                       WHERE qsqt.query_text_id = qsq.query_text_id
-                      AND   qsqt.query_sql_text LIKE @query_text_search
+                      AND   ' + @text_search_column + N' LIKE ' + @text_search_open + N'@query_text_search' + @text_search_close + N'
                   )
           )';
 
@@ -2898,7 +2942,7 @@ BEGIN
                           1/0
                       FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                       WHERE qsqt.query_text_id = qsq.query_text_id
-                      AND   qsqt.query_sql_text LIKE @query_text_search_not
+                      AND   ' + @text_search_column + N' LIKE ' + @text_search_open + N'@query_text_search_not' + @text_search_close + N'
                   )
           )';
 

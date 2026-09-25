@@ -2205,6 +2205,9 @@ DECLARE
     @database_name_quoted sysname,
     @procedure_name_quoted nvarchar(1024),
     @collation sysname,
+    @text_search_column nvarchar(200),
+    @text_search_open nvarchar(10),
+    @text_search_close nvarchar(100),
     @new bit,
     @sql nvarchar(max),
     @isolation_level nvarchar(max),
@@ -10207,6 +10210,58 @@ OPTION(RECOMPILE);' + @nc10;
        )' + @nc10;
 END;
 
+/*
+Text searches run under a binary collation, which is several times
+cheaper than a linguistic LIKE over query_sql_text. When the database
+collation ignores case, both sides are upper-cased first so the
+matches stay the same.
+*/
+IF
+(
+    @query_text_search IS NOT NULL
+ OR @query_text_search_not IS NOT NULL
+)
+BEGIN
+    IF ISNULL
+       (
+           CONVERT
+           (
+               integer,
+               COLLATIONPROPERTY
+               (
+                   @collation,
+                   'ComparisonStyle'
+               )
+           ),
+           1
+       ) & 1 = 1
+    BEGIN
+        SELECT
+            @text_search_column = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+            @text_search_open = N'UPPER(';
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @text_search_column = N'qsqt.query_sql_text COLLATE Latin1_General_100_BIN2',
+            @text_search_open = N'(';
+    END;
+
+    SELECT
+        @text_search_close = N') COLLATE Latin1_General_100_BIN2' +
+            CASE
+                WHEN @escape_brackets = 1
+                THEN N' ESCAPE ''' +
+                     CASE
+                         WHEN @text_search_open = N'UPPER('
+                         THEN UPPER(@escape_character)
+                         ELSE @escape_character
+                     END +
+                     N''''
+                ELSE N''
+            END;
+END;
+
 IF @query_text_search IS NOT NULL
 BEGIN
     IF
@@ -10283,22 +10338,11 @@ WHERE EXISTS
                       1/0
                   FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                   WHERE qsqt.query_text_id = qsq.query_text_id
-                  AND   qsqt.query_sql_text LIKE @query_text_search
+                  AND   ' + @text_search_column + N' LIKE ' + @text_search_open + N'@query_text_search' + @text_search_close + N'
               )
       )';
 
-    /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
-    IF @escape_brackets = 1
-    BEGIN
-        SELECT
-            @sql =
-                REPLACE
-                (
-                    @sql,
-                    N'@query_text_search',
-                    N'@query_text_search ESCAPE ''' + @escape_character + N''''
-                );
-    END;
+    /* @text_search_close carries the ESCAPE clause when @escape_brackets = 1 */
 
 /*If we're searching by a procedure name, limit the text search to it */
 IF
@@ -10443,22 +10487,11 @@ WHERE EXISTS
                       1/0
                   FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                   WHERE qsqt.query_text_id = qsq.query_text_id
-                  AND   qsqt.query_sql_text LIKE @query_text_search_not
+                  AND   ' + @text_search_column + N' LIKE ' + @text_search_open + N'@query_text_search_not' + @text_search_close + N'
               )
       )';
 
-    /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
-    IF @escape_brackets = 1
-    BEGIN
-        SELECT
-            @sql =
-                REPLACE
-                (
-                    @sql,
-                    N'@query_text_search_not',
-                    N'@query_text_search_not ESCAPE ''' + @escape_character + N''''
-                );
-    END;
+    /* @text_search_close carries the ESCAPE clause when @escape_brackets = 1 */
 
 /*If we're searching by a procedure name, limit the text search to it */
 IF
