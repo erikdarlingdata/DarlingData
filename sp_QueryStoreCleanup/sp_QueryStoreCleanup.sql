@@ -277,7 +277,10 @@ SOFTWARE.
         @was_removed bit = 0,
         @failed bigint = 0,
         @query_store_queries bigint = 0,
-        @database_id integer = NULL;
+        @database_id integer = NULL,
+        @search_text nvarchar(200) = N'',
+        @pattern_open nvarchar(10) = N'',
+        @pattern_close nvarchar(50) = N') COLLATE Latin1_General_100_BIN2';
 
     /*
     Default database to current
@@ -538,6 +541,33 @@ OPTION(RECOMPILE);';
     IF @no_text_filter = 0
     BEGIN
         /*
+        Text search runs under a binary collation, which is several times
+        cheaper than a linguistic LIKE over query_sql_text. When the
+        database collation ignores case, both sides are upper-cased first
+        so the matches stay the same.
+        */
+        IF CONVERT
+           (
+               integer,
+               COLLATIONPROPERTY
+               (
+                   CONVERT(sysname, DATABASEPROPERTYEX(@database_name, 'Collation')),
+                   'ComparisonStyle'
+               )
+           ) & 1 = 1
+        BEGIN
+            SELECT
+                @search_text = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+                @pattern_open = N'UPPER(';
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                @search_text = N'qsqt.query_sql_text COLLATE Latin1_General_100_BIN2',
+                @pattern_open = N'(';
+        END;
+
+        /*
         Build text filter WHERE clause
         Each condition is prefixed with newline + "OR    " (7 chars)
         so we can STUFF off the leading OR and prepend WHERE
@@ -546,7 +576,7 @@ OPTION(RECOMPILE);';
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE N''%FROM sys.%''';
+OR    st.search_text LIKE ' + @pattern_open + N'N''%FROM sys.%''' + @pattern_close;
         END;
 
         /*
@@ -557,21 +587,21 @@ OR    qsqt.query_sql_text LIKE N''%FROM sys.%''';
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE N''ALTER INDEX%''
-OR    qsqt.query_sql_text LIKE N''ALTER TABLE%''
-OR    qsqt.query_sql_text LIKE N''CREATE%INDEX%''
-OR    qsqt.query_sql_text LIKE N''CREATE STATISTICS%''
-OR    qsqt.query_sql_text LIKE N''UPDATE STATISTICS%''
-OR    qsqt.query_sql_text LIKE N''%SELECT StatMan%''
-OR    qsqt.query_sql_text LIKE N''DBCC%''
-OR    qsqt.query_sql_text LIKE N''(@[_]msparam%''';
+OR    st.search_text LIKE ' + @pattern_open + N'N''ALTER INDEX%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''ALTER TABLE%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''CREATE%INDEX%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''CREATE STATISTICS%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''UPDATE STATISTICS%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''%SELECT StatMan%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''DBCC%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''(@[_]msparam%''' + @pattern_close;
         END;
 
         IF @include_custom = 1
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE @custom_query_filter';
+OR    st.search_text LIKE ' + @pattern_open + N'@custom_query_filter' + @pattern_close;
         END;
 
         /*
@@ -592,6 +622,11 @@ WITH
 SELECT
     qsqt.query_text_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+CROSS APPLY
+(
+    SELECT
+        search_text = ' + @search_text + N'
+) AS st
 ' + @text_filter + N'
 OPTION(RECOMPILE);';
 
