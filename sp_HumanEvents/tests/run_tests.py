@@ -595,6 +595,7 @@ def group_collector(server, password, R, caps):
     sweeps keeper sessions server-wide -- is invoked.)"""
     db = "sp_HumanEvents_test_scratch"
     sname = "keeper_HumanEvents_waits"
+    sname_q = "keeper_HumanEvents_query"
     drop_db = (
         "IF DB_ID('" + db + "') IS NOT NULL BEGIN "
         "ALTER DATABASE [" + db + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
@@ -678,17 +679,84 @@ def group_collector(server, password, R, caps):
         R.check("Collector", "@cleanup = 1 dropped the keeper session",
                 parse_results(out4)["gone"] is True,
                 "keeper session still present after @cleanup")
+
+        # ----- second case: query + @skip_plans = 1 ----------------------
+        # Regression test for the HumanEvents_Queries_np view-name bug: the
+        # #view_check row for the no-plans view was inserted under the
+        # literal 'HumanEvents_Queries' instead of 'HumanEvents_Queries_np',
+        # so the schema-qualify REPLACE in the view loop matched the
+        # 'HumanEvents_Queries' prefix and left a stray '_np' outside the
+        # brackets, failing view creation with Msg 102 near '_np'.
+        collector_q = (
+            "SET NOCOUNT ON; EXECUTE dbo.sp_HumanEvents "
+            "@event_type = N'query', @skip_plans = 1, @keep_alive = 1, "
+            "@output_database_name = N'" + db + "', @output_schema_name = N'dbo';"
+        )
+        out_q, err_q = _sqlcmd(server, password, collector_q,
+                               query_timeout=15, subprocess_timeout=60)
+        combined_q = out_q + "\n" + err_q
+        R.check("Collector", "collector run (query, @skip_plans = 1): no severe SQL error",
+                not find_sql_errors(combined_q), str(find_sql_errors(combined_q)))
+
+        out2_q, _ = _sqlcmd(server, password, obj_chk, database=db)
+        d_q = parse_results(out2_q)
+        R.check("Collector", "collector created base table keeper_HumanEvents_query",
+                "keeper_HumanEvents_query" in d_q["tables"],
+                "tables=%s" % sorted(d_q["tables"]))
+        R.check("Collector", "collector created the HumanEvents_Queries_np view",
+                "HumanEvents_Queries_np" in d_q["views"],
+                "views=%s" % sorted(d_q["views"]))
+
+        cleanup_q = (
+            "SET NOCOUNT ON;\n"
+            "BEGIN TRY\n"
+            "    EXECUTE dbo.sp_HumanEvents @event_type = N'query', @cleanup = 1, "
+            "@output_database_name = N'" + db + "', @output_schema_name = N'dbo';\n"
+            "    SELECT line = 'RESULT|proc_ok|1';\n"
+            "END TRY\n"
+            "BEGIN CATCH\n"
+            "    SELECT line = 'RESULT|proc_error|' + "
+            "LEFT(REPLACE(REPLACE(ERROR_MESSAGE(), CHAR(13), N' '), CHAR(10), N' '), 240);\n"
+            "END CATCH;\n"
+        )
+        outc_q, errc_q = _sqlcmd(server, password, cleanup_q)
+        dc_q = parse_results(outc_q)
+        R.check("Collector", "@cleanup = 1 (query): no severe SQL error",
+                not find_sql_errors(outc_q + "\n" + errc_q),
+                str(find_sql_errors(outc_q + "\n" + errc_q)))
+        R.check("Collector", "@cleanup = 1 (query): proc raised no error",
+                dc_q["proc_ok"] and not dc_q["proc_error"],
+                "proc_error=%s" % dc_q["proc_error"])
+
+        out3_q, _ = _sqlcmd(server, password, obj_chk, database=db)
+        d3_q = parse_results(out3_q)
+        R.check("Collector", "@cleanup = 1 removed keeper_HumanEvents_query table",
+                "keeper_HumanEvents_query" not in d3_q["tables"],
+                "tables still present: %s" % sorted(d3_q["tables"]))
+        R.check("Collector", "@cleanup = 1 removed the HumanEvents_Queries_np view",
+                "HumanEvents_Queries_np" not in d3_q["views"],
+                "views still present: %s" % sorted(d3_q["views"]))
+        out4_q, _ = _sqlcmd(server, password,
+                          "SET NOCOUNT ON; SELECT line = 'RESULT|gone|' + CONVERT(varchar(2), "
+                          "CASE WHEN EXISTS (SELECT 1 FROM sys.server_event_sessions AS s "
+                          "WHERE s.name = N'" + sname_q + "') THEN 0 ELSE 1 END);")
+        R.check("Collector", "@cleanup = 1 dropped the keeper_HumanEvents_query session",
+                parse_results(out4_q)["gone"] is True,
+                "keeper session still present after @cleanup")
     finally:
         # Safety net: drop any residual session and the scratch database even if
         # the collector or the @cleanup path failed partway through.
         _sqlcmd(server, password,
                 "SET NOCOUNT ON; "
                 "IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'" + sname + "') "
-                "DROP EVENT SESSION " + sname + " ON SERVER; " + drop_db)
+                "DROP EVENT SESSION " + sname + " ON SERVER; "
+                "IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'" + sname_q + "') "
+                "DROP EVENT SESSION " + sname_q + " ON SERVER; " + drop_db)
         out, _ = _sqlcmd(server, password,
                          "SET NOCOUNT ON; SELECT line = 'RESULT|after|' + CONVERT(varchar(11), "
                          "(SELECT COUNT_BIG(*) FROM sys.databases WHERE name = N'" + db + "') + "
-                         "(SELECT COUNT_BIG(*) FROM sys.server_event_sessions WHERE name = N'" + sname + "'));")
+                         "(SELECT COUNT_BIG(*) FROM sys.server_event_sessions WHERE name = N'" + sname + "') + "
+                         "(SELECT COUNT_BIG(*) FROM sys.server_event_sessions WHERE name = N'" + sname_q + "'));")
         left = parse_results(out)["after"]
         R.check("Collector", "cleanup: scratch database and keeper session dropped",
                 left == 0, "residual objects = %s" % left)
