@@ -96,7 +96,7 @@ BEGIN
                     WHEN N'@min_age_days'
                     THEN 'only remove queries whose last execution is older than this many days; NULL = no age filter'
                     WHEN N'@report_only'
-                    THEN 'report what would be removed without removing'
+                    THEN 'report what would be removed without removing: one summary row, then one row per query_hash, biggest first. @debug = 1 also lists every query_id'
                     WHEN N'@sort_direction'
                     THEN 'removal order by query_id. to split a long removal, run two sessions at once, one ASC and one DESC. each skips queries the other already removed'
                     WHEN N'@debug'
@@ -275,7 +275,12 @@ SOFTWARE.
         @removed bigint = 0,
         @skipped bigint = 0,
         @was_removed bit = 0,
-        @failed bigint = 0;
+        @failed bigint = 0,
+        @query_store_queries bigint = 0,
+        @database_id integer = NULL,
+        @search_text nvarchar(200) = N'',
+        @pattern_open nvarchar(10) = N'',
+        @pattern_close nvarchar(50) = N') COLLATE Latin1_General_100_BIN2';
 
     /*
     Default database to current
@@ -296,7 +301,8 @@ SOFTWARE.
     END;
 
     SELECT
-        @database_name_quoted = QUOTENAME(@database_name);
+        @database_name_quoted = QUOTENAME(@database_name),
+        @database_id = DB_ID(@database_name);
 
     /*
     Check Query Store is enabled
@@ -535,6 +541,33 @@ OPTION(RECOMPILE);';
     IF @no_text_filter = 0
     BEGIN
         /*
+        Text search runs under a binary collation, which is several times
+        cheaper than a linguistic LIKE over query_sql_text. When the
+        database collation ignores case, both sides are upper-cased first
+        so the matches stay the same.
+        */
+        IF CONVERT
+           (
+               integer,
+               COLLATIONPROPERTY
+               (
+                   CONVERT(sysname, DATABASEPROPERTYEX(@database_name, 'Collation')),
+                   'ComparisonStyle'
+               )
+           ) & 1 = 1
+        BEGIN
+            SELECT
+                @search_text = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+                @pattern_open = N'UPPER(';
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                @search_text = N'qsqt.query_sql_text COLLATE Latin1_General_100_BIN2',
+                @pattern_open = N'(';
+        END;
+
+        /*
         Build text filter WHERE clause
         Each condition is prefixed with newline + "OR    " (7 chars)
         so we can STUFF off the leading OR and prepend WHERE
@@ -543,7 +576,7 @@ OPTION(RECOMPILE);';
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE N''%FROM sys.%''';
+OR    st.search_text LIKE ' + @pattern_open + N'N''%FROM sys.%''' + @pattern_close;
         END;
 
         /*
@@ -554,21 +587,21 @@ OR    qsqt.query_sql_text LIKE N''%FROM sys.%''';
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE N''ALTER INDEX%''
-OR    qsqt.query_sql_text LIKE N''ALTER TABLE%''
-OR    qsqt.query_sql_text LIKE N''CREATE%INDEX%''
-OR    qsqt.query_sql_text LIKE N''CREATE STATISTICS%''
-OR    qsqt.query_sql_text LIKE N''UPDATE STATISTICS%''
-OR    qsqt.query_sql_text LIKE N''%SELECT StatMan%''
-OR    qsqt.query_sql_text LIKE N''DBCC%''
-OR    qsqt.query_sql_text LIKE N''(@[_]msparam%''';
+OR    st.search_text LIKE ' + @pattern_open + N'N''ALTER INDEX%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''ALTER TABLE%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''CREATE%INDEX%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''CREATE STATISTICS%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''UPDATE STATISTICS%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''%SELECT StatMan%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''DBCC%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''(@[_]msparam%''' + @pattern_close;
         END;
 
         IF @include_custom = 1
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE @custom_query_filter';
+OR    st.search_text LIKE ' + @pattern_open + N'@custom_query_filter' + @pattern_close;
         END;
 
         /*
@@ -589,6 +622,11 @@ WITH
 SELECT
     qsqt.query_text_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+CROSS APPLY
+(
+    SELECT
+        search_text = ' + @search_text + N'
+) AS st
 ' + @text_filter + N'
 OPTION(RECOMPILE);';
 
@@ -950,47 +988,244 @@ OPTION(RECOMPILE, HASH JOIN);';
     IF @report_only = 1
     BEGIN
         /*
-        Report mode: show what would be removed
+        Report mode: summarize what would be removed.
+        Each Query Store view goes into its own temp table first,
+        and only the temp tables are joined.
+        */
+        CREATE TABLE
+            #report_queries
+        (
+            query_id bigint NOT NULL,
+            query_hash binary(8) NOT NULL,
+            query_text_id bigint NOT NULL,
+            object_id bigint NOT NULL,
+            last_execution_time datetimeoffset(7) NULL
+        );
+
+        CREATE TABLE
+            #report_plans
+        (
+            plan_id bigint NOT NULL,
+            query_id bigint NOT NULL,
+            query_plan_hash binary(8) NOT NULL
+        );
+
+        CREATE TABLE
+            #report_groups
+        (
+            query_hash binary(8) NOT NULL,
+            queries bigint NOT NULL,
+            query_texts bigint NOT NULL,
+            plans bigint NOT NULL,
+            plan_hashes bigint NOT NULL,
+            object_id bigint NOT NULL,
+            oldest_last_execution datetimeoffset(7) NULL,
+            newest_last_execution datetimeoffset(7) NULL,
+            sample_query_id bigint NOT NULL
+        );
+
+        SELECT
+            @sql = N'
+INSERT
+    #report_queries
+WITH
+    (TABLOCK)
+(
+    query_id,
+    query_hash,
+    query_text_id,
+    object_id,
+    last_execution_time
+)
+SELECT
+    qsq.query_id,
+    qsq.query_hash,
+    qsq.query_text_id,
+    qsq.object_id,
+    qsq.last_execution_time
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsq.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);
+
+INSERT
+    #report_plans
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    query_id,
+    query_plan_hash
+)
+SELECT
+    qsp.plan_id,
+    qsp.query_id,
+    qsp.query_plan_hash
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);
+
+SELECT
+    @query_store_queries = COUNT_BIG(*)
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+OPTION(RECOMPILE);';
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('/* Step 5: Report staging */', 0, 1) WITH NOWAIT;
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql,
+            N'@query_store_queries bigint OUTPUT',
+            @query_store_queries OUTPUT;
+
+        /*
+        One row per query_hash, with the plan counts rolled up from #report_plans
+        */
+        INSERT
+            #report_groups
+        WITH
+            (TABLOCK)
+        (
+            query_hash,
+            queries,
+            query_texts,
+            plans,
+            plan_hashes,
+            object_id,
+            oldest_last_execution,
+            newest_last_execution,
+            sample_query_id
+        )
+        SELECT
+            rq.query_hash,
+            queries = COUNT_BIG(*),
+            query_texts = COUNT_BIG(DISTINCT rq.query_text_id),
+            plans = ISNULL(MAX(p.plans), 0),
+            plan_hashes = ISNULL(MAX(p.plan_hashes), 0),
+            object_id = MAX(rq.object_id),
+            oldest_last_execution = MIN(rq.last_execution_time),
+            newest_last_execution = MAX(rq.last_execution_time),
+            sample_query_id = MAX(rq.query_id)
+        FROM #report_queries AS rq
+        LEFT JOIN
+        (
+            SELECT
+                rq2.query_hash,
+                plans = COUNT_BIG(*),
+                plan_hashes = COUNT_BIG(DISTINCT rp.query_plan_hash)
+            FROM #report_plans AS rp
+            JOIN #report_queries AS rq2
+              ON rq2.query_id = rp.query_id
+            GROUP BY
+                rq2.query_hash
+        ) AS p
+          ON p.query_hash = rq.query_hash
+        GROUP BY
+            rq.query_hash
+        OPTION(RECOMPILE);
+
+        /*
+        Summary: one row for the whole removal list
+        */
+        SELECT
+            queries_to_remove = COUNT_BIG(*),
+            query_hashes = COUNT_BIG(DISTINCT rq.query_hash),
+            query_texts = COUNT_BIG(DISTINCT rq.query_text_id),
+            plans =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #report_plans AS rp
+            ),
+            plan_hashes =
+            (
+                SELECT
+                    COUNT_BIG(DISTINCT rp.query_plan_hash)
+                FROM #report_plans AS rp
+            ),
+            queries_in_modules =
+                SUM
+                (
+                    CASE
+                        WHEN rq.object_id <> 0
+                        THEN 1
+                        ELSE 0
+                    END
+                ),
+            oldest_last_execution = MIN(rq.last_execution_time),
+            newest_last_execution = MAX(rq.last_execution_time),
+            query_store_queries = @query_store_queries,
+            percent_of_query_store =
+                CONVERT
+                (
+                    decimal(5,2),
+                    COUNT_BIG(*) * 100. / NULLIF(@query_store_queries, 0)
+                )
+        FROM #report_queries AS rq
+        OPTION(RECOMPILE);
+
+        /*
+        Groups: one row per query_hash, biggest first, with a sample of the text
         */
         SELECT
             @sql = N'
 SELECT
-    r.query_id,
-    qsq.query_hash,
-    qsp.query_plan_hash,
-    query_sql_text =
+    rg.query_hash,
+    rg.queries,
+    rg.query_texts,
+    rg.plans,
+    rg.plan_hashes,
+    object_name =
+        CASE
+            WHEN rg.object_id <> 0
+            THEN OBJECT_SCHEMA_NAME(rg.object_id, @database_id) +
+                 N''.'' +
+                 OBJECT_NAME(rg.object_id, @database_id)
+        END,
+    rg.oldest_last_execution,
+    rg.newest_last_execution,
+    rg.sample_query_id,
+    sample_query_sql_text =
         SUBSTRING
         (
             qsqt.query_sql_text,
             1,
             200
         )
-FROM #removals AS r
-JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-  ON r.query_id = qsq.query_id
+FROM #report_groups AS rg
+JOIN #report_queries AS rq
+  ON rq.query_id = rg.sample_query_id
 JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-CROSS APPLY
-(
-    SELECT TOP (1)
-        qsp.query_plan_hash
-    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    WHERE qsp.query_id = qsq.query_id
-    ORDER BY
-        qsp.last_execution_time DESC
-) AS qsp
+  ON qsqt.query_text_id = rq.query_text_id
 ORDER BY
-    r.query_id
+    rg.queries DESC,
+    rg.query_hash
 OPTION(RECOMPILE);';
 
         IF @debug = 1
         BEGIN
-            RAISERROR('/* Step 5: Report */', 0, 1) WITH NOWAIT;
+            RAISERROR('/* Step 5: Report groups */', 0, 1) WITH NOWAIT;
             PRINT @sql;
         END;
 
         EXECUTE sys.sp_executesql
-            @sql;
+            @sql,
+            N'@database_id integer',
+            @database_id;
 
         RAISERROR('%I64d queries would be removed (report only mode)', 0, 1, @removal_count) WITH NOWAIT;
         RETURN;
