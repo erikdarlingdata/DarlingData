@@ -1641,8 +1641,6 @@ SET @session_filter_blocking +=
     (
         ISNULL(@blocking_duration_ms_filter, N'') +
         ISNULL(@database_name_filter, N'') +
-        ISNULL(@session_id_filter, N'') +
-        ISNULL(@username_filter, N'') +
         ISNULL(@object_name_filter, N'')
     );
 
@@ -1770,8 +1768,11 @@ IF
 (
        @output_database_name <> N''
    AND @output_schema_name <> N''
-   AND @cleanup = 0
-   AND @keep_alive = 0
+   AND
+   (
+       (@cleanup = 0 AND @keep_alive = 0)
+    OR @cleanup = 1
+   )
 )
 BEGIN
     IF @debug = 1 BEGIN RAISERROR(N'Collector run: skipping throwaway session creation', 0, 1) WITH NOWAIT; END;
