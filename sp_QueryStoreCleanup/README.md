@@ -20,6 +20,7 @@ Queries with forced plans are always protected from removal. On SQL Server 2022 
 | @dedupe_by | varchar(50) | deduplication strategy | all, query_hash, plan_hash, none | all |
 | @min_age_days | integer | only remove queries whose last execution is older than this many days | a positive integer | NULL; no age filter |
 | @report_only | bit | report what would be removed without removing | 0 or 1 | 0 |
+| @sort_direction | varchar(10) | removal order by query_id; see Splitting a Long Removal | ASC, DESC | ASC |
 | @debug | bit | prints dynamic sql and diagnostics | 0 or 1 | 0 |
 | @help | bit | how you got here | 0 or 1 | 0 |
 | @version | varchar(30) | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
@@ -49,6 +50,12 @@ The `@dedupe_by` parameter controls how duplicates are identified after text fil
 | `none` | Skip hash deduplication entirely; send all text-matched queries directly to removal |
 
 **Note:** Hash deduplication removes all copies of duplicated hashes, not all-but-one. This is intentional, as the queries targeted are noise that will be recaptured by Query Store if they execute again.
+
+### Splitting a Long Removal
+
+`sp_query_store_remove_query` removes one query at a time, and removals serialize on a lock, so a big cleanup can run for hours. Two sessions working one list from opposite ends finish sooner: in testing on a Query Store with about 800,000 queries, two sessions removed about 1.4 times as many queries a second as one. More than two sessions added nothing.
+
+Run the same command in two sessions at the same time, one with `@sort_direction = 'ASC'` and one with `@sort_direction = 'DESC'`. Before each removal, the procedure checks that the query still exists, and it skips any query the other session already removed. Two sessions in the same order gain nothing, because they keep trying to remove the same queries.
 
 ## Examples
 
@@ -91,6 +98,21 @@ EXECUTE dbo.sp_QueryStoreCleanup
 EXECUTE dbo.sp_QueryStoreCleanup
     @database_name = N'YourDatabase',
     @min_age_days = 30;
+
+-- Split a long removal: run these two at the same time, in separate sessions
+EXECUTE dbo.sp_QueryStoreCleanup
+    @database_name = N'YourDatabase',
+    @cleanup_targets = 'custom',
+    @custom_query_filter = N'%some_noisy_query%',
+    @dedupe_by = 'none',
+    @sort_direction = 'ASC';
+
+EXECUTE dbo.sp_QueryStoreCleanup
+    @database_name = N'YourDatabase',
+    @cleanup_targets = 'custom',
+    @custom_query_filter = N'%some_noisy_query%',
+    @dedupe_by = 'none',
+    @sort_direction = 'DESC';
 
 -- Debug mode to see the generated dynamic SQL
 EXECUTE dbo.sp_QueryStoreCleanup

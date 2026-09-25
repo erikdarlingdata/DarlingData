@@ -40,6 +40,7 @@ ALTER PROCEDURE
     @dedupe_by varchar(50) = 'all',              /*deduplication strategy: all, query_hash, plan_hash, none*/
     @min_age_days integer = NULL,                /*only remove queries not executed in this many days*/
     @report_only bit = 0,                        /*1 = report what would be removed without removing*/
+    @sort_direction varchar(10) = 'ASC',         /*removal order by query_id: ASC or DESC*/
     @debug bit = 0,                              /*prints dynamic sql and diagnostics*/
     @help bit = 0,                               /*prints help information*/
     @version varchar(30) = NULL OUTPUT,          /*OUTPUT; for support*/
@@ -96,6 +97,8 @@ BEGIN
                     THEN 'only remove queries whose last execution is older than this many days; NULL = no age filter'
                     WHEN N'@report_only'
                     THEN 'report what would be removed without removing'
+                    WHEN N'@sort_direction'
+                    THEN 'removal order by query_id. to split a long removal, run two sessions at once, one ASC and one DESC. each skips queries the other already removed'
                     WHEN N'@debug'
                     THEN 'prints dynamic sql and diagnostics'
                     WHEN N'@help'
@@ -120,6 +123,8 @@ BEGIN
                     THEN 'any positive integer, e.g. 7, 30, 90'
                     WHEN N'@report_only'
                     THEN '0 or 1'
+                    WHEN N'@sort_direction'
+                    THEN 'ASC, DESC'
                     WHEN N'@debug'
                     THEN '0 or 1'
                     WHEN N'@help'
@@ -144,6 +149,8 @@ BEGIN
                     THEN 'NULL; no age filter'
                     WHEN N'@report_only'
                     THEN '0'
+                    WHEN N'@sort_direction'
+                    THEN 'ASC'
                     WHEN N'@debug'
                     THEN '0'
                     WHEN N'@help'
@@ -198,6 +205,10 @@ BEGIN
         SELECT  '' UNION ALL
         SELECT  '/* only remove queries not executed in 30+ days */' UNION ALL
         SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @min_age_days = 30;' UNION ALL
+        SELECT  '' UNION ALL
+        SELECT  '/* split a long removal across two sessions: run both at the same time */' UNION ALL
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @cleanup_targets = ''custom'', @custom_query_filter = N''%my_noisy_query%'', @dedupe_by = ''none'', @sort_direction = ''ASC'';' UNION ALL
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @cleanup_targets = ''custom'', @custom_query_filter = N''%my_noisy_query%'', @dedupe_by = ''none'', @sort_direction = ''DESC'';' UNION ALL
         SELECT  '' UNION ALL
         SELECT  '/* emergency flush: remove all noise older than 7 days */' UNION ALL
         SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @dedupe_by = ''none'', @min_age_days = 7;';
@@ -262,6 +273,8 @@ SOFTWARE.
         @query_id bigint,
         @current bigint = 0,
         @removed bigint = 0,
+        @skipped bigint = 0,
+        @was_removed bit = 0,
         @failed bigint = 0;
 
     /*
@@ -472,6 +485,18 @@ OPTION(RECOMPILE);';
     IF @min_age_days <= 0
     BEGIN
         RAISERROR('@min_age_days must be a positive integer. You passed: %d', 16, 1, @min_age_days) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /*
+    Validate @sort_direction
+    */
+    SELECT
+        @sort_direction = UPPER(ISNULL(@sort_direction, 'ASC'));
+
+    IF @sort_direction NOT IN ('ASC', 'DESC')
+    BEGIN
+        RAISERROR('@sort_direction must be ASC or DESC. You passed: %s', 16, 1, @sort_direction) WITH NOWAIT;
         RETURN;
     END;
 
@@ -974,11 +999,26 @@ OPTION(RECOMPILE);';
     /*
     Removal mode: cursor through and remove each query
     */
+    /*
+    Skip queries that are already gone, so two sessions working
+    from opposite ends don't each retry the other's half
+    */
     SELECT
-        @remove_sql =
-            N'EXECUTE ' +
-            @database_name_quoted +
-            N'.sys.sp_query_store_remove_query @query_id = @query_id;';
+        @remove_sql = N'
+IF EXISTS
+(
+    SELECT
+        1/0
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE qsq.query_id = @query_id
+)
+BEGIN
+    EXECUTE ' + @database_name_quoted + N'.sys.sp_query_store_remove_query
+        @query_id = @query_id;
+
+    SELECT
+        @was_removed = 1;
+END;';
 
     IF @debug = 1
     BEGIN
@@ -986,16 +1026,36 @@ OPTION(RECOMPILE);';
         PRINT @remove_sql;
     END;
 
-    SET @c =
-        CURSOR
-        LOCAL
-        DYNAMIC
-        READ_ONLY
-        FORWARD_ONLY
-    FOR
-    SELECT
-        r.query_id
-    FROM #removals AS r;
+    IF @sort_direction = 'DESC'
+    BEGIN
+        SET @c =
+            CURSOR
+            LOCAL
+            DYNAMIC
+            READ_ONLY
+            FORWARD_ONLY
+        FOR
+        SELECT
+            r.query_id
+        FROM #removals AS r
+        ORDER BY
+            r.query_id DESC;
+    END;
+    ELSE
+    BEGIN
+        SET @c =
+            CURSOR
+            LOCAL
+            DYNAMIC
+            READ_ONLY
+            FORWARD_ONLY
+        FOR
+        SELECT
+            r.query_id
+        FROM #removals AS r
+        ORDER BY
+            r.query_id ASC;
+    END;
 
     OPEN @c;
 
@@ -1009,15 +1069,29 @@ OPTION(RECOMPILE);';
             @current += 1;
 
         BEGIN TRY
+            SELECT
+                @was_removed = 0;
+
             EXECUTE sys.sp_executesql
                 @remove_sql,
-                N'@query_id bigint',
-                @query_id;
+                N'@query_id bigint, @was_removed bit OUTPUT',
+                @query_id,
+                @was_removed OUTPUT;
 
-            SELECT
-                @removed += 1;
+            IF @was_removed = 1
+            BEGIN
+                SELECT
+                    @removed += 1;
 
-            RAISERROR('Query %I64d of %I64d: query_id %I64d removed', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+                RAISERROR('Query %I64d of %I64d: query_id %I64d removed', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    @skipped += 1;
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (already gone)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
         END TRY
         BEGIN CATCH
             SELECT
@@ -1032,7 +1106,7 @@ OPTION(RECOMPILE);';
         INTO @query_id;
     END;
 
-    RAISERROR('Finished: %I64d of %I64d removed (%I64d failed)', 0, 1, @removed, @removal_count, @failed) WITH NOWAIT;
+    RAISERROR('Finished: %I64d of %I64d removed (%I64d skipped, %I64d failed)', 0, 1, @removed, @removal_count, @skipped, @failed) WITH NOWAIT;
 
 END;
 GO
