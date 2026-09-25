@@ -10,6 +10,8 @@ By default, it targets system queries (`FROM sys.%`), maintenance operations (in
 
 Queries with forced plans are always protected from removal. On SQL Server 2022 or later, the same protection applies to a query with a forced Query Store hint.
 
+On SQL Server 2022 or later, a parameter sensitive plan (PSP) parent query cannot be removed while any of its variant queries remain. The procedure removes parents after their variants, and leaves out a parent that has a variant not on the removal list, instead of failing on it.
+
 ## Parameters
 
 | parameter_name | data_type | description | valid_inputs | defaults |

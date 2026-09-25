@@ -274,7 +274,11 @@ SOFTWARE.
         @current bigint = 0,
         @removed bigint = 0,
         @skipped bigint = 0,
-        @was_removed bit = 0,
+        @was_removed tinyint = 0,
+        @is_parent bit = 0,
+        @has_query_variants bit = 0,
+        @variant_parents_kept bigint = 0,
+        @variant_waits bigint = 0,
         @failed bigint = 0,
         @query_store_queries bigint = 0,
         @database_id integer = NULL,
@@ -367,6 +371,23 @@ OPTION(RECOMPILE);';
     BEGIN
         SELECT
             @has_query_store_hints = 1;
+    END;
+
+    /*
+    sys.query_store_query_variant is SQL Server 2022+ only. A parameter
+    sensitive plan (PSP) parent query cannot be removed while any of its
+    variant queries remain (Msg 12465), so parents need special handling.
+    */
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM sys.all_objects AS ao
+        WHERE ao.name = N'query_store_query_variant'
+    )
+    BEGIN
+        SELECT
+            @has_query_variants = 1;
     END;
 
     /*
@@ -532,7 +553,15 @@ OPTION(RECOMPILE);';
     CREATE TABLE
         #removals
     (
-        query_id bigint NOT NULL PRIMARY KEY
+        query_id bigint NOT NULL PRIMARY KEY,
+        is_parent bit NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE
+        #query_variants
+    (
+        parent_query_id bigint NOT NULL,
+        query_variant_query_id bigint NOT NULL
     );
 
     /*
@@ -967,6 +996,91 @@ OPTION(RECOMPILE, HASH JOIN);';
     SELECT
         @removal_count = ROWCOUNT_BIG();
 
+    /*
+    PSP parents: a parent can only be removed after all of its variants.
+    Drop parents with a variant that is not on the list, since removing
+    them would fail every time, and mark the rest so they go last.
+    */
+    IF  @has_query_variants = 1
+    AND @removal_count > 0
+    BEGIN
+        SELECT
+            @sql = N'
+INSERT
+    #query_variants
+WITH
+    (TABLOCK)
+(
+    parent_query_id,
+    query_variant_query_id
+)
+SELECT
+    qsqv.parent_query_id,
+    qsqv.query_variant_query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsqv.parent_query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);';
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('/* Step 4b: PSP variants of parents on the list */', 0, 1) WITH NOWAIT;
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        DELETE
+            r
+        FROM #removals AS r
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #query_variants AS qv
+                  WHERE qv.parent_query_id = r.query_id
+                  AND   NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #removals AS r2
+                            WHERE r2.query_id = qv.query_variant_query_id
+                        )
+              )
+        OPTION(RECOMPILE);
+
+        SELECT
+            @variant_parents_kept = ROWCOUNT_BIG();
+
+        UPDATE
+            r
+        SET
+            r.is_parent = 1
+        FROM #removals AS r
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #query_variants AS qv
+                  WHERE qv.parent_query_id = r.query_id
+              )
+        OPTION(RECOMPILE);
+
+        SELECT
+            @removal_count -= @variant_parents_kept;
+
+        IF @variant_parents_kept > 0
+        BEGIN
+            RAISERROR('Kept %I64d PSP parent queries that have a variant not on the removal list. A parent cannot be removed while any variant remains.', 0, 1, @variant_parents_kept) WITH NOWAIT;
+        END;
+    END;
+
     RAISERROR('Found %I64d queries to remove', 0, 1, @removal_count) WITH NOWAIT;
 
     IF @debug = 1
@@ -1114,8 +1228,8 @@ OPTION(RECOMPILE);';
             rq.query_hash,
             queries = COUNT_BIG(*),
             query_texts = COUNT_BIG(DISTINCT rq.query_text_id),
-            plans = ISNULL(MAX(p.plans), 0),
-            plan_hashes = ISNULL(MAX(p.plan_hashes), 0),
+            plans = MAX(ISNULL(p.plans, 0)),
+            plan_hashes = MAX(ISNULL(p.plan_hashes, 0)),
             object_id = MAX(rq.object_id),
             oldest_last_execution = MIN(rq.last_execution_time),
             newest_last_execution = MAX(rq.last_execution_time),
@@ -1168,6 +1282,14 @@ OPTION(RECOMPILE);';
                 ),
             oldest_last_execution = MIN(rq.last_execution_time),
             newest_last_execution = MAX(rq.last_execution_time),
+            psp_parents_to_remove =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #removals AS r
+                WHERE r.is_parent = 1
+            ),
+            psp_parents_kept = @variant_parents_kept,
             query_store_queries = @query_store_queries,
             percent_of_query_store =
                 CONVERT
@@ -1238,6 +1360,10 @@ OPTION(RECOMPILE);';
     Skip queries that are already gone, so two sessions working
     from opposite ends don't each retry the other's half
     */
+    /*
+    PSP parents go last, and are skipped without a removal attempt if a
+    variant is still there (another session may not have reached it yet)
+    */
     SELECT
         @remove_sql = N'
 IF EXISTS
@@ -1247,7 +1373,27 @@ IF EXISTS
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = @query_id
 )
-BEGIN
+BEGIN' +
+        CASE
+            WHEN @has_query_variants = 1
+            THEN N'
+    IF  @is_parent = 1
+    AND EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+            WHERE qsqv.parent_query_id = @query_id
+        )
+    BEGIN
+        SELECT
+            @was_removed = 2;
+
+        RETURN;
+    END;
+'
+            ELSE N''
+        END + N'
     EXECUTE ' + @database_name_quoted + N'.sys.sp_query_store_remove_query
         @query_id = @query_id;
 
@@ -1271,9 +1417,11 @@ END;';
             FORWARD_ONLY
         FOR
         SELECT
-            r.query_id
+            r.query_id,
+            r.is_parent
         FROM #removals AS r
         ORDER BY
+            r.is_parent,
             r.query_id DESC;
     END;
     ELSE
@@ -1286,9 +1434,11 @@ END;';
             FORWARD_ONLY
         FOR
         SELECT
-            r.query_id
+            r.query_id,
+            r.is_parent
         FROM #removals AS r
         ORDER BY
+            r.is_parent,
             r.query_id ASC;
     END;
 
@@ -1296,7 +1446,9 @@ END;';
 
     FETCH NEXT
     FROM @c
-    INTO @query_id;
+    INTO
+        @query_id,
+        @is_parent;
 
     WHILE @@FETCH_STATUS = 0
     BEGIN
@@ -1309,8 +1461,9 @@ END;';
 
             EXECUTE sys.sp_executesql
                 @remove_sql,
-                N'@query_id bigint, @was_removed bit OUTPUT',
+                N'@query_id bigint, @is_parent bit, @was_removed tinyint OUTPUT',
                 @query_id,
+                @is_parent,
                 @was_removed OUTPUT;
 
             IF @was_removed = 1
@@ -1319,6 +1472,13 @@ END;';
                     @removed += 1;
 
                 RAISERROR('Query %I64d of %I64d: query_id %I64d removed', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            ELSE IF @was_removed = 2
+            BEGIN
+                SELECT
+                    @variant_waits += 1;
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (PSP parent, variants still present)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
             END;
             ELSE
             BEGIN
@@ -1338,10 +1498,12 @@ END;';
 
         FETCH NEXT
         FROM @c
-        INTO @query_id;
+        INTO
+            @query_id,
+            @is_parent;
     END;
 
-    RAISERROR('Finished: %I64d of %I64d removed (%I64d skipped, %I64d failed)', 0, 1, @removed, @removal_count, @skipped, @failed) WITH NOWAIT;
+    RAISERROR('Finished: %I64d of %I64d removed (%I64d skipped, %I64d PSP parents waiting on variants, %I64d failed)', 0, 1, @removed, @removal_count, @skipped, @variant_waits, @failed) WITH NOWAIT;
 
 END;
 GO
