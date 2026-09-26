@@ -564,6 +564,12 @@ OPTION(RECOMPILE);';
         query_variant_query_id bigint NOT NULL
     );
 
+    CREATE TABLE
+        #dispatcher_queries
+    (
+        query_id bigint NOT NULL
+    );
+
     /*
     Step 1: Find text targets
     */
@@ -1000,6 +1006,9 @@ OPTION(RECOMPILE, HASH JOIN);';
     PSP parents: a parent can only be removed after all of its variants.
     Drop parents with a variant that is not on the list, since removing
     them would fail every time, and mark the rest so they go last.
+    A query that owns a dispatcher plan is marked as a parent too:
+    sys.query_store_query_variant does not show variants that have not
+    been flushed yet, but the removal still refuses the parent.
     */
     IF  @has_query_variants = 1
     AND @removal_count > 0
@@ -1024,6 +1033,26 @@ WHERE EXISTS
               1/0
           FROM #removals AS r
           WHERE r.query_id = qsqv.parent_query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);
+
+INSERT
+    #dispatcher_queries
+WITH
+    (TABLOCK)
+(
+    query_id
+)
+SELECT DISTINCT
+    qsp.query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE qsp.plan_type = 1
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsp.query_id
       )
 OPTION(RECOMPILE, HASH JOIN);';
 
@@ -1069,6 +1098,13 @@ OPTION(RECOMPILE, HASH JOIN);';
                       1/0
                   FROM #query_variants AS qv
                   WHERE qv.parent_query_id = r.query_id
+              )
+        OR    EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #dispatcher_queries AS dq
+                  WHERE dq.query_id = r.query_id
               )
         OPTION(RECOMPILE);
 
@@ -1489,11 +1525,25 @@ END;';
             END;
         END TRY
         BEGIN CATCH
-            SELECT
-                @failed += 1,
-                @error_message = ERROR_MESSAGE();
+            /*
+            Msg 12465: a PSP parent whose variants are still there, including
+            variants the catalog view did not show yet. Not a failure.
+            */
+            IF ERROR_NUMBER() = 12465
+            BEGIN
+                SELECT
+                    @variant_waits += 1;
 
-            RAISERROR('Query %I64d of %I64d: query_id %I64d not removed (%s)', 0, 1, @current, @removal_count, @query_id, @error_message) WITH NOWAIT;
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (PSP parent, variants still present)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    @failed += 1,
+                    @error_message = ERROR_MESSAGE();
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d not removed (%s)', 0, 1, @current, @removal_count, @query_id, @error_message) WITH NOWAIT;
+            END;
         END CATCH;
 
         FETCH NEXT
