@@ -1778,7 +1778,7 @@ OPTION(RECOMPILE);';
                 @sql;
 
             SELECT
-                @compact_saved_mb = SUM(ci.before_mb - ci.after_mb)
+                @compact_saved_mb = ISNULL(SUM(ci.before_mb - ci.after_mb), 0)
             FROM #compact_indexes AS ci;
 
             SELECT
