@@ -23,6 +23,7 @@ On SQL Server 2022 or later, a parameter sensitive plan (PSP) parent query canno
 | @min_age_days | integer | only remove queries whose last execution is older than this many days | a positive integer | NULL; no age filter |
 | @report_only | bit | report what would be removed without removing; see Report Mode | 0 or 1 | 0 |
 | @sort_direction | varchar(10) | removal order by query_id; see Splitting a Long Removal | ASC, DESC | ASC |
+| @compact_tables | bit | afterwards, compact Query Store's internal tables; see Compacting Query Store's Tables | 0 or 1 | 0 |
 | @debug | bit | prints dynamic sql and diagnostics | 0 or 1 | 0 |
 | @help | bit | how you got here | 0 or 1 | 0 |
 | @version | varchar(30) | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
@@ -67,6 +68,18 @@ Run the same command in two sessions at the same time, one with `@sort_direction
 2. One row per query_hash, biggest first: the same counts for that hash, the module name if there is one, the oldest and newest last execution, and a sample query_id with the first 200 characters of its text.
 
 Add `@debug = 1` to also list every query_id on the removal list.
+
+## Compacting Query Store's Tables
+
+Removing many queries leaves Query Store's internal tables (`sys.plan_persist_*`) holding the pages those queries lived on, part empty. `@compact_tables = 1` compacts each of their indexes with `DBCC INDEXDEFRAG` after the removal, smallest table first. `ALTER INDEX` cannot see these tables outside the dedicated admin connection, but `DBCC INDEXDEFRAG` can, by `object_id` and `index_id`.
+
+- It runs online, one index at a time, as many small transactions. Cancelling keeps the work already done.
+- Every page it moves is logged. In an availability group, that log goes to every secondary, so run it at a quiet time after a big removal.
+- It gives space back inside Query Store, which lowers `current_storage_size_mb`. It does not shrink the data file.
+- It runs even when there is nothing to remove. With `@cleanup_targets = 'none'` and `@dedupe_by = 'none'` it only compacts.
+- In report mode it lists the indexes and their sizes without compacting them.
+
+It returns one row per index with its size before and after, in MB, and the seconds it took.
 
 ## Examples
 

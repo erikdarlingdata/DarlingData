@@ -41,6 +41,7 @@ ALTER PROCEDURE
     @min_age_days integer = NULL,                /*only remove queries not executed in this many days*/
     @report_only bit = 0,                        /*1 = report what would be removed without removing*/
     @sort_direction varchar(10) = 'ASC',         /*removal order by query_id: ASC or DESC*/
+    @compact_tables bit = 0,                     /*1 = afterwards, DBCC INDEXDEFRAG each Query Store internal table index*/
     @debug bit = 0,                              /*prints dynamic sql and diagnostics*/
     @help bit = 0,                               /*prints help information*/
     @version varchar(30) = NULL OUTPUT,          /*OUTPUT; for support*/
@@ -99,6 +100,8 @@ BEGIN
                     THEN 'report what would be removed without removing: one summary row, then one row per query_hash, biggest first. @debug = 1 also lists every query_id'
                     WHEN N'@sort_direction'
                     THEN 'removal order by query_id. to split a long removal, run two sessions at once, one ASC and one DESC. each skips queries the other already removed'
+                    WHEN N'@compact_tables'
+                    THEN 'afterwards, compact every Query Store internal table index with DBCC INDEXDEFRAG, to give back the pages removed queries leave part empty. online and cancellable, but logged, so an AG ships it to secondaries. with @cleanup_targets = none and @dedupe_by = none it only compacts'
                     WHEN N'@debug'
                     THEN 'prints dynamic sql and diagnostics'
                     WHEN N'@help'
@@ -125,6 +128,8 @@ BEGIN
                     THEN '0 or 1'
                     WHEN N'@sort_direction'
                     THEN 'ASC, DESC'
+                    WHEN N'@compact_tables'
+                    THEN '0 or 1'
                     WHEN N'@debug'
                     THEN '0 or 1'
                     WHEN N'@help'
@@ -151,6 +156,8 @@ BEGIN
                     THEN '0'
                     WHEN N'@sort_direction'
                     THEN 'ASC'
+                    WHEN N'@compact_tables'
+                    THEN '0'
                     WHEN N'@debug'
                     THEN '0'
                     WHEN N'@help'
@@ -211,7 +218,10 @@ BEGIN
         SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @cleanup_targets = ''custom'', @custom_query_filter = N''%my_noisy_query%'', @dedupe_by = ''none'', @sort_direction = ''DESC'';' UNION ALL
         SELECT  '' UNION ALL
         SELECT  '/* emergency flush: remove all noise older than 7 days */' UNION ALL
-        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @dedupe_by = ''none'', @min_age_days = 7;';
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @dedupe_by = ''none'', @min_age_days = 7;' UNION ALL
+        SELECT  '' UNION ALL
+        SELECT  '/* compact Query Store''s internal tables after a big removal, without removing anything */' UNION ALL
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @cleanup_targets = ''none'', @dedupe_by = ''none'', @compact_tables = 1;';
 
         /*
         MIT License
@@ -279,6 +289,14 @@ SOFTWARE.
         @has_query_variants bit = 0,
         @variant_parents_kept bigint = 0,
         @variant_waits bigint = 0,
+        @compact_cursor CURSOR,
+        @compact_object_id integer,
+        @compact_index_id integer,
+        @compact_table_name sysname,
+        @compact_sql nvarchar(400) = N'',
+        @compact_started datetime2(7),
+        @compact_saved_mb decimal(18,1) = 0,
+        @compact_saved_text nvarchar(30) = N'',
         @failed bigint = 0,
         @query_store_queries bigint = 0,
         @database_id integer = NULL,
@@ -498,6 +516,7 @@ OPTION(RECOMPILE);';
     */
     IF  @no_text_filter = 1
     AND @no_dedupe = 1
+    AND @compact_tables = 0
     BEGIN
         RAISERROR('@cleanup_targets = ''none'' and @dedupe_by = ''none'' would remove every query in query store. That''s probably not what you want.', 16, 1) WITH NOWAIT;
         RETURN;
@@ -569,6 +588,17 @@ OPTION(RECOMPILE);';
     (
         query_id bigint NOT NULL
     );
+
+    /*
+    No cleanup targets and no deduplication, with @compact_tables = 1:
+    skip removal and only compact
+    */
+    IF  @no_text_filter = 1
+    AND @no_dedupe = 1
+    BEGIN
+        RAISERROR('No cleanup targets. Compacting Query Store internal tables only.', 0, 1) WITH NOWAIT;
+        GOTO compact_tables;
+    END;
 
     /*
     Step 1: Find text targets
@@ -690,8 +720,8 @@ OPTION(RECOMPILE);';
 
         IF @text_target_count = 0
         BEGIN
-            RAISERROR('No matching query texts found. Exiting.', 0, 1) WITH NOWAIT;
-            RETURN;
+            RAISERROR('No matching query texts found.', 0, 1) WITH NOWAIT;
+            GOTO compact_tables;
         END;
     END;
 
@@ -854,8 +884,8 @@ OPTION(RECOMPILE);';
     AND @query_hash_dupe_count = 0
     AND @plan_hash_dupe_count = 0
     BEGIN
-        RAISERROR('No duplicates found. Exiting.', 0, 1) WITH NOWAIT;
-        RETURN;
+        RAISERROR('No duplicates found.', 0, 1) WITH NOWAIT;
+        GOTO compact_tables;
     END;
 
     /*
@@ -1128,8 +1158,8 @@ OPTION(RECOMPILE, HASH JOIN);';
 
     IF @removal_count = 0
     BEGIN
-        RAISERROR('No queries to remove. Exiting.', 0, 1) WITH NOWAIT;
-        RETURN;
+        RAISERROR('No queries to remove.', 0, 1) WITH NOWAIT;
+        GOTO compact_tables;
     END;
 
     /*
@@ -1386,7 +1416,7 @@ OPTION(RECOMPILE);';
             @database_id;
 
         RAISERROR('%I64d queries would be removed (report only mode)', 0, 1, @removal_count) WITH NOWAIT;
-        RETURN;
+        GOTO compact_tables;
     END;
 
     /*
@@ -1554,6 +1584,225 @@ END;';
     END;
 
     RAISERROR('Finished: %I64d of %I64d removed (%I64d skipped, %I64d PSP parents waiting on variants, %I64d failed)', 0, 1, @removed, @removal_count, @skipped, @variant_waits, @failed) WITH NOWAIT;
+
+compact_tables:
+
+    /*
+    Compact Query Store's internal tables. Removed queries leave the pages
+    they lived on part empty inside sys.plan_persist_*. ALTER INDEX cannot
+    see those tables outside the DAC, but DBCC INDEXDEFRAG can, by object_id
+    and index_id. It runs online, one index at a time, as many small
+    transactions, so a cancel keeps the work already done. Every page it
+    moves is logged, and an availability group ships that to its
+    secondaries. In report mode this only lists the indexes and their sizes.
+    */
+    IF @compact_tables = 1
+    BEGIN
+        CREATE TABLE
+            #compact_indexes
+        (
+            object_id integer NOT NULL,
+            index_id integer NOT NULL,
+            table_name sysname NOT NULL,
+            table_mb decimal(18,1) NOT NULL,
+            before_mb decimal(18,1) NOT NULL,
+            after_mb decimal(18,1) NULL,
+            seconds integer NULL
+        );
+
+        SELECT
+            @sql = N'
+INSERT
+    #compact_indexes
+WITH
+    (TABLOCK)
+(
+    object_id,
+    index_id,
+    table_name,
+    table_mb,
+    before_mb
+)
+SELECT
+    x.object_id,
+    x.index_id,
+    x.table_name,
+    x.table_mb,
+    x.index_mb
+FROM
+(
+    SELECT
+        it.object_id,
+        i.index_id,
+        table_name = it.name,
+        index_mb = SUM(a.total_pages) / 128.0,
+        table_mb =
+            SUM(SUM(a.total_pages)) OVER
+            (
+                PARTITION BY
+                    it.object_id
+            ) / 128.0
+    FROM ' + @database_name_quoted + N'.sys.internal_tables AS it
+    JOIN ' + @database_name_quoted + N'.sys.indexes AS i
+      ON i.object_id = it.object_id
+    JOIN ' + @database_name_quoted + N'.sys.partitions AS p
+      ON  p.object_id = i.object_id
+      AND p.index_id = i.index_id
+    JOIN ' + @database_name_quoted + N'.sys.allocation_units AS a
+      ON a.container_id = p.partition_id
+    WHERE it.name LIKE N''plan[_]persist%''
+    AND   i.index_id > 0
+    GROUP BY
+        it.object_id,
+        it.name,
+        i.index_id
+) AS x
+WHERE x.index_mb > 0
+OPTION(RECOMPILE);';
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('/* Compact: Query Store internal indexes */', 0, 1) WITH NOWAIT;
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        /*
+        Smallest table first, so the large plan, text and runtime stats
+        tables come last and a cancel still leaves the rest done
+        */
+        SET @compact_cursor =
+            CURSOR
+            LOCAL
+            FAST_FORWARD
+        FOR
+        SELECT
+            ci.object_id,
+            ci.index_id,
+            ci.table_name
+        FROM #compact_indexes AS ci
+        ORDER BY
+            ci.table_mb,
+            ci.table_name,
+            ci.index_id;
+
+        OPEN @compact_cursor;
+
+        FETCH NEXT
+        FROM @compact_cursor
+        INTO
+            @compact_object_id,
+            @compact_index_id,
+            @compact_table_name;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SELECT
+                @compact_sql =
+                    N'DBCC INDEXDEFRAG (' +
+                    CONVERT(nvarchar(11), @database_id) +
+                    N', ' +
+                    CONVERT(nvarchar(11), @compact_object_id) +
+                    N', ' +
+                    CONVERT(nvarchar(11), @compact_index_id) +
+                    N') WITH NO_INFOMSGS;';
+
+            IF @report_only = 1
+            BEGIN
+                RAISERROR('Would compact %s index %d: %s', 0, 1, @compact_table_name, @compact_index_id, @compact_sql) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                RAISERROR('Compacting %s index %d', 0, 1, @compact_table_name, @compact_index_id) WITH NOWAIT;
+
+                SELECT
+                    @compact_started = SYSDATETIME();
+
+                BEGIN TRY
+                    EXECUTE sys.sp_executesql
+                        @compact_sql;
+
+                    UPDATE
+                        ci
+                    SET
+                        ci.seconds = DATEDIFF(SECOND, @compact_started, SYSDATETIME())
+                    FROM #compact_indexes AS ci
+                    WHERE ci.object_id = @compact_object_id
+                    AND   ci.index_id = @compact_index_id;
+                END TRY
+                BEGIN CATCH
+                    SELECT
+                        @error_message = ERROR_MESSAGE();
+
+                    RAISERROR('Compacting %s index %d failed: %s', 0, 1, @compact_table_name, @compact_index_id, @error_message) WITH NOWAIT;
+                END CATCH;
+            END;
+
+            FETCH NEXT
+            FROM @compact_cursor
+            INTO
+                @compact_object_id,
+                @compact_index_id,
+                @compact_table_name;
+        END;
+
+        IF @report_only = 0
+        BEGIN
+            SELECT
+                @sql = N'
+UPDATE
+    ci
+SET
+    ci.after_mb = s.index_mb
+FROM #compact_indexes AS ci
+JOIN
+(
+    SELECT
+        p.object_id,
+        p.index_id,
+        index_mb = SUM(a.total_pages) / 128.0
+    FROM ' + @database_name_quoted + N'.sys.partitions AS p
+    JOIN ' + @database_name_quoted + N'.sys.allocation_units AS a
+      ON a.container_id = p.partition_id
+    GROUP BY
+        p.object_id,
+        p.index_id
+) AS s
+  ON  s.object_id = ci.object_id
+  AND s.index_id = ci.index_id
+OPTION(RECOMPILE);';
+
+            EXECUTE sys.sp_executesql
+                @sql;
+
+            SELECT
+                @compact_saved_mb = SUM(ci.before_mb - ci.after_mb)
+            FROM #compact_indexes AS ci;
+
+            SELECT
+                @compact_saved_text = CONVERT(nvarchar(30), @compact_saved_mb);
+        END;
+
+        SELECT
+            ci.table_name,
+            ci.index_id,
+            ci.before_mb,
+            ci.after_mb,
+            saved_mb = ci.before_mb - ci.after_mb,
+            ci.seconds
+        FROM #compact_indexes AS ci
+        ORDER BY
+            ci.table_mb DESC,
+            ci.table_name,
+            ci.index_id;
+
+        IF @report_only = 0
+        BEGIN
+            RAISERROR('Compacting finished: %s MB given back inside Query Store', 0, 1, @compact_saved_text) WITH NOWAIT;
+        END;
+    END;
 
 END;
 GO
