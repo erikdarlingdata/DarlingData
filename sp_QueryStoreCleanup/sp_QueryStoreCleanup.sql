@@ -101,7 +101,7 @@ BEGIN
                     WHEN N'@sort_direction'
                     THEN 'removal order by query_id. to split a long removal, run two sessions at once, one ASC and one DESC. each skips queries the other already removed'
                     WHEN N'@compact_tables'
-                    THEN 'afterwards, compact every Query Store internal table index with DBCC INDEXDEFRAG, to give back the pages removed queries leave part empty. online and cancellable, but logged, so an AG ships it to secondaries. with @cleanup_targets = none and @dedupe_by = none it only compacts'
+                    THEN 'afterwards, compact every Query Store internal table index with DBCC INDEXDEFRAG, to give back the pages removed queries leave part empty. online and cancellable, but logged, so an AG ships it to secondaries. with @cleanup_targets = none and @dedupe_by = none it only compacts, and on a READ_ONLY Query Store it compacts without removing'
                     WHEN N'@debug'
                     THEN 'prints dynamic sql and diagnostics'
                     WHEN N'@help'
@@ -360,10 +360,20 @@ OPTION(RECOMPILE);';
     fails once per target in the cursor, producing noisy error output and leaving the
     caller with no useful result. Catch it up front instead. Only actual_state = 2
     (READ_WRITE) is safe for cleanup.
+    With @compact_tables = 1, a READ_ONLY Query Store skips removal and only
+    compacts: DBCC INDEXDEFRAG works on the pages directly and does not need
+    Query Store to accept writes, and a store that hit MAX_STORAGE_SIZE_MB is
+    where compaction helps most.
     */
     IF @actual_state = 1
     BEGIN
-        RAISERROR('Query Store is in READ_ONLY state for database %s. Writes are blocked, so cleanup cannot run. This is typically caused by hitting MAX_STORAGE_SIZE_MB or by an explicit READ_ONLY operation_mode.', 16, 1, @database_name) WITH NOWAIT;
+        IF @compact_tables = 1
+        BEGIN
+            RAISERROR('Query Store is in READ_ONLY state for database %s, so no queries can be removed. Compacting its internal tables only.', 0, 1, @database_name) WITH NOWAIT;
+            GOTO compact_tables;
+        END;
+
+        RAISERROR('Query Store is in READ_ONLY state for database %s. Writes are blocked, so cleanup cannot run. This is typically caused by hitting MAX_STORAGE_SIZE_MB or by an explicit READ_ONLY operation_mode. @compact_tables = 1 can still compact its internal tables.', 16, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
 

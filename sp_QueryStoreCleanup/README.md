@@ -77,6 +77,8 @@ Removing many queries leaves Query Store's internal tables (`sys.plan_persist_*`
 - Every page it moves is logged. In an availability group, that log goes to every secondary, so run it at a quiet time after a big removal.
 - It gives space back inside Query Store, which lowers `current_storage_size_mb`. It does not shrink the data file.
 - It runs even when there is nothing to remove. With `@cleanup_targets = 'none'` and `@dedupe_by = 'none'` it only compacts.
+- It runs when Query Store is READ_ONLY, for example after it hits `MAX_STORAGE_SIZE_MB`. Removal is skipped in that state, so only the compaction runs.
+- Space freed inside LOB pages (plan XML and query text) can stay reserved to the table after compaction. Query Store reuses it for new plans and texts, but `current_storage_size_mb` may not drop by all of it.
 - In report mode it lists the indexes and their sizes without compacting them.
 
 It returns one row per index with its size before and after, in MB, and the seconds it took.
