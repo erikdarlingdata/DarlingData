@@ -18,8 +18,17 @@ python run_tests.py --server SQL2025
 ```
 
 Takes `--server` and `--password` (default `SQL2025` / the standard local
-`sa` password). Expect `100` on SQL Server 2025. Older versions support fewer
-compat levels and skip the PSP tests, so they run fewer.
+`sa` password). Expect these totals:
+
+| Version | Passed | Skipped |
+| --- | --- | --- |
+| SQL Server 2025 | 100 | 0 |
+| SQL Server 2022 | 96 | 0 |
+| SQL Server 2019 | 85 | 1 |
+| SQL Server 2017 | 81 | 1 |
+
+Older versions support fewer compat levels, so they run fewer checks. Versions
+before SQL Server 2022 skip the PSP test.
 
 The CI bundle leaves `sp_QueryStoreCleanup` out, so the harness installs the
 procedure itself. Pass `--proc-file` to test a version other than the repo
