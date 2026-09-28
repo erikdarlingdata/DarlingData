@@ -867,16 +867,21 @@ WAITFOR DELAY '00:00:02';
 COMMIT TRANSACTION;
 """
 
-# The waiter: runs rm_q1 once the holder's X lock is granted, so it blocks.
+# The waiter: runs rm_q1 once the holder's X lock on rm_lock is granted, so
+# it blocks. The check names the table because other sessions, such as Query
+# Store's own writes, can hold X key locks in the same database.
 RM_BLOCKED_SQL = """
 SET NOCOUNT ON;
 DECLARE @tries integer = 0;
 WHILE @tries < 300
 AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_tran_locks AS dtl
+                  JOIN sys.partitions AS p
+                    ON p.hobt_id = dtl.resource_associated_entity_id
                   WHERE dtl.resource_database_id = DB_ID()
                   AND   dtl.resource_type = N'KEY'
                   AND   dtl.request_mode = N'X'
-                  AND   dtl.request_status = N'GRANT')
+                  AND   dtl.request_status = N'GRANT'
+                  AND   p.object_id = OBJECT_ID(N'dbo.rm_lock'))
 BEGIN
     WAITFOR DELAY '00:00:00.100';
     SET @tries += 1;
@@ -1013,24 +1018,34 @@ def rm_plain(server, password, count):
 
 def rm_blocked(server, password):
     """One rm_q1 execution that waits on a lock for at least 2 seconds.
-    Returns (errors, rm_q1's Lock wait increase in ms)."""
+    Tries up to 3 times, so one run that Query Store does not record as a
+    wait can't fail the fixture. Returns (errors, rm_q1's Lock wait increase
+    in ms)."""
     before = rm_lock_total(server, password) or 0
-    holder = subprocess.Popen(
-        _sqlcmd_prefix() + ["-S", server, "-U", "sa", "-P", password,
-                            "-d", RM_DB, "-Q", RM_HOLDER_SQL],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        out, err = _sqlcmd(server, password, RM_BLOCKED_SQL, database=RM_DB,
-                           timeout=120)
-        h_out, h_err = holder.communicate(timeout=120)
-    finally:
-        if holder.poll() is None:
-            holder.kill()
-    errs = find_sql_errors(out + "\n" + err + "\n" +
-                           h_out.decode("utf-8", errors="replace") + "\n" +
-                           h_err.decode("utf-8", errors="replace"))
-    after = rm_lock_total(server, password) or 0
-    return errs, after - before
+    errs, added = [], 0
+    for _ in range(3):
+        holder = subprocess.Popen(
+            _sqlcmd_prefix() + ["-S", server, "-U", "sa", "-P", password,
+                                "-d", RM_DB, "-Q", RM_HOLDER_SQL],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            out, err = _sqlcmd(server, password, RM_BLOCKED_SQL,
+                               database=RM_DB, timeout=120)
+            h_out, h_err = holder.communicate(timeout=120)
+        finally:
+            if holder.poll() is None:
+                holder.kill()
+        text = (out + "\n" + err + "\n" +
+                h_out.decode("utf-8", errors="replace") + "\n" +
+                h_err.decode("utf-8", errors="replace"))
+        errs = find_sql_errors(text)
+        if holder.returncode:
+            errs.append("lock holder exited %d: %s"
+                        % (holder.returncode, text.strip()[-200:]))
+        added = (rm_lock_total(server, password) or 0) - before
+        if errs or added >= 1000:
+            break
+    return errs, added
 
 
 def regression_window_setup(server, password, R):
