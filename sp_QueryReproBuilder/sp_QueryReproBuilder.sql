@@ -4051,14 +4051,13 @@ FROM
     (
         /*
         Pull every wait category captured for this (interval, plan).
-        A previous TOP (5) ORDER BY avg_query_wait_time_ms DESC here
-        dropped wait categories ranked 6+ per interval before the outer
-        GROUP BY ran, so a category that was (say) 6th worst in one
-        interval but 2nd worst in another would silently have the first
-        interval''s contribution missing from its totals. The outer
-        aggregation groups by (plan_id, wait_category_desc) and the
-        number of wait categories per interval is capped by QS at a
-        small set, so removing the TOP does not explode row counts.
+        #query_store_runtime_stats holds one row per plan, at the latest
+        interval in the window that the plan ran in, so these waits come
+        from that one interval, not from the whole window. A TOP (5)
+        ORDER BY avg_query_wait_time_ms DESC here used to drop every wait
+        category past the fifth. Query Store keeps a small, fixed set of
+        wait categories, so pulling all of them does not blow up the
+        row count.
         */
         SELECT
             qsws.*

@@ -1124,6 +1124,21 @@ BEGIN
     RETURN;
 END;
 
+/*
+A background task raises the blocked process report, not the blocked
+or blocking session, so a session_id or username filter would drop
+every report. The blocking session leaves those filters off, so say so.
+*/
+IF  @event_type LIKE N'%lock%'
+AND
+(
+       @session_id <> N''
+    OR @username <> N''
+)
+BEGIN
+    RAISERROR(N'@session_id and @username do not apply to blocking, because a background task raises the blocked process report. sp_HumanEvents collects blocking from every session and user.', 0, 1) WITH NOWAIT;
+END;
+
 /* validatabase name */
 IF @debug = 1 BEGIN RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT; END;
 IF @database_name <> N''
@@ -3057,7 +3072,7 @@ BEGIN
         currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
         sort_order = CONVERT(varchar(400), ''),
-        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' ELSE 'blocking' END,
+        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
         blocked_process_report = oa.c.query('.')
     INTO #blocked
     FROM #human_events_xml AS bx
@@ -3152,7 +3167,7 @@ BEGIN
         currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
         sort_order = CONVERT(varchar(400), ''),
-        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' ELSE 'blocked' END,
+        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
         blocked_process_report = oa.c.query('.')
     INTO #blocking
     FROM #human_events_xml AS bx
