@@ -21,13 +21,13 @@ python mutation_check.py --server SQL2022
 ```
 
 Both take `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `237 passed, 0 failed` and `5 of 5 mutations caught`.
+password). Expect `271 passed, 0 failed` and `5 of 5 mutations caught`.
 
 ## What is here
 
 | File | What it does |
 | --- | --- |
-| `run_tests.py` | 265 assertions. Most cases embed a ShowPlanXML, drive it through `@query_plan_xml`, extract the emitted repro, execute it, and assert it built, is correct, and RAN. The `procname:` family instead resolves real one/two/three-part `@procedure_name` values against scratch Query Store databases it creates and drops. Self-contained and self-cleaning. |
+| `run_tests.py` | 271 assertions. Most cases embed a ShowPlanXML, drive it through `@query_plan_xml`, extract the emitted repro, execute it, and assert it built, is correct, and RAN. The `procname:` family instead resolves real one/two/three-part `@procedure_name` values against scratch Query Store databases it creates and drops. The `textsearch:` cases search those same databases. Self-contained and self-cleaning. |
 | `mutation_check.py` | Plants five plausible generation bugs in a scratch copy of the procedure, installs each, and asserts `run_tests.py` goes RED on every one -- proof the suite has teeth. Restores the real build afterward. |
 | `template_generate.sql` | The generation half: runs the procedure in `@query_plan_xml` mode and lets its result set print so the repro can be read off stdout. Driven by `run_tests.py`. |
 | `template_execute.sql` | The execution half: takes the repro back (as base64) into a real `nvarchar(max)` variable and runs it with `sys.sp_executesql` inside `BEGIN TRANSACTION ... ROLLBACK` and `TRY/CATCH`. Driven by `run_tests.py`. |
@@ -40,6 +40,11 @@ creates in `tempdb` and drops on the way out. The `procname:` family is the one
 exception to plan embedding: resolving `@procedure_name` means reading Query
 Store in a real database, so those cases build two scratch databases with Query
 Store enabled and drop them in a teardown that runs even when setup fails.
+The `textsearch:` cases read the same Query Store data. `qrb_pn_db` has a
+case-sensitive collation (`Latin1_General_100_CS_AS`), so these cases prove that
+`@query_text_search` and `@query_text_search_not` ignore case there.
+`query_sql_text` is `SQL_Latin1_General_CP1_CI_AS` in every database, so a text
+search ignores case whatever the database collation is.
 
 ## The execute check is the one that earns its keep
 
@@ -140,9 +145,9 @@ execute check. After the run, `mutation_check.py` restores the real build from
 mutation patterns still anchor to the current procedure (each must match exactly
 once) after editing it.
 
-## Not wired into CI
+## CI
 
-Like the `sp_IndexCleanup` suite, these run by hand against a live instance.
-They install the procedure and execute generated SQL, so they need a real SQL
-Server, not a syntax check. Run them yourself before shipping a change to
-`sp_QueryReproBuilder.sql`.
+`.github/workflows/sql-tests.yml` runs `run_tests.py` on SQL Server 2017, 2019,
+2022, and 2025 for every push to `dev` and every pull request into `dev` or
+`main`. `mutation_check.py` does not run in CI. Run it yourself before shipping
+a change to `sp_QueryReproBuilder.sql`.

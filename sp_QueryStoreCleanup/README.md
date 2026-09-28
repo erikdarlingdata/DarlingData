@@ -67,6 +67,8 @@ Run the same command in two sessions at the same time, one with `@sort_direction
 1. One summary row for the whole removal list: the number of queries, distinct query hashes, query texts, plans and plan hashes, how many queries belong to modules, the oldest and newest last execution, and the share of all Query Store queries.
 2. One row per query_hash, biggest first: the same counts for that hash, the module name if there is one, the oldest and newest last execution, and a sample query_id with the first 200 characters of its text.
 
+With `@compact_tables = 1`, a third result set lists the Query Store indexes and their sizes. See Compacting Query Store's Tables.
+
 Add `@debug = 1` to also list every query_id on the removal list.
 
 ## Compacting Query Store's Tables
@@ -77,7 +79,7 @@ Removing many queries leaves Query Store's internal tables (`sys.plan_persist_*`
 - Every page it moves is logged. In an availability group, that log goes to every secondary, so run it at a quiet time after a big removal.
 - It gives space back inside Query Store, which lowers `current_storage_size_mb`. It does not shrink the data file.
 - It runs even when there is nothing to remove. With `@cleanup_targets = 'none'` and `@dedupe_by = 'none'` it only compacts.
-- It runs when Query Store is READ_ONLY, for example after it hits `MAX_STORAGE_SIZE_MB`. Removal is skipped in that state, so only the compaction runs.
+- It runs when Query Store is READ_ONLY, for example after it hits `MAX_STORAGE_SIZE_MB`. Removal is skipped in that state, so only the compaction runs. The procedure still checks the other parameters first, and a bad value raises an error.
 - Space freed inside LOB pages (plan XML and query text) can stay reserved to the table after compaction. Query Store reuses it for new plans and texts, but `current_storage_size_mb` may not drop by all of it.
 - In report mode it lists the indexes and their sizes without compacting them.
 

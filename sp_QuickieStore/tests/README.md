@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. 157 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. 186 assertions. |
 
 ```
 cd sp_QuickieStore/tests
@@ -18,7 +18,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `157`.
+password). Expect `186`.
 
 ## What it actually covers
 
@@ -45,13 +45,23 @@ nonsense, `@query_type` partitioning proc from ad hoc, `@top`, and
 `@execution_count` set impossibly high. Every absence assertion is paired with a
 completion check so an errored or empty run cannot pass vacuously.
 
+The case-insensitive text search checks run in a second scratch database
+with a case-sensitive collation (`Latin1_General_100_CS_AS`). It holds one
+query with the marker `qs_Case_Marker`. A search for the marker in other cases
+must find that query, and `@query_text_search_not` in another case must remove
+it. `query_sql_text` is `SQL_Latin1_General_CP1_CI_AS` in every database, so a
+text search ignores case whatever the database collation is.
+
 ## Fixture
 
 The harness creates its own `quickiestore_test` database with Query Store on,
 runs a small varied workload (ad hoc queries at different costs plus a stored
 procedure, so `@query_type` has both kinds to separate), flushes Query Store, and
 drops the database in a `finally` block that runs even if assertions fail.
-Nothing outside that database is touched.
+Two smaller scratch databases get the same `finally` cleanup. The `@debug`
+check uses `quickiestore_test_empty`, which has Query Store on and no queries.
+The text search checks use `quickiestore_test_cs`, which is case sensitive.
+Nothing outside these three databases is touched.
 
 ## Known client limitation: `@debug = 1`
 
