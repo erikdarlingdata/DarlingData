@@ -16356,6 +16356,10 @@ BEGIN
                     FROM #query_store_wait_stats AS qsws
                     CROSS APPLY
                     (
+                        /*
+                        The same joins as wait stats by query, so the
+                        totals cover the same rows that it shows
+                        */
                         SELECT
                             qsrs.avg_duration_ms,
                             qsrs.last_duration_ms,
