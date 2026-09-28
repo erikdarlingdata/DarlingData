@@ -892,6 +892,20 @@ def psp_tests(server, password, R, major):
     R.check(G, "report prints no NULL-aggregate warning", NULL_WARNING not in all_text,
             "warning printed")
 
+    minmax, _ = query(server, password, """
+SELECT
+    oldest = MIN(qsq.last_execution_time),
+    newest = MAX(qsq.last_execution_time)
+FROM [{db}].sys.query_store_query AS qsq
+WHERE qsq.last_execution_time IS NOT NULL;""".format(db=PSP_DB))
+    oldest_actual, newest_actual = (minmax[0][0], minmax[0][1]) if minmax else (None, None)
+    R.check(G, "summary oldest/newest last_execution match the catalog exactly",
+            s.get("oldest_last_execution") == oldest_actual
+            and s.get("newest_last_execution") == newest_actual,
+            "summary oldest %s, newest %s; catalog oldest %s, newest %s"
+            % (s.get("oldest_last_execution"), s.get("newest_last_execution"),
+               oldest_actual, newest_actual))
+
     rows, _ = query(server, password, """
 SELECT qsqv.parent_query_id
 FROM [{db}].sys.query_store_query_variant AS qsqv;""".format(db=PSP_DB))

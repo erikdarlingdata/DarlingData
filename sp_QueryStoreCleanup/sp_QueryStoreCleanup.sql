@@ -1392,8 +1392,20 @@ OPTION(RECOMPILE);';
                         ELSE 0
                     END
                 ),
-            oldest_last_execution = MIN(rq.last_execution_time),
-            newest_last_execution = MAX(rq.last_execution_time),
+            oldest_last_execution =
+            (
+                SELECT
+                    MIN(rq2.last_execution_time)
+                FROM #report_queries AS rq2
+                WHERE rq2.last_execution_time IS NOT NULL
+            ),
+            newest_last_execution =
+            (
+                SELECT
+                    MAX(rq2.last_execution_time)
+                FROM #report_queries AS rq2
+                WHERE rq2.last_execution_time IS NOT NULL
+            ),
             psp_parents_to_remove =
             (
                 SELECT
