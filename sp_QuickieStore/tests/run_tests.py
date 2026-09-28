@@ -34,6 +34,7 @@ Exits 1 if any assertion fails.
 """
 
 import argparse
+import math
 import os
 import re
 import shlex
@@ -788,9 +789,12 @@ def parameter_sensitive_tests(server, password, R):
 # starts, and slot B after the other tests, in a later interval. In each slot,
 # one rm_q1 execution waits on a lock that a second session holds, and the
 # other executions don't wait. Slot A runs that execution last, and slot B
-# runs it first, so the last duration differs between the two periods. rm_q2
-# never waits, and gets a new index between the slots, so it has one plan in
-# each slot.
+# runs it first, so the last duration differs between the two periods. rm_q3
+# reads the same row and waits once in each slot: after rm_q1 in slot A, and
+# before it in slot B. So the latest Lock wait comes from rm_q3 in the
+# baseline period, and from rm_q1 in the current period and the whole window.
+# rm_q2 never waits, and gets a new index between the slots, so it has one
+# plan in each slot.
 RM_DB = TEST_DB + "_rm"
 RM_MARKER = "qs_rm_marker"
 
@@ -809,8 +813,8 @@ ALTER DATABASE {db} SET QUERY_STORE = ON
 
 # Wait for READ_WRITE, then run a throwaway query in a retry loop until Query
 # Store captures it, so capture is known to be live before slot A compiles
-# anything. Clearing the plan cache after that makes rm_q1 and rm_q2 compile
-# fresh in slot A, with capture on.
+# anything. Clearing the plan cache after that makes rm_q1, rm_q2, and rm_q3
+# compile fresh in slot A, with capture on.
 RM_SCHEMA_SQL = """
 SET NOCOUNT ON;
 DECLARE @tries integer = 0, @rows bigint = 0;
@@ -835,6 +839,7 @@ FROM
 ) AS x;
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q1 AS BEGIN SELECT /* qs_rm_marker */ l.v FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q2 AS BEGIN SELECT /* qs_rm_marker */ c = COUNT_BIG(*) FROM dbo.rm_scan AS s WHERE s.v = 5; END;');
+EXECUTE (N'CREATE PROCEDURE dbo.rm_q3 AS BEGIN SELECT /* qs_rm_marker */ l.id, l.v FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
 SET @tries = 0;
 WHILE @tries < 10 AND @rows = 0
 BEGIN
@@ -849,8 +854,9 @@ ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
 SELECT marker = 'RM_WARM:' + CONVERT(varchar(20), @rows);
 """
 
-# The lock holder: takes an X lock on rm_q1's row, waits until it sees a
-# request blocked behind it, then holds the lock 2 more seconds.
+# The lock holder: takes an X lock on the row rm_q1 and rm_q3 read, waits
+# until it sees a request blocked behind it, then holds the lock 2 more
+# seconds.
 RM_HOLDER_SQL = """
 SET NOCOUNT ON;
 BEGIN TRANSACTION;
@@ -867,9 +873,10 @@ WAITFOR DELAY '00:00:02';
 COMMIT TRANSACTION;
 """
 
-# The waiter: runs rm_q1 once the holder's X lock on rm_lock is granted, so
-# it blocks. The check names the table because other sessions, such as Query
-# Store's own writes, can hold X key locks in the same database.
+# The waiter: runs {proc} (rm_q1 or rm_q3) once the holder's X lock on
+# rm_lock is granted, so it blocks. The check names the table because other
+# sessions, such as Query Store's own writes, can hold X key locks in the
+# same database.
 RM_BLOCKED_SQL = """
 SET NOCOUNT ON;
 DECLARE @tries integer = 0;
@@ -886,10 +893,10 @@ BEGIN
     WAITFOR DELAY '00:00:00.100';
     SET @tries += 1;
 END;
-EXECUTE dbo.rm_q1;
+EXECUTE dbo.{proc};
 """
 
-# rm_q1's Lock wait so far, in ms, after a flush.
+# {proc}'s Lock wait so far, in ms, after a flush.
 RM_LOCK_TOTAL_SQL = """
 SET NOCOUNT ON;
 EXECUTE sys.sp_query_store_flush_db;
@@ -897,7 +904,7 @@ SELECT marker = 'RM_LOCK:' + CONVERT(varchar(20), ISNULL(SUM(qsws.total_query_wa
 FROM sys.query_store_wait_stats AS qsws
 JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsws.plan_id
 JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id = OBJECT_ID(N'dbo.rm_q1')
+WHERE qsq.object_id = OBJECT_ID(N'dbo.{proc}')
 AND   qsws.wait_category_desc = N'Lock';
 """
 
@@ -930,7 +937,8 @@ CROSS APPLY
 (
     SELECT period = CASE WHEN qsrs.last_execution_time >= @split THEN 'No' ELSE 'Yes' END
 ) AS p
-WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'))
+WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'),
+                        OBJECT_ID(N'dbo.rm_q3'))
 GROUP BY qsrs.plan_id, qsq.object_id, p.period;
 SELECT
     gt = 'GT|waits|' + CONVERT(varchar(20), qsws.plan_id) + '|' +
@@ -948,12 +956,14 @@ CROSS APPLY
     AND   qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
     AND   qsrs.execution_type = qsws.execution_type
 ) AS p
-WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'))
+WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'),
+                        OBJECT_ID(N'dbo.rm_q3'))
 GROUP BY qsws.plan_id, qsq.object_id, p.period, qsws.wait_category_desc;
 """
 
-# A WaitStatsByQuery log table in the shape the procedure created before it
-# had a period column. Logging to it has to add the column first.
+# WaitStatsByQuery and WaitStatsTotal log tables in the shape the procedure
+# created before they had a period column. Logging to them has to add the
+# column first.
 RM_OLD_LOG_SQL = """
 SET NOCOUNT ON;
 CREATE TABLE dbo.qs_rm_old_WaitStatsByQuery
@@ -977,14 +987,40 @@ CREATE TABLE dbo.qs_rm_old_WaitStatsByQuery
     max_query_duration_ms bigint NULL,
     PRIMARY KEY CLUSTERED (collection_time, id)
 );
+CREATE TABLE dbo.qs_rm_old_WaitStatsTotal
+(
+    id bigint IDENTITY,
+    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+    source nvarchar(40) NULL,
+    database_name sysname NULL,
+    wait_category_desc nvarchar(60) NULL,
+    total_query_wait_time_ms bigint NULL,
+    total_query_duration_ms bigint NULL,
+    avg_query_wait_time_ms bigint NULL,
+    avg_query_duration_ms bigint NULL,
+    last_query_wait_time_ms bigint NULL,
+    last_query_duration_ms bigint NULL,
+    min_query_wait_time_ms bigint NULL,
+    min_query_duration_ms bigint NULL,
+    max_query_wait_time_ms bigint NULL,
+    max_query_duration_ms bigint NULL,
+    PRIMARY KEY CLUSTERED (collection_time, id)
+);
 """
 
-# Whether a WaitStatsByQuery log table has the period column, then its rows.
+# Whether the WaitStatsByQuery and WaitStatsTotal log tables have the period
+# column, then their rows.
 RM_LOG_COLUMN_SQL = """
 SET NOCOUNT ON;
 SELECT marker = 'RM_COL|' +
     CASE
         WHEN COL_LENGTH(N'dbo.{prefix}_WaitStatsByQuery',
+                        N'from_regression_baseline_time_period') IS NULL
+        THEN 'missing'
+        ELSE 'present'
+    END + '|' +
+    CASE
+        WHEN COL_LENGTH(N'dbo.{prefix}_WaitStatsTotal',
                         N'from_regression_baseline_time_period') IS NULL
         THEN 'missing'
         ELSE 'present'
@@ -1001,6 +1037,16 @@ SELECT
 FROM dbo.{prefix}_WaitStatsByQuery AS w;
 """
 
+RM_LOG_TOTAL_ROWS_SQL = """
+SET NOCOUNT ON;
+SELECT
+    rm_tot = 'RM_TOT|' +
+             COALESCE(t.from_regression_baseline_time_period, 'NULL') + '|' +
+             t.wait_category_desc + '|' +
+             CONVERT(varchar(20), t.total_query_wait_time_ms)
+FROM dbo.{prefix}_WaitStatsTotal AS t;
+"""
+
 RM_CLEANUP_SQL = """
 SET NOCOUNT ON;
 IF DB_ID(N'{db}') IS NOT NULL
@@ -1011,6 +1057,14 @@ END;
 """.format(db=RM_DB)
 
 SEPARATOR = re.compile(r"^-+(\t-+)*$")
+
+
+def number(value):
+    """A result set value as a float, or None."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def result_sets(stdout):
@@ -1051,8 +1105,9 @@ def rm_now(server, password):
     return (m.group(1), m.group(2).strip(), int(m.group(3))) if m else None
 
 
-def rm_lock_total(server, password):
-    out, _ = _sqlcmd(server, password, RM_LOCK_TOTAL_SQL, database=RM_DB)
+def rm_lock_total(server, password, proc="rm_q1"):
+    out, _ = _sqlcmd(server, password, RM_LOCK_TOTAL_SQL.format(proc=proc),
+                     database=RM_DB)
     m = re.search(r"RM_LOCK:(\d+)", out)
     return int(m.group(1)) if m else None
 
@@ -1065,12 +1120,12 @@ def rm_plain(server, password, count):
     return find_sql_errors(out + "\n" + err)
 
 
-def rm_blocked(server, password):
-    """One rm_q1 execution that waits on a lock for at least 2 seconds.
-    Tries up to 3 times, so one run that Query Store does not record as a
-    wait can't fail the fixture. Returns (errors, rm_q1's Lock wait increase
-    in ms)."""
-    before = rm_lock_total(server, password) or 0
+def rm_blocked(server, password, proc="rm_q1"):
+    """One execution of proc (rm_q1 or rm_q3) that waits on a lock for at
+    least 2 seconds. Tries up to 3 times, so one run that Query Store does
+    not record as a wait can't fail the fixture. Returns (errors, proc's
+    Lock wait increase in ms)."""
+    before = rm_lock_total(server, password, proc) or 0
     errs, added = [], 0
     for _ in range(3):
         holder = subprocess.Popen(
@@ -1078,7 +1133,7 @@ def rm_blocked(server, password):
                                 "-d", RM_DB, "-Q", RM_HOLDER_SQL],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
-            out, err = _sqlcmd(server, password, RM_BLOCKED_SQL,
+            out, err = _sqlcmd(server, password, RM_BLOCKED_SQL.format(proc=proc),
                                database=RM_DB, timeout=120)
             h_out, h_err = holder.communicate(timeout=120)
         finally:
@@ -1091,7 +1146,7 @@ def rm_blocked(server, password):
         if holder.returncode:
             errs.append("lock holder exited %d: %s"
                         % (holder.returncode, text.strip()[-200:]))
-        added = (rm_lock_total(server, password) or 0) - before
+        added = (rm_lock_total(server, password, proc) or 0) - before
         if errs or added >= 1000:
             break
     return errs, added
@@ -1113,15 +1168,19 @@ def regression_window_setup(server, password, R):
     if errs or not m or int(m.group(1)) == 0:
         return None
 
+    # Slot A: plain runs, then rm_q1 waits, then rm_q3 waits, so rm_q3 has
+    # the latest Lock wait in the baseline period.
     start = rm_now(server, password)
     errs = rm_plain(server, password, 3)
-    block_errs, waited = rm_blocked(server, password)
+    block_errs, waited = rm_blocked(server, password, "rm_q1")
+    block_errs3, waited3 = rm_blocked(server, password, "rm_q3")
+    errs += block_errs + block_errs3
     end = rm_now(server, password)
-    R.check("RegressionFixture", "slot A: rm_q1 waited on a lock",
-            not errs and not block_errs and waited >= 1000
-            and start and end,
-            "errors=%s lock wait added=%d ms" % ((errs + block_errs)[:2], waited))
-    if errs or block_errs or waited < 1000 or not start or not end:
+    ok = bool(not errs and waited >= 1000 and waited3 >= 1000 and start and end)
+    R.check("RegressionFixture", "slot A: rm_q1 and rm_q3 waited on a lock", ok,
+            "errors=%s lock wait added: rm_q1 %d ms, rm_q3 %d ms"
+            % (errs[:2], waited, waited3))
+    if not ok:
         return None
     return {"start": start, "slot_a_end": end}
 
@@ -1139,17 +1198,21 @@ def regression_window_tests(server, password, R, state):
                        "SET NOCOUNT ON; CREATE INDEX v ON dbo.rm_scan (v);",
                        database=RM_DB)
     errs = find_sql_errors(out + "\n" + err)
+    # Slot B: rm_q3 waits, then rm_q1 waits, then the plain runs, so rm_q1
+    # has the latest Lock wait in the current period and the whole window.
     split = rm_now(server, password)
-    block_errs, waited = rm_blocked(server, password)
-    errs += block_errs + rm_plain(server, password, 5)
+    block_errs3, waited3 = rm_blocked(server, password, "rm_q3")
+    block_errs, waited = rm_blocked(server, password, "rm_q1")
+    errs += block_errs3 + block_errs + rm_plain(server, password, 5)
     _sqlcmd(server, password,
             "SET NOCOUNT ON; EXECUTE sys.sp_query_store_flush_db; WAITFOR DELAY '00:00:01';",
             database=RM_DB)
     end = rm_now(server, password)
-    R.check("RegressionFixture", "slot B: rm_q1 waited on a lock",
-            not errs and waited >= 1000 and split and end,
-            "errors=%s lock wait added=%d ms" % (errs[:2], waited))
-    if errs or waited < 1000 or not split or not end:
+    ok = bool(not errs and waited >= 1000 and waited3 >= 1000 and split and end)
+    R.check("RegressionFixture", "slot B: rm_q3 and rm_q1 waited on a lock", ok,
+            "errors=%s lock wait added: rm_q3 %d ms, rm_q1 %d ms"
+            % (errs[:2], waited3, waited))
+    if not ok:
         return
 
     out, err = _sqlcmd(server, password, RM_TRUTH_SQL.format(split=split[1]),
@@ -1165,25 +1228,99 @@ def regression_window_tests(server, password, R, state):
     q1_plans = sorted({p for (p, _), (o, _) in runs.items() if o == "rm_q1"})
     q2_plans = sorted({p for (p, _), (o, _) in runs.items() if o == "rm_q2"},
                       key=int)
+    q3_plans = sorted({p for (p, _), (o, _) in runs.items() if o == "rm_q3"})
     R.check("RegressionFixture",
-            "Query Store has one rm_q1 plan and an rm_q2 plan in each slot",
-            len(q1_plans) == 1 and len(q2_plans) == 2
+            "Query Store has one rm_q1 plan, one rm_q3 plan, and an rm_q2 plan "
+            "in each slot",
+            len(q1_plans) == 1 and len(q3_plans) == 1 and len(q2_plans) == 2
             and (q2_plans[0], "Yes") in runs and (q2_plans[1], "No") in runs,
-            "rm_q1 plans=%s rm_q2 plans=%s runs=%s" % (q1_plans, q2_plans, runs))
-    if len(q1_plans) != 1 or len(q2_plans) != 2:
+            "rm_q1 plans=%s rm_q2 plans=%s rm_q3 plans=%s runs=%s"
+            % (q1_plans, q2_plans, q3_plans, runs))
+    if len(q1_plans) != 1 or len(q3_plans) != 1 or len(q2_plans) != 2:
         return
     q1 = q1_plans[0]
+    q3 = q3_plans[0]
 
-    def lock_ms(period=None):
+    def lock_ms(period=None, plan=None):
         return sum(ms for (p, per, cat), ms in waits.items()
-                   if p == q1 and cat == "Lock" and period in (None, per))
+                   if p == (plan or q1) and cat == "Lock" and period in (None, per))
 
     def one_per_query(stdout, group):
         for source in ("compilation_stats", "resource_stats"):
             ids = [r.get("query_id") for r in source_rows(stdout, source)]
             R.check(group, "%s has one row per query" % source,
-                    len(ids) == 2 and len(set(ids)) == 2,
+                    len(ids) == 3 and len(set(ids)) == 3,
                     "query_id values: %s" % ids)
+
+    def totals_checks(stdout, group, latest):
+        """The wait stats total rows, checked against the by-query rows they
+        add up, from the same run, and against Query Store. latest maps each
+        period (None outside regression mode) to the plan with the latest
+        Lock wait, whose last values the totals take."""
+        period_col = "from_regression_baseline_time_period"
+        by_query = source_rows(stdout, "query_store_wait_stats_by_query")
+        totals = source_rows(stdout, "query_store_wait_stats_total")
+        lock = {}
+        for r in totals:
+            if r.get("wait_category_desc") == "Lock":
+                lock.setdefault(r.get(period_col), []).append(r)
+        R.check(group, "wait stats total has one Lock row"
+                + ("" if None in latest else " per period"),
+                sorted(lock, key=str) == sorted(latest, key=str)
+                and all(len(v) == 1 for v in lock.values()),
+                "Lock rows by period: %s" % {k: len(v) for k, v in lock.items()})
+        expected = {p: lock_ms(p, q1) + lock_ms(p, q3) for p in latest}
+        got = {p: [r.get("total_query_wait_time_ms") for r in v]
+               for p, v in lock.items()}
+        R.check(group, "wait stats total Lock covers rm_q1 and rm_q3, matching "
+                "Query Store", all(got.get(p) == [str(n)] for p, n in expected.items()),
+                "got=%s expected=%s" % (got, expected))
+        rules = {"sum": sum, "avg": lambda v: sum(v) / len(v), "min": min, "max": max}
+        bad = []
+        for t in totals:
+            key = (t.get("wait_category_desc"), t.get(period_col))
+            rows = [r for r in by_query
+                    if (r.get("wait_category_desc"), r.get(period_col)) == key]
+            if not rows:
+                bad.append("%s: no by-query rows" % (key,))
+                continue
+            for column, rule in (
+                    ("total_query_wait_time_ms", "sum"),
+                    ("total_query_duration_ms", "sum"),
+                    ("avg_query_wait_time_ms", "avg"),
+                    ("avg_query_duration_ms", "avg"),
+                    ("min_query_wait_time_ms", "min"),
+                    ("min_query_duration_ms", "min"),
+                    ("max_query_wait_time_ms", "max"),
+                    ("max_query_duration_ms", "max")):
+                values = [number(r.get(column)) for r in rows]
+                value = number(t.get(column))
+                if (value is None or None in values or not math.isclose(
+                        value, rules[rule](values), rel_tol=1e-9, abs_tol=0.001)):
+                    bad.append("%s %s: got %s, %s of %s"
+                               % (key, column, t.get(column), rule,
+                                  [r.get(column) for r in rows]))
+        R.check(group, "wait stats total adds up, averages, and takes the min "
+                "and max of the by-query rows", bool(totals) and not bad,
+                "; ".join(bad[:3]) or "no wait stats total rows")
+        bad = []
+        for period, plan in latest.items():
+            t = lock.get(period, [])
+            q = [r for r in by_query if r.get("wait_category_desc") == "Lock"
+                 and r.get(period_col) == period and r.get("plan_id") == plan]
+            if len(t) != 1 or len(q) != 1:
+                bad.append("%s: %d total rows, %d by-query rows for plan %s"
+                           % (period, len(t), len(q), plan))
+                continue
+            for column in ("last_query_wait_time_ms", "last_query_duration_ms"):
+                a, b = number(t[0].get(column)), number(q[0].get(column))
+                if a is None or b is None or not math.isclose(
+                        a, b, rel_tol=1e-9, abs_tol=0.001):
+                    bad.append("%s %s: got %s, plan %s has %s"
+                               % (period, column, t[0].get(column), plan,
+                                  q[0].get(column)))
+        R.check(group, "wait stats total takes Lock's last values from the plan "
+                "with the latest Lock wait", not bad, "; ".join(bad[:3]))
 
     # Regression mode: slot A is the baseline, slot B is the current period.
     out, combined = run_qs(server, password,
@@ -1243,6 +1380,7 @@ def regression_window_tests(server, password, R, state):
             "got=%s expected Yes=%d No=%d" % (got_lock, lock_ms("Yes"),
                                               lock_ms("No")))
     one_per_query(out, "Regression")
+    totals_checks(out, "Regression", {"Yes": q3, "No": q1})
 
     # The whole window, both slots, without regression mode.
     out, combined = run_qs(server, password,
@@ -1256,8 +1394,9 @@ def regression_window_tests(server, password, R, state):
             not errs and completed(out), str(errs[:2]))
     main_rows = source_rows(out, "runtime_stats")
     plans = sorted(r.get("plan_id") for r in main_rows)
-    R.check("WaitWindow", "one row per plan", plans == sorted(q1_plans + q2_plans),
-            "rows=%s expected=%s" % (plans, sorted(q1_plans + q2_plans)))
+    all_plans = sorted(q1_plans + q2_plans + q3_plans)
+    R.check("WaitWindow", "one row per plan", plans == all_plans,
+            "rows=%s expected=%s" % (plans, all_plans))
     totals = {}
     for (p, _), (_, n) in runs.items():
         totals[p] = totals.get(p, 0) + n
@@ -1283,9 +1422,11 @@ def regression_window_tests(server, password, R, state):
             got_lock == [str(lock_ms())],
             "got=%s expected=%d" % (got_lock, lock_ms()))
     one_per_query(out, "WaitWindow")
+    totals_checks(out, "WaitWindow", {None: q1})
 
     # Regression mode logged to tables: once into tables the procedure
-    # creates, once into an older WaitStatsByQuery table it has to upgrade.
+    # creates, once into older WaitStatsByQuery and WaitStatsTotal tables it
+    # has to upgrade.
     # This runs last, so the log tables in the fixture database can't
     # affect the checks above.
     out, err = _sqlcmd(server, password, RM_OLD_LOG_SQL, database=RM_DB)
@@ -1303,33 +1444,52 @@ def regression_window_tests(server, password, R, state):
                                 RM_MARKER, RM_DB, prefix),
                              database_name=RM_DB)
         run_errs = errs + find_sql_errors(combined)
-        out, _ = _sqlcmd(server, password, RM_LOG_COLUMN_SQL.format(prefix=prefix),
-                         database=RM_DB)
-        present = "RM_COL|present" in out
+        col_out, _ = _sqlcmd(server, password,
+                             RM_LOG_COLUMN_SQL.format(prefix=prefix), database=RM_DB)
+        present = "RM_COL|present" in col_out
+        total_present = bool(re.search(r"RM_COL\|\w+\|present", col_out))
         R.check("RegressionLog", "%s: executes cleanly and has the period column"
                 % label, not run_errs and present,
                 "errors=%s column=%s" % (run_errs[:2],
                                          "present" if present else "missing"))
-        if not present:
-            continue
-        out, _ = _sqlcmd(server, password, RM_LOG_ROWS_SQL.format(prefix=prefix),
-                         database=RM_DB)
-        rows = [(plan, period, cat.strip(), ms) for plan, period, cat, ms in
-                re.findall(r"RM_LOG\|(\d+)\|(Yes|No|NULL)\|([^|\r\n]+)\|(\d+)", out)]
-        keys = [(plan, period, cat) for plan, period, cat, _ in rows]
-        R.check("RegressionLog",
-                "%s: one wait row per plan, period, and category, each with its period"
-                % label, bool(rows) and len(keys) == len(set(keys))
-                and all(period != "NULL" for _, period, _ in keys),
-                "rows=%s" % keys)
-        got_lock = {period: ms for plan, period, cat, ms in rows
-                    if plan == q1 and cat == "Lock"}
-        R.check("RegressionLog",
-                "%s: rm_q1 Lock wait per period matches Query Store" % label,
-                got_lock.get("Yes") == str(lock_ms("Yes"))
-                and got_lock.get("No") == str(lock_ms("No")),
-                "got=%s expected Yes=%d No=%d" % (got_lock, lock_ms("Yes"),
-                                                  lock_ms("No")))
+        if present:
+            out, _ = _sqlcmd(server, password, RM_LOG_ROWS_SQL.format(prefix=prefix),
+                             database=RM_DB)
+            rows = [(plan, period, cat.strip(), ms) for plan, period, cat, ms in
+                    re.findall(r"RM_LOG\|(\d+)\|(Yes|No|NULL)\|([^|\r\n]+)\|(\d+)",
+                               out)]
+            keys = [(plan, period, cat) for plan, period, cat, _ in rows]
+            R.check("RegressionLog",
+                    "%s: one wait row per plan, period, and category, each with its "
+                    "period" % label, bool(rows) and len(keys) == len(set(keys))
+                    and all(period != "NULL" for _, period, _ in keys),
+                    "rows=%s" % keys)
+            got_lock = {period: ms for plan, period, cat, ms in rows
+                        if plan == q1 and cat == "Lock"}
+            R.check("RegressionLog",
+                    "%s: rm_q1 Lock wait per period matches Query Store" % label,
+                    got_lock.get("Yes") == str(lock_ms("Yes"))
+                    and got_lock.get("No") == str(lock_ms("No")),
+                    "got=%s expected Yes=%d No=%d" % (got_lock, lock_ms("Yes"),
+                                                      lock_ms("No")))
+        R.check("RegressionLog", "%s: WaitStatsTotal has the period column" % label,
+                total_present,
+                "column=%s" % ("present" if total_present else "missing"))
+        if total_present:
+            out, _ = _sqlcmd(server, password,
+                             RM_LOG_TOTAL_ROWS_SQL.format(prefix=prefix), database=RM_DB)
+            got = {}
+            for period, cat, ms in re.findall(
+                    r"RM_TOT\|(Yes|No|NULL)\|([^|\r\n]+)\|(\d+)", out):
+                if cat.strip() == "Lock":
+                    got.setdefault(period, []).append(ms)
+            expected = {p: lock_ms(p, q1) + lock_ms(p, q3) for p in ("Yes", "No")}
+            R.check("RegressionLog",
+                    "%s: WaitStatsTotal has one Lock row per period, matching Query "
+                    "Store" % label,
+                    sorted(got) == ["No", "Yes"]
+                    and all(got[p] == [str(n)] for p, n in expected.items()),
+                    "got=%s expected=%s" % (got, expected))
 
 
 def main():

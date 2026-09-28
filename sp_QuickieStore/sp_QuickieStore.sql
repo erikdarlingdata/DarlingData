@@ -1638,7 +1638,12 @@ CREATE TABLE
     last_query_wait_time_ms bigint NOT NULL,
     min_query_wait_time_ms bigint NOT NULL,
     max_query_wait_time_ms bigint NOT NULL,
-    from_regression_baseline varchar(3) NULL
+    from_regression_baseline varchar(3) NULL,
+    /*
+    The last interval with this wait for this plan,
+    so wait stats in total can take the latest last
+    */
+    last_runtime_stats_interval_id bigint NULL
 );
 
 /*
@@ -2757,8 +2762,42 @@ BEGIN
                 min_query_duration_ms bigint NULL,
                 max_query_wait_time_ms bigint NULL,
                 max_query_duration_ms bigint NULL,
+                from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _WaitStatsTotal tables created before
+    from_regression_baseline_time_period existed need the column added,
+    or the regression mode insert fails
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_WaitStatsTotal''
+            AND   s.name = @schema_name
+            AND   c.name = N''from_regression_baseline_time_period''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_wait_stats_total + N' ADD from_regression_baseline_time_period varchar(3) NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added from_regression_baseline_time_period column to %s for wait stats logging.'', 0, 1, ''' + REPLACE(@log_table_wait_stats_total, N'''', N'''''') + N''') WITH NOWAIT; END;
         END';
 
     EXECUTE sys.sp_executesql
@@ -13494,7 +13533,9 @@ SELECT
         MIN(qsws_with_lasts.min_query_wait_time_ms),
     max_query_wait_time_ms =
         MAX(qsws_with_lasts.max_query_wait_time_ms),
-    qsws_with_lasts.from_regression_baseline
+    qsws_with_lasts.from_regression_baseline,
+    last_runtime_stats_interval_id =
+        MAX(qsws_with_lasts.runtime_stats_interval_id)
 FROM
 (
     SELECT
@@ -13602,7 +13643,8 @@ OPTION(RECOMPILE);' + @nc10;
         last_query_wait_time_ms,
         min_query_wait_time_ms,
         max_query_wait_time_ms,
-        from_regression_baseline
+        from_regression_baseline,
+        last_runtime_stats_interval_id
     )
     EXECUTE sys.sp_executesql
         @sql,
@@ -16156,8 +16198,20 @@ BEGIN
                     source =
                         ''query_store_wait_stats_total'',
                     database_name =
-                        DB_NAME(qsws.database_id),
-                    qsws.wait_category_desc,
+                        DB_NAME(w.database_id),' +
+                    /*
+                    In regression mode, each time period gets its own totals.
+                    The logging insert below names this column in the same
+                    place, under the same condition.
+                    */
+                    CASE
+                        WHEN @regression_mode = 1
+                        THEN N'
+                    from_regression_baseline_time_period =
+                        w.from_regression_baseline,'
+                        ELSE N''
+                    END + N'
+                    w.wait_category_desc,
                     total_query_wait_time_ms = '
                     +
                     CONVERT
@@ -16165,113 +16219,178 @@ BEGIN
                         nvarchar(max),
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(qsws.total_query_wait_time_ms), ''N0'')'
-                        ELSE N'SUM(qsws.total_query_wait_time_ms)'
+                        THEN N'FORMAT(SUM(w.total_query_wait_time_ms), ''N0'')'
+                        ELSE N'SUM(w.total_query_wait_time_ms)'
                     END
                     + N',
                     total_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(x.total_duration_ms), ''N0'')'
-                        ELSE N'SUM(x.total_duration_ms)'
+                        THEN N'FORMAT(SUM(w.total_duration_ms), ''N0'')'
+                        ELSE N'SUM(w.total_duration_ms)'
                     END
                     + N',
                     avg_query_wait_time_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(qsws.avg_query_wait_time_ms), ''N0'')'
-                        ELSE N'SUM(qsws.avg_query_wait_time_ms)'
+                        THEN N'FORMAT(AVG(w.avg_query_wait_time_ms), ''N0'')'
+                        ELSE N'AVG(w.avg_query_wait_time_ms)'
                     END
                     + N',
                     avg_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(x.avg_duration_ms), ''N0'')'
-                        ELSE N'SUM(x.avg_duration_ms)'
+                        THEN N'FORMAT(AVG(w.avg_duration_ms), ''N0'')'
+                        ELSE N'AVG(w.avg_duration_ms)'
                     END
                     + N',
                     last_query_wait_time_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(qsws.last_query_wait_time_ms), ''N0'')'
-                        ELSE N'SUM(qsws.last_query_wait_time_ms)'
+                        THEN N'FORMAT(MAX(w.latest_last_query_wait_time_ms), ''N0'')'
+                        ELSE N'MAX(w.latest_last_query_wait_time_ms)'
                     END
                     + N',
                     last_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(x.last_duration_ms), ''N0'')'
-                        ELSE N'SUM(x.last_duration_ms)'
+                        THEN N'FORMAT(MAX(w.latest_last_duration_ms), ''N0'')'
+                        ELSE N'MAX(w.latest_last_duration_ms)'
                     END
                     + N',
                     min_query_wait_time_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(qsws.min_query_wait_time_ms), ''N0'')'
-                        ELSE N'SUM(qsws.min_query_wait_time_ms)'
+                        THEN N'FORMAT(MIN(w.min_query_wait_time_ms), ''N0'')'
+                        ELSE N'MIN(w.min_query_wait_time_ms)'
                     END
                     + N',
                     min_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(x.min_duration_ms), ''N0'')'
-                        ELSE N'SUM(x.min_duration_ms)'
+                        THEN N'FORMAT(MIN(w.min_duration_ms), ''N0'')'
+                        ELSE N'MIN(w.min_duration_ms)'
                     END
                     + N',
                     max_query_wait_time_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(qsws.max_query_wait_time_ms), ''N0'')'
-                        ELSE N'SUM(qsws.max_query_wait_time_ms)'
+                        THEN N'FORMAT(MAX(w.max_query_wait_time_ms), ''N0'')'
+                        ELSE N'MAX(w.max_query_wait_time_ms)'
                     END
                     + N',
                     max_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(SUM(x.max_duration_ms), ''N0'')'
-                        ELSE N'SUM(x.max_duration_ms)'
+                        THEN N'FORMAT(MAX(w.max_duration_ms), ''N0'')'
+                        ELSE N'MAX(w.max_duration_ms)'
                     END
                     ) + N'
-                FROM #query_store_wait_stats AS qsws
-                CROSS APPLY
+                FROM
                 (
+                    /*
+                    One row per plan and wait category, with the plan''s
+                    runtime stats. Totals add up, averages average, and
+                    minimums and maximums take the lowest and highest.
+                    Last values come from the plan with the latest wait
+                    in the category. The windows run before GROUP BY,
+                    so they see each plan''s row.
+                    */
                     SELECT
-                        qsrs.avg_duration_ms,
-                        qsrs.last_duration_ms,
-                        qsrs.min_duration_ms,
-                        qsrs.max_duration_ms,
-                        qsrs.total_duration_ms,
-                        qsq.object_name
-                    FROM #query_store_runtime_stats AS qsrs
-                    JOIN #query_store_plan AS qsp
-                      ON  qsrs.plan_id = qsp.plan_id
-                      AND qsrs.database_id = qsp.database_id
-                    JOIN #query_store_query AS qsq
-                      ON  qsp.query_id = qsq.query_id
-                      AND qsp.database_id = qsq.database_id
-                    WHERE qsws.plan_id = qsrs.plan_id
-                    AND   qsws.database_id = qsrs.database_id' +
+                        qsws.database_id,
+                        qsws.wait_category_desc,
+                        qsws.from_regression_baseline,
+                        qsws.total_query_wait_time_ms,
+                        qsws.avg_query_wait_time_ms,
+                        qsws.min_query_wait_time_ms,
+                        qsws.max_query_wait_time_ms,
+                        x.total_duration_ms,
+                        x.avg_duration_ms,
+                        x.min_duration_ms,
+                        x.max_duration_ms,
+                        latest_last_query_wait_time_ms =
+                            LAST_VALUE(qsws.last_query_wait_time_ms) OVER
+                            (
+                                PARTITION BY
+                                    qsws.database_id,
+                                    qsws.wait_category_desc' +
+                                    CASE
+                                        WHEN @regression_mode = 1
+                                        THEN N',
+                                    qsws.from_regression_baseline'
+                                        ELSE N''
+                                    END + N'
+                                ORDER BY
+                                    qsws.last_runtime_stats_interval_id ASC,
+                                    x.last_execution_time ASC,
+                                    qsws.plan_id ASC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                            ),
+                        latest_last_duration_ms =
+                            LAST_VALUE(x.last_duration_ms) OVER
+                            (
+                                PARTITION BY
+                                    qsws.database_id,
+                                    qsws.wait_category_desc' +
+                                    CASE
+                                        WHEN @regression_mode = 1
+                                        THEN N',
+                                    qsws.from_regression_baseline'
+                                        ELSE N''
+                                    END + N'
+                                ORDER BY
+                                    qsws.last_runtime_stats_interval_id ASC,
+                                    x.last_execution_time ASC,
+                                    qsws.plan_id ASC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                            )
+                    FROM #query_store_wait_stats AS qsws
+                    CROSS APPLY
+                    (
+                        SELECT
+                            qsrs.avg_duration_ms,
+                            qsrs.last_duration_ms,
+                            qsrs.min_duration_ms,
+                            qsrs.max_duration_ms,
+                            qsrs.total_duration_ms,
+                            qsrs.last_execution_time
+                        FROM #query_store_runtime_stats AS qsrs
+                        JOIN #query_store_plan AS qsp
+                          ON  qsrs.plan_id = qsp.plan_id
+                          AND qsrs.database_id = qsp.database_id
+                        JOIN #query_store_query AS qsq
+                          ON  qsp.query_id = qsq.query_id
+                          AND qsp.database_id = qsq.database_id
+                        WHERE qsws.plan_id = qsrs.plan_id
+                        AND   qsws.database_id = qsrs.database_id' +
+                        CASE
+                            WHEN @regression_mode = 1
+                            THEN N'
+                        AND   qsws.from_regression_baseline = qsrs.from_regression_baseline'
+                            ELSE N''
+                        END + N'
+                    ) AS x
+                ) AS w
+                GROUP BY
+                    w.database_id,
+                    w.wait_category_desc' +
                     CASE
                         WHEN @regression_mode = 1
-                        THEN N'
-                    AND   qsws.from_regression_baseline = qsrs.from_regression_baseline'
+                        THEN N',
+                    w.from_regression_baseline'
                         ELSE N''
                     END + N'
-                ) AS x
-                GROUP BY
-                    qsws.wait_category_desc,
-                    qsws.database_id
                 ORDER BY
-                    SUM(qsws.total_query_wait_time_ms) DESC
+                    SUM(w.total_query_wait_time_ms) DESC
                 OPTION(RECOMPILE);' + @nc10
                 );
 
@@ -16286,7 +16405,13 @@ BEGIN
                     SET @insert_sql =
                         @isolation_level +
                         N'INSERT INTO ' + @log_table_wait_stats_total +
-                        N' (source, database_name, wait_category_desc,' +
+                        N' (source, database_name,' +
+                        CASE
+                            WHEN @regression_mode = 1
+                            THEN N' from_regression_baseline_time_period,'
+                            ELSE N''
+                        END +
+                        N' wait_category_desc,' +
                         N' total_query_wait_time_ms, total_query_duration_ms,' +
                         N' avg_query_wait_time_ms, avg_query_duration_ms,' +
                         N' last_query_wait_time_ms, last_query_duration_ms,' +
