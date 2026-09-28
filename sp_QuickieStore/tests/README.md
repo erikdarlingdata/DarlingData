@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 209 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 215 assertions. |
 
 ```
 cd sp_QuickieStore/tests
@@ -18,7 +18,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `209`.
+password). Expect `215`.
 
 ## What it actually covers
 
@@ -72,6 +72,12 @@ The checks compare the procedure's output with Query Store's own numbers:
 - **Both runs**: `top_waits` shows the Lock wait for `rm_q1` and none for
   `rm_q2`, and `compilation_stats` and `resource_stats` have one row per
   query.
+- **Regression mode with `@log_to_table = 1`**. Each wait row in the
+  `WaitStatsByQuery` log table names its period, and the `rm_q1` Lock wait
+  for each period matches. This runs twice. The first run logs to tables the
+  procedure creates. The second logs to a `WaitStatsByQuery` table built the
+  way older versions of the procedure built it, without the period column.
+  The procedure has to add the column first.
 
 ## Fixture
 
@@ -82,8 +88,9 @@ drops the database in a `finally` block that runs even if assertions fail.
 Three smaller scratch databases get the same `finally` cleanup. The `@debug`
 check uses `quickiestore_test_empty`, which has Query Store on and no queries.
 The text search checks use `quickiestore_test_cs`, which is case sensitive.
-The regression and wait checks use `quickiestore_test_rm`. Nothing outside
-these four databases is touched.
+The regression and wait checks use `quickiestore_test_rm`, and the logging
+checks create their log tables there. Nothing outside these four databases is
+touched.
 
 ## Known client limitation: `@debug = 1`
 

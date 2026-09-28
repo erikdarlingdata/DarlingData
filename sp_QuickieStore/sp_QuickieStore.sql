@@ -2680,8 +2680,42 @@ BEGIN
                 min_query_duration_ms bigint NULL,
                 max_query_wait_time_ms bigint NULL,
                 max_query_duration_ms bigint NULL,
+                from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _WaitStatsByQuery tables created before
+    from_regression_baseline_time_period existed need the column added,
+    or the regression mode insert fails
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_WaitStatsByQuery''
+            AND   s.name = @schema_name
+            AND   c.name = N''from_regression_baseline_time_period''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_wait_stats_by_query + N' ADD from_regression_baseline_time_period varchar(3) NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added from_regression_baseline_time_period column to %s for wait stats logging.'', 0, 1, ''' + REPLACE(@log_table_wait_stats_by_query, N'''', N'''''') + N''') WITH NOWAIT; END;
         END';
 
     EXECUTE sys.sp_executesql
@@ -15938,11 +15972,11 @@ BEGIN
                     qsws.plan_id,' +
                     /*
                     In regression mode, each plan has a row per time period.
-                    The log table has no column for the period.
+                    The logging insert below names this column in the same
+                    place, under the same condition.
                     */
                     CASE
                         WHEN @regression_mode = 1
-                        AND  @log_to_table = 0
                         THEN N'
                     from_regression_baseline_time_period =
                         qsws.from_regression_baseline,'
@@ -16076,7 +16110,13 @@ BEGIN
                     SET @insert_sql =
                         @isolation_level +
                         N'INSERT INTO ' + @log_table_wait_stats_by_query +
-                        N' (source, database_name, plan_id, object_name, wait_category_desc,' +
+                        N' (source, database_name, plan_id,' +
+                        CASE
+                            WHEN @regression_mode = 1
+                            THEN N' from_regression_baseline_time_period,'
+                            ELSE N''
+                        END +
+                        N' object_name, wait_category_desc,' +
                         N' total_query_wait_time_ms, total_query_duration_ms,' +
                         N' avg_query_wait_time_ms, avg_query_duration_ms,' +
                         N' last_query_wait_time_ms, last_query_duration_ms,' +
