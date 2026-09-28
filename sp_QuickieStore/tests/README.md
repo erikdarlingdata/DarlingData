@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 215 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 227 assertions. |
 
 ```
 cd sp_QuickieStore/tests
@@ -18,7 +18,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `215`.
+password). Expect `227`.
 
 ## What it actually covers
 
@@ -57,7 +57,11 @@ interval, so they get their own scratch database with one-minute intervals.
 Its workload runs in two slots: slot A when the harness starts, and slot B
 after the other tests, in a later interval. In each slot, one `rm_q1`
 execution waits on a lock that a second session holds. Slot A runs that
-execution last, and slot B runs it first. `rm_q2` never waits. It gets a new
+execution last, and slot B runs it first.
+
+`rm_q3` reads the same row and also waits once in each slot. It waits after
+`rm_q1` in slot A, and before it in slot B. So the latest Lock wait comes
+from a different query in each period. `rm_q2` never waits. It gets a new
 index between the slots, so it has a different plan in each slot.
 
 The checks compare the procedure's output with Query Store's own numbers:
@@ -72,12 +76,22 @@ The checks compare the procedure's output with Query Store's own numbers:
 - **Both runs**: `top_waits` shows the Lock wait for `rm_q1` and none for
   `rm_q2`, and `compilation_stats` and `resource_stats` have one row per
   query.
+- **Wait stats in total**, in both runs. Each wait category has one row, and
+  in regression mode one row per period. The Lock total covers `rm_q1` and
+  `rm_q3`, and it matches. Each total row also matches the by-query rows for
+  its category and period. Totals are the sum, and averages are the average
+  of the plan averages. Minimums and maximums are the lowest and the highest.
+  The last wait and the last duration come from the plan with the latest
+  wait in the category. That plan is `rm_q3` in the baseline period, and
+  `rm_q1` in the current period and in the whole window.
 - **Regression mode with `@log_to_table = 1`**. Each wait row in the
   `WaitStatsByQuery` log table names its period, and the `rm_q1` Lock wait
-  for each period matches. This runs twice. The first run logs to tables the
-  procedure creates. The second logs to a `WaitStatsByQuery` table built the
-  way older versions of the procedure built it, without the period column.
-  The procedure has to add the column first.
+  for each period matches. The `WaitStatsTotal` log table has one Lock row
+  per period, and its total for `rm_q1` and `rm_q3` matches. This runs twice.
+  The first run logs to tables the procedure creates. The second logs to
+  `WaitStatsByQuery` and `WaitStatsTotal` tables built the way older versions
+  of the procedure built them, without the period column. The procedure has
+  to add the column first.
 
 ## Fixture
 
