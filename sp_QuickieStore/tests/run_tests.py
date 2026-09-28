@@ -952,6 +952,55 @@ WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'))
 GROUP BY qsws.plan_id, qsq.object_id, p.period, qsws.wait_category_desc;
 """
 
+# A WaitStatsByQuery log table in the shape the procedure created before it
+# had a period column. Logging to it has to add the column first.
+RM_OLD_LOG_SQL = """
+SET NOCOUNT ON;
+CREATE TABLE dbo.qs_rm_old_WaitStatsByQuery
+(
+    id bigint IDENTITY,
+    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+    source nvarchar(40) NULL,
+    database_name sysname NULL,
+    plan_id bigint NULL,
+    object_name nvarchar(257) NULL,
+    wait_category_desc nvarchar(60) NULL,
+    total_query_wait_time_ms bigint NULL,
+    total_query_duration_ms bigint NULL,
+    avg_query_wait_time_ms bigint NULL,
+    avg_query_duration_ms bigint NULL,
+    last_query_wait_time_ms bigint NULL,
+    last_query_duration_ms bigint NULL,
+    min_query_wait_time_ms bigint NULL,
+    min_query_duration_ms bigint NULL,
+    max_query_wait_time_ms bigint NULL,
+    max_query_duration_ms bigint NULL,
+    PRIMARY KEY CLUSTERED (collection_time, id)
+);
+"""
+
+# Whether a WaitStatsByQuery log table has the period column, then its rows.
+RM_LOG_COLUMN_SQL = """
+SET NOCOUNT ON;
+SELECT marker = 'RM_COL|' +
+    CASE
+        WHEN COL_LENGTH(N'dbo.{prefix}_WaitStatsByQuery',
+                        N'from_regression_baseline_time_period') IS NULL
+        THEN 'missing'
+        ELSE 'present'
+    END;
+"""
+
+RM_LOG_ROWS_SQL = """
+SET NOCOUNT ON;
+SELECT
+    rm_log = 'RM_LOG|' + CONVERT(varchar(20), w.plan_id) + '|' +
+             COALESCE(w.from_regression_baseline_time_period, 'NULL') + '|' +
+             w.wait_category_desc + '|' +
+             CONVERT(varchar(20), w.total_query_wait_time_ms)
+FROM dbo.{prefix}_WaitStatsByQuery AS w;
+"""
+
 RM_CLEANUP_SQL = """
 SET NOCOUNT ON;
 IF DB_ID(N'{db}') IS NOT NULL
@@ -1234,6 +1283,53 @@ def regression_window_tests(server, password, R, state):
             got_lock == [str(lock_ms())],
             "got=%s expected=%d" % (got_lock, lock_ms()))
     one_per_query(out, "WaitWindow")
+
+    # Regression mode logged to tables: once into tables the procedure
+    # creates, once into an older WaitStatsByQuery table it has to upgrade.
+    # This runs last, so the log tables in the fixture database can't
+    # affect the checks above.
+    out, err = _sqlcmd(server, password, RM_OLD_LOG_SQL, database=RM_DB)
+    old_errs = find_sql_errors(out + "\n" + err)
+    for prefix, label, errs in (("qs_rm_new", "new log table", []),
+                                ("qs_rm_old", "upgraded log table", old_errs)):
+        _, combined = run_qs(server, password,
+                             ", @regression_baseline_start_date = '%s'"
+                             ", @regression_baseline_end_date = '%s'"
+                             ", @start_date = '%s', @end_date = '%s'"
+                             ", @query_text_search = '%s'"
+                             ", @log_to_table = 1, @log_database_name = '%s'"
+                             ", @log_table_name_prefix = '%s'"
+                             % (state["start"][0], split[0], split[0], end[0],
+                                RM_MARKER, RM_DB, prefix),
+                             database_name=RM_DB)
+        run_errs = errs + find_sql_errors(combined)
+        out, _ = _sqlcmd(server, password, RM_LOG_COLUMN_SQL.format(prefix=prefix),
+                         database=RM_DB)
+        present = "RM_COL|present" in out
+        R.check("RegressionLog", "%s: executes cleanly and has the period column"
+                % label, not run_errs and present,
+                "errors=%s column=%s" % (run_errs[:2],
+                                         "present" if present else "missing"))
+        if not present:
+            continue
+        out, _ = _sqlcmd(server, password, RM_LOG_ROWS_SQL.format(prefix=prefix),
+                         database=RM_DB)
+        rows = [(plan, period, cat.strip(), ms) for plan, period, cat, ms in
+                re.findall(r"RM_LOG\|(\d+)\|(Yes|No|NULL)\|([^|\r\n]+)\|(\d+)", out)]
+        keys = [(plan, period, cat) for plan, period, cat, _ in rows]
+        R.check("RegressionLog",
+                "%s: one wait row per plan, period, and category, each with its period"
+                % label, bool(rows) and len(keys) == len(set(keys))
+                and all(period != "NULL" for _, period, _ in keys),
+                "rows=%s" % keys)
+        got_lock = {period: ms for plan, period, cat, ms in rows
+                    if plan == q1 and cat == "Lock"}
+        R.check("RegressionLog",
+                "%s: rm_q1 Lock wait per period matches Query Store" % label,
+                got_lock.get("Yes") == str(lock_ms("Yes"))
+                and got_lock.get("No") == str(lock_ms("No")),
+                "got=%s expected Yes=%d No=%d" % (got_lock, lock_ms("Yes"),
+                                                  lock_ms("No")))
 
 
 def main():
