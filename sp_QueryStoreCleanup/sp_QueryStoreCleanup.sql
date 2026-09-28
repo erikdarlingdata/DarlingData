@@ -302,7 +302,9 @@ SOFTWARE.
         @database_id integer = NULL,
         @search_text nvarchar(200) = N'',
         @pattern_open nvarchar(10) = N'',
-        @pattern_close nvarchar(50) = N') COLLATE Latin1_General_100_BIN2';
+        @pattern_close nvarchar(100) = N'',
+        @compatibility_level tinyint = 0,
+        @dedupe_join_hint nvarchar(20) = N', HASH JOIN';
 
     /*
     Default database to current
@@ -363,16 +365,12 @@ OPTION(RECOMPILE);';
     With @compact_tables = 1, a READ_ONLY Query Store skips removal and only
     compacts: DBCC INDEXDEFRAG works on the pages directly and does not need
     Query Store to accept writes, and a store that hit MAX_STORAGE_SIZE_MB is
-    where compaction helps most.
+    where compaction helps most. That jump comes after the parameter checks
+    below, so a bad parameter still raises an error.
     */
-    IF @actual_state = 1
+    IF  @actual_state = 1
+    AND @compact_tables = 0
     BEGIN
-        IF @compact_tables = 1
-        BEGIN
-            RAISERROR('Query Store is in READ_ONLY state for database %s, so no queries can be removed. Compacting its internal tables only.', 0, 1, @database_name) WITH NOWAIT;
-            GOTO compact_tables;
-        END;
-
         RAISERROR('Query Store is in READ_ONLY state for database %s. Writes are blocked, so cleanup cannot run. This is typically caused by hitting MAX_STORAGE_SIZE_MB or by an explicit READ_ONLY operation_mode. @compact_tables = 1 can still compact its internal tables.', 16, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
@@ -417,6 +415,16 @@ OPTION(RECOMPILE);';
         SELECT
             @has_query_variants = 1;
     END;
+
+    /*
+    The dynamic SQL runs in this procedure's database, so that
+    database's compatibility level decides whether Step 4 can use
+    HASH JOIN
+    */
+    SELECT
+        @compatibility_level = d.compatibility_level
+    FROM sys.databases AS d
+    WHERE d.database_id = DB_ID();
 
     /*
     Parse @cleanup_targets
@@ -548,12 +556,22 @@ OPTION(RECOMPILE);';
     Validate @sort_direction
     */
     SELECT
-        @sort_direction = UPPER(ISNULL(@sort_direction, 'ASC'));
+        @sort_direction = UPPER(LTRIM(RTRIM(ISNULL(@sort_direction, 'ASC'))));
 
     IF @sort_direction NOT IN ('ASC', 'DESC')
     BEGIN
         RAISERROR('@sort_direction must be ASC or DESC. You passed: %s', 16, 1, @sort_direction) WITH NOWAIT;
         RETURN;
+    END;
+
+    /*
+    A READ_ONLY Query Store only gets here with @compact_tables = 1:
+    skip removal and only compact
+    */
+    IF @actual_state = 1
+    BEGIN
+        RAISERROR('Query Store is in READ_ONLY state for database %s, so no queries can be removed. Compacting its internal tables only.', 0, 1, @database_name) WITH NOWAIT;
+        GOTO compact_tables;
     END;
 
     /*
@@ -617,30 +635,17 @@ OPTION(RECOMPILE);';
     BEGIN
         /*
         Text search runs under a binary collation, which is several times
-        cheaper than a linguistic LIKE over query_sql_text. When the
-        database collation ignores case, both sides are upper-cased first
-        so the matches stay the same.
+        cheaper than a linguistic LIKE over query_sql_text. query_sql_text
+        is SQL_Latin1_General_CP1_CI_AS whatever the database collation is,
+        so a plain LIKE on it was always case-insensitive. Both sides are
+        upper-cased first so the matches stay the same, and the patterns are
+        upper-cased under the column's collation, because a Turkish collation
+        would turn i into a dotted capital I that the binary match can't find.
         */
-        IF CONVERT
-           (
-               integer,
-               COLLATIONPROPERTY
-               (
-                   CONVERT(sysname, DATABASEPROPERTYEX(@database_name, 'Collation')),
-                   'ComparisonStyle'
-               )
-           ) & 1 = 1
-        BEGIN
-            SELECT
-                @search_text = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
-                @pattern_open = N'UPPER(';
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                @search_text = N'qsqt.query_sql_text COLLATE Latin1_General_100_BIN2',
-                @pattern_open = N'(';
-        END;
+        SELECT
+            @search_text = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+            @pattern_open = N'UPPER(',
+            @pattern_close = N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2';
 
         /*
         Build text filter WHERE clause
@@ -998,6 +1003,18 @@ OPTION(RECOMPILE, HASH JOIN);';
 
     UNION ALL
 ';
+
+                /*
+                HASH JOIN makes the removal list much faster on a big
+                Query Store, but below compatibility level 150 the
+                optimizer can't use hash joins for a UNION ALL inside
+                EXISTS, and the query fails with Msg 8622
+                */
+                IF @compatibility_level < 150
+                BEGIN
+                    SELECT
+                        @dedupe_join_hint = N'';
+                END;
             END;
 
             SELECT
@@ -1025,7 +1042,7 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 WHERE EXISTS
       (' + @exists_clause + N'
       )' + @removal_filters + N'
-OPTION(RECOMPILE, HASH JOIN);';
+OPTION(RECOMPILE' + @dedupe_join_hint + N');';
     END;
 
     IF @debug = 1
@@ -1575,6 +1592,17 @@ END;';
                     @variant_waits += 1;
 
                 RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (PSP parent, variants still present)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            /*
+            Msg 12402: the query was there for the existence check, but
+            another session removed it first. Same as already gone.
+            */
+            ELSE IF ERROR_NUMBER() = 12402
+            BEGIN
+                SELECT
+                    @skipped += 1;
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (already gone)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
             END;
             ELSE
             BEGIN

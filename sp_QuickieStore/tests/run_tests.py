@@ -122,11 +122,11 @@ def find_sql_errors(text):
     return re.findall(pattern, text)
 
 
-def run_qs(server, password, extra="", timeout=300):
+def run_qs(server, password, extra="", timeout=300, database_name=TEST_DB):
     """Run sp_QuickieStore against the scratch database, always naming it
     explicitly, and return (stdout, combined-for-error-scanning)."""
     sql = ("SET NOCOUNT ON; EXECUTE dbo.sp_QuickieStore "
-           "@database_name = '%s'%s;" % (_esc(TEST_DB), extra))
+           "@database_name = '%s'%s;" % (_esc(database_name), extra))
     out, err = _sqlcmd(server, password, sql, timeout=timeout)
     return out, out + "\n" + err
 
@@ -246,6 +246,64 @@ BEGIN
     DROP DATABASE {db};
 END;
 """.format(db=TEST_DB)
+
+# Text searches run under a binary collation. query_sql_text is
+# SQL_Latin1_General_CP1_CI_AS in every database, so a search has to ignore
+# case even when the database collation does not. The main scratch database
+# takes the server collation, which is case insensitive on every test server,
+# so it can't show that. This second database is case sensitive and holds one
+# mixed-case marker query.
+CS_DB = TEST_DB + "_cs"
+
+CS_FIXTURE_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db} COLLATE Latin1_General_100_CS_AS;
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL);
+""".format(db=CS_DB)
+
+# Query Store starts asynchronously, and compiles that happen before it is
+# READ_WRITE are lost, so wait for the state, then execute and flush in a
+# retry loop until the marker query shows up (same as the ReproBuilder suite).
+CS_WORKLOAD_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0, @rows bigint = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+CREATE TABLE dbo.t (id integer NOT NULL);
+EXECUTE (N'CREATE PROCEDURE dbo.qs_case_proc AS BEGIN SELECT /*qs_Case_Marker*/ c = COUNT_BIG(*) FROM dbo.t AS t; END;');
+SET @tries = 0;
+WHILE @tries < 10 AND @rows = 0
+BEGIN
+    EXECUTE dbo.qs_case_proc;
+    EXECUTE dbo.qs_case_proc;
+    EXECUTE sys.sp_query_store_flush_db;
+    SELECT @rows = COUNT_BIG(*) FROM sys.query_store_query_text AS qsqt
+    WHERE qsqt.query_sql_text LIKE N'%qs[_]Case[_]Marker%';
+    IF @rows = 0 WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+SELECT marker = 'CS_ROWS:' + CONVERT(varchar(20), @rows);
+"""
+
+CS_CLEANUP_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+""".format(db=CS_DB)
 
 
 def build_fixture(server, password, R):
@@ -411,6 +469,55 @@ def bidirectional_tests(server, password, R):
             completed(out), "footer missing")
     R.check("ExecCount", "@execution_count impossibly high returns no rows",
             result_rows(out) == 0, "got %d rows" % result_rows(out))
+
+
+def case_sensitive_search_tests(server, password, R):
+    """Text searches ignore case in a case-sensitive database. The marker is
+    qs_Case_Marker; a search in any other case has to find it, and an
+    exclusion in any other case has to remove it."""
+    try:
+        out, err = _sqlcmd(server, password, CS_FIXTURE_SQL)
+        errs = find_sql_errors(out + "\n" + err)
+        R.check("CaseSearch", "case-sensitive scratch database created",
+                not errs, str(errs))
+        if errs:
+            return
+
+        out, err = _sqlcmd(server, password, CS_WORKLOAD_SQL, database=CS_DB,
+                           timeout=600)
+        m = re.search(r"CS_ROWS:(\d+)", out)
+        captured = bool(m) and int(m.group(1)) > 0
+        R.check("CaseSearch", "Query Store captured the mixed-case marker query",
+                captured and not find_sql_errors(out + "\n" + err),
+                "marker=%s errors=%s" % (m.group(1) if m else "absent",
+                                         find_sql_errors(out + "\n" + err)))
+        if not captured:
+            return
+
+        for search in ("qs_case_marker", "QS_CASE_MARKER"):
+            out, combined = run_qs(server, password,
+                                   ", @query_text_search = '%s'" % search,
+                                   database_name=CS_DB)
+            R.check("CaseSearch",
+                    "@query_text_search = '%s' finds qs_Case_Marker" % search,
+                    completed(out) and result_rows(out) > 0,
+                    "completed=%s rows=%d errors=%s"
+                    % (completed(out), result_rows(out),
+                       find_sql_errors(combined)))
+
+        # The search matches in exact case, so it finds the marker even where
+        # a search is case sensitive; only the exclusion's case differs.
+        out, combined = run_qs(server, password,
+                               ", @query_text_search = 'qs_Case_Marker'"
+                               ", @query_text_search_not = 'QS_CASE_MARKER'",
+                               database_name=CS_DB)
+        R.check("CaseSearch",
+                "@query_text_search_not = 'QS_CASE_MARKER' removes qs_Case_Marker",
+                completed(out) and result_rows(out) == 0,
+                "completed=%s rows=%d errors=%s"
+                % (completed(out), result_rows(out), find_sql_errors(combined)))
+    finally:
+        _sqlcmd(server, password, CS_CLEANUP_SQL)
 
 
 PS_SUMMARY_MARKER = "multi_shape_query_hashes"
@@ -700,6 +807,7 @@ def main():
             mode_matrix(args.server, args.password, R)
             filter_matrix(args.server, args.password, R)
             bidirectional_tests(args.server, args.password, R)
+            case_sensitive_search_tests(args.server, args.password, R)
             hash_totals_tests(args.server, args.password, R)
             parameter_sensitive_tests(args.server, args.password, R)
             high_impact_tests(args.server, args.password, R)

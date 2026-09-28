@@ -762,7 +762,9 @@ def _run_inline(server, password, sql, tag):
 # WRONG current database, so a pasted three-part name has to override it to
 # resolve. Query Store is on in both because the precedence case has to reach
 # the procedure lookup in qrb_pn_other rather than stopping at the earlier
-# "Query Store isn't enabled for database" guard.
+# "Query Store isn't enabled for database" guard. qrb_pn_db is also case
+# sensitive, which the textsearch: cases need: query_sql_text ignores case in
+# every database, so a text search has to match in any case even there.
 PN_DB = "qrb_pn_db"
 PN_OTHER = "qrb_pn_other"
 
@@ -778,7 +780,7 @@ BEGIN
     ALTER DATABASE qrb_pn_other SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
     DROP DATABASE qrb_pn_other;
 END;
-CREATE DATABASE qrb_pn_db;
+CREATE DATABASE qrb_pn_db COLLATE Latin1_General_100_CS_AS;
 CREATE DATABASE qrb_pn_other;
 GO
 ALTER DATABASE qrb_pn_db SET QUERY_STORE = ON;
@@ -959,11 +961,31 @@ PROCNAME_CASES = [
         "expect_repro": True,
         "note": "one-part behavior must be untouched",
     },
+    {
+        "name": "textsearch:other_case_matches",
+        "db": PN_DB,
+        "args": ("@database_name = 'qrb_pn_db',\n"
+                 "        @query_text_search = 'FROM DBO.QRB_PN_TABLE AS Q'"),
+        "expect_repro": True,
+        "note": "a search in another case matches in a case-sensitive database",
+    },
+    {
+        "name": "textsearch:other_case_excludes",
+        "db": PN_DB,
+        "args": ("@database_name = 'qrb_pn_db',\n"
+                 "        @query_text_search = 'FROM dbo.qrb_pn_table AS q',\n"
+                 "        @query_text_search_not = 'FROM DBO.QRB_PN_TABLE AS Q'"),
+        "expect_repro": False,
+        # The search is in exact case, so it matches even where a search is
+        # case sensitive; only the exclusion's case differs.
+        "note": "an exclusion in another case removes the query in a case-sensitive database",
+    },
 ]
 
 
 def run_procname_cases(server, password, only=None, verbose=False):
-    """Run the @procedure_name resolution cases against their own fixture.
+    """Run the @procedure_name resolution and text search cases against their
+    own fixture.
 
     Returns (results, setup_error) where results matches the plan-case shape:
     (case_name, ok, label, detail).

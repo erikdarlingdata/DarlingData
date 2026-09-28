@@ -2709,9 +2709,12 @@ END;
 
 /*
 Text searches run under a binary collation, which is several times
-cheaper than a linguistic LIKE over query_sql_text. When the database
-collation ignores case, both sides are upper-cased first so the
-matches stay the same.
+cheaper than a linguistic LIKE over query_sql_text. query_sql_text is
+SQL_Latin1_General_CP1_CI_AS whatever the database collation is, so
+a plain LIKE on it was always case-insensitive. Both sides are upper-cased
+first so the matches stay the same, and the search text is upper-cased
+under the column's collation, because a Turkish collation would turn
+i into a dotted capital I that the binary match can't find.
 */
 IF
 (
@@ -2719,33 +2722,10 @@ IF
  OR @query_text_search_not IS NOT NULL
 )
 BEGIN
-    IF ISNULL
-       (
-           CONVERT
-           (
-               integer,
-               COLLATIONPROPERTY
-               (
-                   @collation,
-                   'ComparisonStyle'
-               )
-           ),
-           1
-       ) & 1 = 1
-    BEGIN
-        SELECT
-            @text_search_column = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
-            @text_search_open = N'UPPER(';
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            @text_search_column = N'qsqt.query_sql_text COLLATE Latin1_General_100_BIN2',
-            @text_search_open = N'(';
-    END;
-
     SELECT
-        @text_search_close = N') COLLATE Latin1_General_100_BIN2';
+        @text_search_column = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+        @text_search_open = N'UPPER(',
+        @text_search_close = N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2';
 END;
 
 /*Process @query_text_search parameter*/
