@@ -4,6 +4,7 @@ Procs requiring extended events, special data, or host features not available in
 (sp_HumanEvents, sp_HumanEventsBlockViewer, sp_QueryReproBuilder, sp_PerfCheck)
 are tested with @help = 1 only (see test_help_output.sql).
 sp_PerfCheck reads the default trace which does not exist in Docker containers.
+sp_QuickieCache has no harness of its own, so it also runs in each of its modes here.
 Uses a temp table to track results across GO batches.
 */
 
@@ -77,6 +78,78 @@ END TRY
 BEGIN CATCH
     INSERT #exec_results VALUES ('sp_QuickieStore', 0);
     PRINT 'FAIL: sp_QuickieStore - ' + ERROR_MESSAGE();
+END CATCH;
+GO
+
+/* sp_QuickieCache - finds high-impact queries in the plan cache */
+BEGIN TRY
+    EXECUTE dbo.sp_QuickieCache;
+    INSERT #exec_results VALUES ('sp_QuickieCache', 1);
+    PRINT 'PASS: sp_QuickieCache (default)';
+END TRY
+BEGIN CATCH
+    INSERT #exec_results VALUES ('sp_QuickieCache', 0);
+    PRINT 'FAIL: sp_QuickieCache - ' + ERROR_MESSAGE();
+END CATCH;
+GO
+
+/*
+sp_QuickieCache with every query counted, so the scoring runs
+even on a container's small plan cache
+*/
+BEGIN TRY
+    EXECUTE dbo.sp_QuickieCache
+        @ignore_system_databases = 0,
+        @minimum_execution_count = 1,
+        @impact_threshold = 0.00;
+    INSERT #exec_results VALUES ('sp_QuickieCache (all queries)', 1);
+    PRINT 'PASS: sp_QuickieCache (all queries)';
+END TRY
+BEGIN CATCH
+    INSERT #exec_results VALUES ('sp_QuickieCache (all queries)', 0);
+    PRINT 'FAIL: sp_QuickieCache (all queries) - ' + ERROR_MESSAGE();
+END CATCH;
+GO
+
+/* sp_QuickieCache single-use plans mode */
+BEGIN TRY
+    EXECUTE dbo.sp_QuickieCache
+        @find_single_use_plans = 1;
+    INSERT #exec_results VALUES ('sp_QuickieCache (single-use plans)', 1);
+    PRINT 'PASS: sp_QuickieCache (single-use plans)';
+END TRY
+BEGIN CATCH
+    INSERT #exec_results VALUES ('sp_QuickieCache (single-use plans)', 0);
+    PRINT 'FAIL: sp_QuickieCache (single-use plans) - ' + ERROR_MESSAGE();
+END CATCH;
+GO
+
+/* sp_QuickieCache duplicate plans mode */
+BEGIN TRY
+    EXECUTE dbo.sp_QuickieCache
+        @find_duplicate_plans = 1;
+    INSERT #exec_results VALUES ('sp_QuickieCache (duplicate plans)', 1);
+    PRINT 'PASS: sp_QuickieCache (duplicate plans)';
+END TRY
+BEGIN CATCH
+    INSERT #exec_results VALUES ('sp_QuickieCache (duplicate plans)', 0);
+    PRINT 'FAIL: sp_QuickieCache (duplicate plans) - ' + ERROR_MESSAGE();
+END CATCH;
+GO
+
+/* sp_QuickieCache with NULL parameters, which take their defaults */
+BEGIN TRY
+    EXECUTE dbo.sp_QuickieCache
+        @top = NULL,
+        @sort_order = NULL,
+        @minimum_execution_count = NULL,
+        @impact_threshold = NULL;
+    INSERT #exec_results VALUES ('sp_QuickieCache (NULL parameters)', 1);
+    PRINT 'PASS: sp_QuickieCache (NULL parameters)';
+END TRY
+BEGIN CATCH
+    INSERT #exec_results VALUES ('sp_QuickieCache (NULL parameters)', 0);
+    PRINT 'FAIL: sp_QuickieCache (NULL parameters) - ' + ERROR_MESSAGE();
 END CATCH;
 GO
 

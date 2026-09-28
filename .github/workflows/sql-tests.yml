@@ -110,11 +110,12 @@ jobs:
             IF OBJECT_ID(N'dbo.sp_PerfCheck', N'P') IS NULL BEGIN SET @missing += 1; PRINT 'MISSING: sp_PerfCheck'; END;
             IF OBJECT_ID(N'dbo.sp_PressureDetector', N'P') IS NULL BEGIN SET @missing += 1; PRINT 'MISSING: sp_PressureDetector'; END;
             IF OBJECT_ID(N'dbo.sp_QueryReproBuilder', N'P') IS NULL BEGIN SET @missing += 1; PRINT 'MISSING: sp_QueryReproBuilder'; END;
+            IF OBJECT_ID(N'dbo.sp_QuickieCache', N'P') IS NULL BEGIN SET @missing += 1; PRINT 'MISSING: sp_QuickieCache'; END;
             IF OBJECT_ID(N'dbo.sp_QuickieStore', N'P') IS NULL BEGIN SET @missing += 1; PRINT 'MISSING: sp_QuickieStore'; END;
             IF @missing > 0
               RAISERROR('Missing %d procedure(s)', 16, 1, @missing);
             ELSE
-              PRINT 'All 9 procedures installed successfully';
+              PRINT 'All 10 procedures installed successfully';
           "
 
       - name: Test help output
