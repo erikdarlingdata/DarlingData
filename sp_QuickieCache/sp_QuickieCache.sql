@@ -62,7 +62,7 @@ ALTER PROCEDURE
     @start_date datetime = NULL, /*only include plans created after this date*/
     @end_date datetime = NULL, /*only include plans created before this date*/
     @minimum_execution_count bigint = 2, /*noise floor for single-exec queries*/
-    @ignore_system_databases bit = 1, /*exclude master, model, msdb, tempdb*/
+    @ignore_system_databases bit = 1, /*exclude master, model, msdb, tempdb, unless @database_name names one*/
     @impact_threshold decimal(3, 2) = 0.50, /*minimum impact_score to surface (0.00-1.00)*/
     @find_single_use_plans bit = 0, /*show single-use plans consuming the most memory*/
     @find_duplicate_plans bit = 0, /*show query hashes with multiple cached plans*/
@@ -123,7 +123,7 @@ BEGIN
                     WHEN N'@minimum_execution_count'
                     THEN N'minimum execution count to include a query'
                     WHEN N'@ignore_system_databases'
-                    THEN N'exclude system databases (master, model, msdb, tempdb)'
+                    THEN N'exclude system databases (master, model, msdb, tempdb), unless @database_name names one'
                     WHEN N'@impact_threshold'
                     THEN N'minimum impact_score to surface in results'
                     WHEN N'@find_single_use_plans'
@@ -251,6 +251,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
+    Some parameters can't be NULL
+    */
+    SELECT
+        @top =
+            ISNULL(@top, 10),
+        @sort_order =
+            ISNULL(@sort_order, 'cpu'),
+        @minimum_execution_count =
+            ISNULL(@minimum_execution_count, 2),
+        @ignore_system_databases =
+            ISNULL(@ignore_system_databases, 1),
+        @impact_threshold =
+            ISNULL(@impact_threshold, 0.50),
+        @find_single_use_plans =
+            ISNULL(@find_single_use_plans, 0),
+        @find_duplicate_plans =
+            ISNULL(@find_duplicate_plans, 0),
+        @debug =
+            ISNULL(@debug, 0);
+
+    /*
     ╔══════════════════════════════════════════════════╗
     ║  Version detection                               ║
     ╚══════════════════════════════════════════════════╝
@@ -313,6 +334,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR(N'Database [%s] does not exist on this server.', 16, 1, @database_name) WITH NOWAIT;
             RETURN;
+        END;
+
+        /*
+        A system database named in @database_name
+        is searched even with @ignore_system_databases = 1
+        */
+        IF @database_id <= 4
+        BEGIN
+            SELECT
+                @ignore_system_databases = 0;
         END;
     END;
 

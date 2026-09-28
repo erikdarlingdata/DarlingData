@@ -364,7 +364,7 @@ Current valid parameter details:
 | @start_date                 | datetime     | only include plans created after this date                                                           | a valid datetime                         | NULL       |
 | @end_date                   | datetime     | only include plans created before this date                                                          | a valid datetime                         | NULL       |
 | @minimum_execution_count    | bigint       | minimum execution count to include a query                                                           | a positive integer                       | 2          |
-| @ignore_system_databases    | bit          | exclude system databases (master, model, msdb, tempdb)                                               | 0 or 1                                   | 1          |
+| @ignore_system_databases    | bit          | exclude system databases (master, model, msdb, tempdb), unless @database_name names one              | 0 or 1                                   | 1          |
 | @impact_threshold           | decimal(3,2) | minimum impact_score (0.00-1.00) to surface in results                                               | 0.00 to 1.00                             | 0.50       |
 | @find_single_use_plans      | bit          | show single-use plans consuming the most memory                                                      | 0 or 1                                   | 0          |
 | @find_duplicate_plans       | bit          | show query hashes with multiple cached plans                                                         | 0 or 1                                   | 0          |

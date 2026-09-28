@@ -111,6 +111,18 @@ BEGIN CATCH
 END CATCH;
 GO
 
+/* sp_QuickieCache */
+BEGIN TRY
+    EXECUTE dbo.sp_QuickieCache @help = 1;
+    INSERT #help_results VALUES ('sp_QuickieCache', 1);
+    PRINT 'PASS: sp_QuickieCache @help = 1';
+END TRY
+BEGIN CATCH
+    INSERT #help_results VALUES ('sp_QuickieCache', 0);
+    PRINT 'FAIL: sp_QuickieCache @help = 1 - ' + ERROR_MESSAGE();
+END CATCH;
+GO
+
 /* sp_QuickieStore */
 BEGIN TRY
     EXEC dbo.sp_QuickieStore @help = 1;
