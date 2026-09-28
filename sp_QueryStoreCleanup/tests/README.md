@@ -89,8 +89,11 @@ remain.
 ### Query Store reports `READ_WRITE` before it captures anything
 
 `ALTER DATABASE ... SET QUERY_STORE = ON` returns as soon as the setting is
-recorded, but Query Store enables itself asynchronously. A workload that
-runs immediately after that statement can run before capture is actually on,
-and its queries never appear. `query_store_on()` polls
-`sys.database_query_store_options.actual_state_desc` for up to 30 seconds.
-It only returns once the state the caller asked for is the actual state.
+recorded, but Query Store enables itself asynchronously. `query_store_on()`
+polls `sys.database_query_store_options.actual_state_desc` for up to 30
+seconds and only returns once the state the caller asked for is the actual
+state. Query Store only sees a query when it compiles. Even after
+`actual_state_desc` says `READ_WRITE`, a plan already sitting in the cache
+from the gap before that point is never captured. Each PSP and duplicate
+fixture workload attempt clears that database's plan cache first, so every
+fixture query compiles again with capture already on.
