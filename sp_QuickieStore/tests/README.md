@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. 186 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 209 assertions. |
 
 ```
 cd sp_QuickieStore/tests
@@ -18,7 +18,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `186`.
+password). Expect `209`.
 
 ## What it actually covers
 
@@ -52,16 +52,38 @@ must find that query, and `@query_text_search_not` in another case must remove
 it. `query_sql_text` is `SQL_Latin1_General_CP1_CI_AS` in every database, so a
 text search ignores case whatever the database collation is.
 
+Regression mode and wait stats need data in more than one Query Store
+interval, so they get their own scratch database with one-minute intervals.
+Its workload runs in two slots: slot A when the harness starts, and slot B
+after the other tests, in a later interval. In each slot, one `rm_q1`
+execution waits on a lock that a second session holds. Slot A runs that
+execution last, and slot B runs it first. `rm_q2` never waits. It gets a new
+index between the slots, so it has a different plan in each slot.
+
+The checks compare the procedure's output with Query Store's own numbers:
+
+- **Regression mode**, with slot A as the baseline and slot B as the current
+  period. Each plan has one row per period. Each period has its own
+  execution count and Lock wait. Its last duration comes from its own last
+  run.
+- **Both slots in one window**, without regression mode. Each plan has one
+  row, with its execution count. The `rm_q1` Lock wait covers both slots,
+  not just the latest interval.
+- **Both runs**: `top_waits` shows the Lock wait for `rm_q1` and none for
+  `rm_q2`, and `compilation_stats` and `resource_stats` have one row per
+  query.
+
 ## Fixture
 
 The harness creates its own `quickiestore_test` database with Query Store on,
 runs a small varied workload (ad hoc queries at different costs plus a stored
 procedure, so `@query_type` has both kinds to separate), flushes Query Store, and
 drops the database in a `finally` block that runs even if assertions fail.
-Two smaller scratch databases get the same `finally` cleanup. The `@debug`
+Three smaller scratch databases get the same `finally` cleanup. The `@debug`
 check uses `quickiestore_test_empty`, which has Query Store on and no queries.
 The text search checks use `quickiestore_test_cs`, which is case sensitive.
-Nothing outside these three databases is touched.
+The regression and wait checks use `quickiestore_test_rm`. Nothing outside
+these four databases is touched.
 
 ## Known client limitation: `@debug = 1`
 

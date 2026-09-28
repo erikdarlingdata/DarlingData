@@ -270,7 +270,7 @@ SOFTWARE.
         @dedupe_plan_hash bit = 0,
         @no_dedupe bit = 0,
         @text_filter nvarchar(max) = N'',
-        @exists_clause nvarchar(max) = N'',
+        @dedupe_candidates nvarchar(max) = N'',
         @removal_filters nvarchar(max) = N'',
         @age_cutoff datetime = NULL,
         @text_target_count bigint = 0,
@@ -302,9 +302,7 @@ SOFTWARE.
         @database_id integer = NULL,
         @search_text nvarchar(200) = N'',
         @pattern_open nvarchar(10) = N'',
-        @pattern_close nvarchar(100) = N'',
-        @compatibility_level tinyint = 0,
-        @dedupe_join_hint nvarchar(20) = N', HASH JOIN';
+        @pattern_close nvarchar(100) = N'';
 
     /*
     Default database to current
@@ -415,16 +413,6 @@ OPTION(RECOMPILE);';
         SELECT
             @has_query_variants = 1;
     END;
-
-    /*
-    The dynamic SQL runs in this procedure's database, so that
-    database's compatibility level decides whether Step 4 can use
-    HASH JOIN
-    */
-    SELECT
-        @compatibility_level = d.compatibility_level
-    FROM sys.databases AS d
-    WHERE d.database_id = DB_ID();
 
     /*
     Parse @cleanup_targets
@@ -980,51 +968,61 @@ OPTION(RECOMPILE, HASH JOIN);';
     ELSE
     BEGIN
         /*
-        Build the EXISTS clause based on which strategies found results
+        Build one candidate list per strategy that found results.
+        Each is a plain EXISTS, which the optimizer can do as a hash
+        join at every compatibility level. Both lists in one EXISTS,
+        joined by UNION ALL, fail with Msg 8622 under HASH JOIN below
+        compatibility level 150, because each branch correlates a
+        different outer column. HASH JOIN makes the removal list much
+        faster on a big Query Store, so it stays.
         */
         IF  @dedupe_query_hash = 1
         AND @query_hash_dupe_count > 0
         BEGIN
             SELECT
-                @exists_clause += N'
+                @dedupe_candidates += N'
     SELECT
-        1/0
-    FROM #query_hash_dupes AS qd
-    WHERE qd.query_hash = qsq.query_hash';
+        qsq.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_hash_dupes AS qd
+              WHERE qd.query_hash = qsq.query_hash
+          )';
         END;
 
         IF  @dedupe_plan_hash = 1
         AND @plan_hash_dupe_count > 0
         BEGIN
-            IF LEN(@exists_clause) > 0
+            IF LEN(@dedupe_candidates) > 0
             BEGIN
                 SELECT
-                    @exists_clause += N'
+                    @dedupe_candidates += N'
 
     UNION ALL
 ';
-
-                /*
-                HASH JOIN makes the removal list much faster on a big
-                Query Store, but below compatibility level 150 the
-                optimizer can't use hash joins for a UNION ALL inside
-                EXISTS, and the query fails with Msg 8622
-                */
-                IF @compatibility_level < 150
-                BEGIN
-                    SELECT
-                        @dedupe_join_hint = N'';
-                END;
             END;
 
             SELECT
-                @exists_clause += N'
+                @dedupe_candidates += N'
     SELECT
-        1/0
-    FROM #plan_hash_dupes AS qd
-    WHERE qd.query_plan_hash = qsp.query_plan_hash';
+        qsp.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #plan_hash_dupes AS qd
+              WHERE qd.query_plan_hash = qsp.query_plan_hash
+          )';
         END;
 
+        /*
+        DISTINCT because a query can be in both lists, and in the plan
+        hash list once per plan
+        */
         SELECT
             @sql = N'
 INSERT
@@ -1035,14 +1033,12 @@ WITH
     query_id
 )
 SELECT DISTINCT
-    qsp.query_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-WHERE EXISTS
-      (' + @exists_clause + N'
-      )' + @removal_filters + N'
-OPTION(RECOMPILE' + @dedupe_join_hint + N');';
+    qsq.query_id
+FROM
+(' + @dedupe_candidates + N'
+) AS qsq
+WHERE 1 = 1' + @removal_filters + N'
+OPTION(RECOMPILE, HASH JOIN);';
     END;
 
     IF @debug = 1

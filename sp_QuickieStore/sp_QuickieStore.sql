@@ -1637,7 +1637,8 @@ CREATE TABLE
     avg_query_wait_time_ms float NULL,
     last_query_wait_time_ms bigint NOT NULL,
     min_query_wait_time_ms bigint NOT NULL,
-    max_query_wait_time_ms bigint NOT NULL
+    max_query_wait_time_ms bigint NOT NULL,
+    from_regression_baseline varchar(3) NULL
 );
 
 /*
@@ -2243,6 +2244,7 @@ DECLARE
     @regression_baseline_start_date_original datetimeoffset(7),
     @regression_baseline_end_date_original datetimeoffset(7),
     @regression_where_clause nvarchar(max),
+    @regression_partition nvarchar(max),
     @column_sql nvarchar(max),
     @param_name nvarchar(100),
     @param_value nvarchar(4000),
@@ -11130,14 +11132,14 @@ BEGIN
     WHERE 1 = 1
     '
    + CASE WHEN @regression_mode = 1
-      THEN N' AND ( 1 = 1
+      THEN N' AND ( ( 1 = 1
       ' + @regression_where_clause
       + N' )
 OR
       ( 1 = 1
       '
       + @where_clause
-      + N' ) '
+      + N' ) ) '
       ELSE @where_clause
       END
       + N'
@@ -11280,17 +11282,21 @@ BEGIN
          WHEN 'parallelism waits' THEN N'16'
          WHEN 'memory waits' THEN N'17'
     END
+      /*
+      The outer parentheses keep the wait_category filter above
+      on both time periods; AND binds tighter than OR
+      */
       + N'
       '
       + CASE WHEN @regression_mode = 1
-         THEN N' AND ( 1 = 1
+         THEN N' AND ( ( 1 = 1
          ' + @regression_where_clause
          + N' )
    OR
          ( 1 = 1
          '
          + @where_clause
-         + N' ) '
+         + N' ) ) '
          ELSE @where_clause
          END
       + N'
@@ -11967,11 +11973,29 @@ END; /*End gathering plan ids*/
 
 /*
 This gets the runtime stats for the plans we care about.
-It is notably the last usage of @where_clause.
+The wait stats insert further down reuses @where_clause, so
+waits cover the same runtime stats rows.
+
+In regression mode, a plan's rows from both time periods
+go through the same LAST_VALUE windows, so each window is
+also partitioned by time period. Otherwise, the baseline
+row's last_ values would come from the current period.
 */
 SELECT
     @current_table = 'inserting #query_store_runtime_stats',
-    @sql = @isolation_level;
+    @sql = @isolation_level,
+    @regression_partition =
+        CASE
+            WHEN @regression_mode = 1
+            THEN N',
+                    CASE
+                        WHEN qsrs.last_execution_time >= @start_date
+                        AND  qsrs.last_execution_time < @end_date
+                        THEN ''No''
+                        ELSE ''Yes''
+                    END'
+            ELSE N''
+        END;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -12108,7 +12132,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12118,7 +12142,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12128,7 +12152,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12138,7 +12162,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12148,7 +12172,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12158,7 +12182,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12168,7 +12192,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12178,7 +12202,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12188,7 +12212,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12198,7 +12222,7 @@ FROM
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12213,7 +12237,7 @@ BEGIN
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12223,7 +12247,7 @@ BEGIN
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12233,7 +12257,7 @@ BEGIN
             (
                 PARTITION BY
                     qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.execution_type' + @regression_partition + N'
                 ORDER BY
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
@@ -12290,6 +12314,14 @@ SELECT
          AND waits.database_id = @database_id';
         END;
 
+    /*
+    In regression mode, the two time periods are ORed, and the
+    OR needs its own outer parentheses. AND binds tighter than OR,
+    so without them the current time period's rows lose the plan_id
+    filter above, and every plan's rows repeat once per row in
+    #distinct_plans, which multiplies count_executions and every
+    total_ column.
+    */
     SELECT
         @sql += N'
         WHERE qsrs.plan_id = dp.plan_id
@@ -12297,14 +12329,14 @@ SELECT
         '
         + CASE
               WHEN @regression_mode = 1
-              THEN N' AND ( 1 = 1
+              THEN N' AND ( ( 1 = 1
           ' +
           @regression_where_clause
           + N' )
     OR
           ( 1 = 1
           ' + @where_clause
-          + N' ) '
+          + N' ) ) '
               ELSE @where_clause
           END
       + N'
@@ -12560,9 +12592,20 @@ BEGIN
     qsp.plan_type_desc';
 END;
 
+/*
+In regression mode, #query_store_runtime_stats has a row per plan
+and time period, so take each plan once. Duplicate plan rows here
+multiply every row in the tables built from this one.
+*/
 SELECT
     @sql += N'
-FROM #query_store_runtime_stats AS qsrs
+FROM
+(
+    SELECT DISTINCT
+        qsrs.plan_id
+    FROM #query_store_runtime_stats AS qsrs
+    WHERE qsrs.database_id = @database_id
+) AS qsrs
 CROSS APPLY
 (
     SELECT TOP (@plans_top)
@@ -12573,7 +12616,6 @@ CROSS APPLY
     ORDER BY
         qsp.last_execution_time DESC
 ) AS qsp
-WHERE qsrs.database_id = @database_id
 OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
 
 IF @debug = 1
@@ -12689,7 +12731,16 @@ SELECT
     (qsq.last_compile_memory_kb / 1024.),
     (qsq.max_compile_memory_kb / 1024.),
     qsq.is_clouddb_internal_query
-FROM #query_store_plan AS qsp
+FROM
+(
+    /*
+    A query with more than one plan would otherwise get a row per plan
+    */
+    SELECT DISTINCT
+        qsp.query_id
+    FROM #query_store_plan AS qsp
+    WHERE qsp.database_id = @database_id
+) AS qsp
 CROSS APPLY
 (
     SELECT TOP (1)
@@ -12699,7 +12750,6 @@ CROSS APPLY
     ORDER BY
         qsq.last_execution_time DESC
 ) AS qsq
-WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -12931,7 +12981,16 @@ SELECT
     qsqt.statement_sql_handle,
     qsqt.is_part_of_encrypted_module,
     qsqt.has_restricted_text
-FROM #query_store_query AS qsq
+FROM
+(
+    /*
+    Queries can share a query text, so take each text once
+    */
+    SELECT DISTINCT
+        qsq.query_text_id
+    FROM #query_store_query AS qsq
+    WHERE qsq.database_id = @database_id
+) AS qsq
 CROSS APPLY
 (
     SELECT TOP (1)
@@ -12939,7 +12998,6 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     WHERE qsqt.query_text_id = qsq.query_text_id
 ) AS qsqt
-WHERE qsq.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -13401,37 +13459,45 @@ SELECT
     min_query_wait_time_ms =
         MIN(qsws_with_lasts.min_query_wait_time_ms),
     max_query_wait_time_ms =
-        MAX(qsws_with_lasts.max_query_wait_time_ms)
+        MAX(qsws_with_lasts.max_query_wait_time_ms),
+    qsws_with_lasts.from_regression_baseline
 FROM
 (
     SELECT
         qsws.*,
+        from_regression_baseline =
+            qsrs_plans.from_regression_baseline,
         /*
-        We need this here to make sure that PARTITION BY runs before GROUP BY but after CROSS APPLY.
+        We need this here to make sure that PARTITION BY runs before GROUP BY.
         If it were after GROUP BY, then we would be dealing with already aggregated data.
-        If it were inside the CROSS APPLY, then we would be dealing with windows of size one.
-        Both are very wrong, so we need this.
+        In regression mode, each time period gets its own last value.
         */
         partitioned_last_query_wait_time_ms =
             LAST_VALUE(qsws.last_query_wait_time_ms) OVER
             (
                 PARTITION BY
                     qsws.plan_id,
+                    qsrs_plans.from_regression_baseline,
                     qsws.execution_type,
                     qsws.wait_category_desc
                 ORDER BY
                     qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
-    FROM #query_store_runtime_stats AS qsrs
+    FROM #query_store_runtime_stats AS qsrs_plans
     CROSS APPLY
     (
         /*
-        Pull every wait category captured for this (interval, plan).
-        #query_store_runtime_stats holds one row per plan (one per plan
-        and time period in regression mode), at the latest interval that
-        the plan ran in, so these waits come from that one interval, not
-        from the whole window. A TOP (5)
+        Pull every wait category for the runtime stats rows that
+        #query_store_runtime_stats aggregated for this plan. The EXISTS
+        uses the same where clause, so waits cover the same time window,
+        execution types, and filters as every other metric, not just the
+        latest interval that the plan ran in. In regression mode, each
+        plan has one row per time period, and each row takes only its own
+        period''s waits. Waits with no time are skipped. Filtering on
+        min_query_wait_time_ms > 0 here used to drop real waits: Query
+        Store can report a minimum of 0 for a wait category that has wait
+        time in the interval. A TOP (5)
         ORDER BY avg_query_wait_time_ms DESC here used to drop every wait
         category past the fifth. Query Store keeps a small, fixed set of
         wait categories, so pulling all of them does not blow up the
@@ -13440,18 +13506,47 @@ FROM
         SELECT
             qsws.*
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-        WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
-        AND   qsws.plan_id = qsrs.plan_id
+        WHERE qsws.plan_id = qsrs_plans.plan_id
         AND   qsws.wait_category > 0
-        AND   qsws.min_query_wait_time_ms > 0
+        AND   qsws.total_query_wait_time_ms > 0
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                  WHERE qsrs.plan_id = qsws.plan_id
+                  AND   qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+                  AND   qsrs.execution_type = qsws.execution_type
+                  ';
+
+    SELECT
+        @sql +=
+            CASE
+                WHEN @regression_mode = 1
+                THEN N'AND ( ( 1 = 1
+                  ' + @regression_where_clause + N' )
+                  OR
+                  ( 1 = 1
+                  ' + @where_clause + N' ) )
+                  AND   CASE
+                              WHEN qsrs.last_execution_time >= @start_date
+                              AND  qsrs.last_execution_time < @end_date
+                              THEN ''No''
+                              ELSE ''Yes''
+                          END = qsrs_plans.from_regression_baseline'
+                ELSE @where_clause
+            END;
+
+    SELECT
+        @sql += N'
+              )
     ) AS qsws
-    WHERE qsrs.database_id = @database_id
+    WHERE qsrs_plans.database_id = @database_id
 ) AS qsws_with_lasts
 GROUP BY
     qsws_with_lasts.plan_id,
-    qsws_with_lasts.wait_category_desc
-HAVING
-    SUM(qsws_with_lasts.min_query_wait_time_ms) > 0.
+    qsws_with_lasts.wait_category_desc,
+    qsws_with_lasts.from_regression_baseline
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -13472,12 +13567,24 @@ OPTION(RECOMPILE);' + @nc10;
         avg_query_wait_time_ms,
         last_query_wait_time_ms,
         min_query_wait_time_ms,
-        max_query_wait_time_ms
+        max_query_wait_time_ms,
+        from_regression_baseline
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id integer',
-        @database_id;
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -14689,7 +14796,13 @@ SELECT
                             END + N' '' ms)''
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
-                       AND   qsws.database_id = qsrs.database_id
+                       AND   qsws.database_id = qsrs.database_id' +
+                            CASE
+                                WHEN @regression_mode = 1
+                                THEN N'
+                       AND   qsws.from_regression_baseline = qsrs.from_regression_baseline'
+                                ELSE N''
+                            END + N'
                        GROUP BY
                            qsws.wait_category_desc
                        ORDER BY
@@ -15822,7 +15935,19 @@ BEGIN
                         ''query_store_wait_stats_by_query'',
                     database_name =
                         DB_NAME(qsws.database_id),
-                    qsws.plan_id,
+                    qsws.plan_id,' +
+                    /*
+                    In regression mode, each plan has a row per time period.
+                    The log table has no column for the period.
+                    */
+                    CASE
+                        WHEN @regression_mode = 1
+                        AND  @log_to_table = 0
+                        THEN N'
+                    from_regression_baseline_time_period =
+                        qsws.from_regression_baseline,'
+                        ELSE N''
+                    END + N'
                     x.object_name,
                     qsws.wait_category_desc,
                     total_query_wait_time_ms = '
@@ -15926,7 +16051,13 @@ BEGIN
                       ON  qsp.query_id = qsq.query_id
                       AND qsp.database_id = qsq.database_id
                     WHERE qsws.plan_id = qsrs.plan_id
-                    AND   qsws.database_id = qsrs.database_id
+                    AND   qsws.database_id = qsrs.database_id' +
+                    CASE
+                        WHEN @regression_mode = 1
+                        THEN N'
+                    AND   qsws.from_regression_baseline = qsrs.from_regression_baseline'
+                        ELSE N''
+                    END + N'
                 ) AS x
                 ORDER BY
                     qsws.plan_id,
@@ -16088,7 +16219,13 @@ BEGIN
                       ON  qsp.query_id = qsq.query_id
                       AND qsp.database_id = qsq.database_id
                     WHERE qsws.plan_id = qsrs.plan_id
-                    AND   qsws.database_id = qsrs.database_id
+                    AND   qsws.database_id = qsrs.database_id' +
+                    CASE
+                        WHEN @regression_mode = 1
+                        THEN N'
+                    AND   qsws.from_regression_baseline = qsrs.from_regression_baseline'
+                        ELSE N''
+                    END + N'
                 ) AS x
                 GROUP BY
                     qsws.wait_category_desc,

@@ -22,11 +22,12 @@ deterministic - it depends on no captured plan cache and no specific user
 database. Plans reference sys objects (always present); the one case that needs
 a real user table uses a small fixture the harness creates in tempdb and drops.
 
-The one exception is the procname: family, which covers @procedure_name
-resolution (including three-part MyDb.dbo.MyProc pastes). Resolving a name means
-reading Query Store in a real database, which no synthetic plan can exercise, so
-those cases build and drop two scratch databases of their own. See
-run_procname_cases.
+The exceptions are the procname: family, which covers @procedure_name
+resolution (including three-part MyDb.dbo.MyProc pastes), and the waitwindow:
+case, which checks that wait stats cover the whole search window. Both read
+Query Store in a real database, which no synthetic plan can exercise, so they
+build and drop scratch databases of their own. See run_procname_cases and
+run_wait_window_cases.
 
 The authentic ParameterCompiledValue serializations used below (e.g. numeric as
 (12.50), money as ($99.9500), datetimeoffset as '... +05:30', guid as
@@ -1065,6 +1066,313 @@ def run_procname_cases(server, password, only=None, verbose=False):
     return results, None
 
 
+# --------------------------------------------------- wait stats time window
+
+# Wait stats have to cover the whole search window, like every other metric.
+# That only shows when a plan has waits in more than one Query Store
+# interval, and no other fixture here has that. This one uses one-minute
+# intervals and runs its workload in two slots: slot A before the plan
+# cases, and slot B after them, in a later interval. In each slot, one ww_q1
+# execution waits on a lock that a second session holds, and the other
+# executions don't wait. ww_q2 never waits, and gets a new index between the
+# slots, so it has one plan in each slot.
+WW_DB = "qrb_ww_db"
+WW_MARKER = "qrb_ww_marker"
+
+# Wait for READ_WRITE, then run a throwaway query in a retry loop until Query
+# Store captures it, so capture is known to be live before slot A compiles
+# anything. Clearing the plan cache after that makes ww_q1 and ww_q2 compile
+# fresh in slot A, with capture on.
+WW_SETUP = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_ww_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_ww_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_ww_db;
+END;
+CREATE DATABASE qrb_ww_db;
+GO
+ALTER DATABASE qrb_ww_db SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, INTERVAL_LENGTH_MINUTES = 1,
+     QUERY_CAPTURE_MODE = ALL, WAIT_STATS_CAPTURE_MODE = ON);
+GO
+USE qrb_ww_db;
+GO
+DECLARE @tries integer = 0, @rows bigint = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+CREATE TABLE dbo.ww_lock (id integer NOT NULL PRIMARY KEY, v integer NOT NULL);
+INSERT dbo.ww_lock (id, v) VALUES (1, 0);
+CREATE TABLE dbo.ww_scan (id integer NOT NULL PRIMARY KEY, v integer NOT NULL, pad char(200) NOT NULL);
+INSERT dbo.ww_scan WITH (TABLOCK) (id, v, pad)
+SELECT x.n, x.n % 100, 'x'
+FROM
+(
+    SELECT TOP (5000)
+        n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1
+    CROSS JOIN sys.all_columns AS ac2
+) AS x;
+EXECUTE (N'CREATE PROCEDURE dbo.ww_q1 AS BEGIN SELECT /* qrb_ww_marker */ l.v FROM dbo.ww_lock AS l WHERE l.id = 1; END;');
+EXECUTE (N'CREATE PROCEDURE dbo.ww_q2 AS BEGIN SELECT /* qrb_ww_marker */ c = COUNT_BIG(*) FROM dbo.ww_scan AS s WHERE s.v = 5; END;');
+SET @tries = 0;
+WHILE @tries < 10 AND @rows = 0
+BEGIN
+    EXECUTE (N'SELECT /* ww_warmup */ c = COUNT_BIG(*) FROM dbo.ww_lock AS l;');
+    EXECUTE sys.sp_query_store_flush_db;
+    SELECT @rows = COUNT_BIG(*) FROM sys.query_store_query_text AS qsqt
+    WHERE qsqt.query_sql_text LIKE N'%ww[_]warmup%';
+    IF @rows = 0 WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
+SELECT marker = 'WW_WARM:' + CONVERT(varchar(20), @rows);
+GO
+"""
+
+WW_TEARDOWN = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_ww_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_ww_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_ww_db;
+END;
+"""
+
+# The lock holder: takes an X lock on ww_q1's row, waits until it sees a
+# request blocked behind it, then holds the lock 2 more seconds.
+WW_HOLDER = """\
+SET NOCOUNT ON;
+BEGIN TRANSACTION;
+UPDATE l SET l.v += 1 FROM dbo.ww_lock AS l WHERE l.id = 1;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_exec_requests AS der
+                  WHERE der.blocking_session_id = @@SPID)
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+WAITFOR DELAY '00:00:02';
+COMMIT TRANSACTION;
+"""
+
+# The waiter: runs ww_q1 once the holder's X lock is granted, so it blocks.
+WW_BLOCKED = """\
+SET NOCOUNT ON;
+USE qrb_ww_db;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_tran_locks AS dtl
+                  WHERE dtl.resource_database_id = DB_ID()
+                  AND   dtl.resource_type = N'KEY'
+                  AND   dtl.request_mode = N'X'
+                  AND   dtl.request_status = N'GRANT')
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+EXECUTE dbo.ww_q1;
+"""
+
+# ww_q1's Lock wait so far, in ms, after a flush.
+WW_LOCK_TOTAL = """\
+SET NOCOUNT ON;
+USE qrb_ww_db;
+EXECUTE sys.sp_query_store_flush_db;
+SELECT marker = 'WW_LOCK:' + CONVERT(varchar(20), ISNULL(SUM(qsws.total_query_wait_time_ms), 0))
+FROM sys.query_store_wait_stats AS qsws
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsws.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.ww_q1')
+AND   qsws.wait_category_desc = N'Lock';
+"""
+
+# Server time: local for the procedure's date parameters, which it reads as
+# server local time, and the UTC minute number, to tell when a new
+# one-minute interval has started.
+WW_NOW = """\
+SET NOCOUNT ON;
+SELECT marker = 'WW_NOW|' +
+    CONVERT(varchar(23), CONVERT(datetime2(3), SYSDATETIME()), 126) + '|' +
+    CONVERT(varchar(20), DATEDIFF(MINUTE, '20000101', SYSUTCDATETIME()));
+"""
+
+# Query Store's own numbers: runs per plan, and wait time per plan and
+# category, over every interval.
+WW_TRUTH = """\
+SET NOCOUNT ON;
+USE qrb_ww_db;
+SELECT
+    gt = 'GT|runs|' + CONVERT(varchar(20), qsrs.plan_id) + '|' +
+         OBJECT_NAME(qsq.object_id) + '|' +
+         CONVERT(varchar(20), SUM(qsrs.count_executions))
+FROM sys.query_store_runtime_stats AS qsrs
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsrs.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id IN (OBJECT_ID(N'dbo.ww_q1'), OBJECT_ID(N'dbo.ww_q2'))
+GROUP BY qsrs.plan_id, qsq.object_id;
+SELECT
+    gt = 'GT|waits|' + CONVERT(varchar(20), qsws.plan_id) + '|' +
+         OBJECT_NAME(qsq.object_id) + '|' + qsws.wait_category_desc + '|' +
+         CONVERT(varchar(20), SUM(qsws.total_query_wait_time_ms))
+FROM sys.query_store_wait_stats AS qsws
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsws.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id IN (OBJECT_ID(N'dbo.ww_q1'), OBJECT_ID(N'dbo.ww_q2'))
+GROUP BY qsws.plan_id, qsq.object_id, qsws.wait_category_desc;
+"""
+
+WW_RUN = """\
+SET NOCOUNT ON;
+EXECUTE dbo.sp_QueryReproBuilder
+    @database_name = N'qrb_ww_db',
+    @start_date = '{start}',
+    @end_date = '{end}',
+    @query_text_search = N'qrb_ww_marker';
+"""
+
+WW_WAITS = re.compile(r"<waits><plan_id>(\d+)</plan_id><wait_category_desc>([^<]+)"
+                      r"</wait_category_desc><TotalWaitTime>(\d+)</TotalWaitTime>")
+
+
+def ww_now(server, password):
+    """(local time, UTC minute number) from the server clock."""
+    m = re.search(r"WW_NOW\|([^|]+)\|(\d+)", _run_inline(server, password, WW_NOW, "ww_now"))
+    return (m.group(1), int(m.group(2))) if m else None
+
+
+def ww_lock_total(server, password):
+    m = re.search(r"WW_LOCK:(\d+)",
+                  _run_inline(server, password, WW_LOCK_TOTAL, "ww_lock_total"))
+    return int(m.group(1)) if m else 0
+
+
+def ww_plain(server, password, count):
+    """ww_q1 and ww_q2, `count` times each, with nothing blocking them."""
+    sql = "SET NOCOUNT ON;\nUSE qrb_ww_db;\n" + "\n".join(
+        ["EXECUTE dbo.ww_q1;"] * count + ["EXECUTE dbo.ww_q2;"] * count) + "\n"
+    return find_sql_errors(_run_inline(server, password, sql, "ww_plain"))
+
+
+def ww_blocked(server, password):
+    """One ww_q1 execution that waits on a lock for at least 2 seconds.
+    Returns (errors, ww_q1's Lock wait increase in ms)."""
+    before = ww_lock_total(server, password)
+    holder = subprocess.Popen(
+        [*_sqlcmd_prefix(), "-S", server, "-U", "sa", "-P", password,
+         "-d", WW_DB, "-Q", WW_HOLDER],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        out = _run_inline(server, password, WW_BLOCKED, "ww_blocked")
+        h_out, h_err = holder.communicate(timeout=120)
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+    errs = find_sql_errors(out + "\n" + h_out.decode("utf-8", errors="replace") +
+                           "\n" + h_err.decode("utf-8", errors="replace"))
+    return errs, ww_lock_total(server, password) - before
+
+
+def wait_window_setup(server, password):
+    """Build the wait window database and run slot A. Returns
+    (state for slot B or None, setup error or None)."""
+    out = _run_inline(server, password, WW_SETUP, "ww_setup")
+    errs = find_sql_errors(out)
+    m = re.search(r"WW_WARM:(\d+)", out)
+    if errs or not m or int(m.group(1)) == 0:
+        _run_inline(server, password, WW_TEARDOWN, "ww_teardown")
+        return None, ("could not build the wait window fixture: errors=%s warmup=%s"
+                      % (errs[:2], m.group(1) if m else "absent"))
+    start = ww_now(server, password)
+    errs = ww_plain(server, password, 3)
+    block_errs, waited = ww_blocked(server, password)
+    end = ww_now(server, password)
+    if errs or block_errs or waited < 1000 or not start or not end:
+        _run_inline(server, password, WW_TEARDOWN, "ww_teardown")
+        return None, ("slot A: ww_q1 did not wait on a lock: errors=%s lock wait "
+                      "added=%d ms" % ((errs + block_errs)[:2], waited))
+    return {"start": start, "slot_a_end": end}, None
+
+
+def run_wait_window_cases(server, password, state):
+    """Slot B, then a whole-window run checked against Query Store's own
+    numbers. Returns (results, setup error or None)."""
+    try:
+        # Slot B has to be in a later interval than slot A. The plan cases
+        # usually take longer than a minute, so this rarely waits.
+        _run_inline(server, password,
+                    "SET NOCOUNT ON;\nWHILE DATEDIFF(MINUTE, '20000101', SYSUTCDATETIME()) "
+                    "<= %d WAITFOR DELAY '00:00:00.500';\n" % state["slot_a_end"][1],
+                    "ww_wait_minute")
+        errs = find_sql_errors(_run_inline(
+            server, password,
+            "SET NOCOUNT ON;\nUSE qrb_ww_db;\nCREATE INDEX v ON dbo.ww_scan (v);\n",
+            "ww_index"))
+        block_errs, waited = ww_blocked(server, password)
+        errs += block_errs + ww_plain(server, password, 5)
+        _run_inline(server, password,
+                    "SET NOCOUNT ON;\nUSE qrb_ww_db;\nEXECUTE sys.sp_query_store_flush_db;\n"
+                    "WAITFOR DELAY '00:00:01';\n", "ww_flush")
+        end = ww_now(server, password)
+        if errs or waited < 1000 or not end:
+            return [], ("slot B: ww_q1 did not wait on a lock: errors=%s lock wait "
+                        "added=%d ms" % (errs[:2], waited))
+
+        truth = _run_inline(server, password, WW_TRUTH, "ww_truth")
+        runs = {p: (o, int(n)) for p, o, n in
+                re.findall(r"GT\|runs\|(\d+)\|(\w+)\|(\d+)", truth)}
+        waits = {(p, c): int(ms) for p, _o, c, ms in
+                 re.findall(r"GT\|waits\|(\d+)\|(\w+)\|([^|\r\n]+)\|(\d+)", truth)}
+        q1_plans = sorted(p for p, (o, _) in runs.items() if o == "ww_q1")
+        q2_plans = sorted((p for p, (o, _) in runs.items() if o == "ww_q2"), key=int)
+        if len(q1_plans) != 1 or len(q2_plans) != 2:
+            return [], ("Query Store does not have one ww_q1 plan and an ww_q2 plan "
+                        "in each slot: runs=%s" % runs)
+        q1 = q1_plans[0]
+
+        out = _run_inline(server, password,
+                          WW_RUN.format(start=state["start"][0], end=end[0]), "ww_run")
+        checks = []
+
+        def ck(ok, label, detail=""):
+            checks.append((bool(ok), label, detail))
+
+        ck(not find_sql_errors(out), "no severe SQL error", str(find_sql_errors(out)[:2]))
+        plans = sorted(re.findall(r"Plan ID: (\d+)", out), key=int)
+        expected = sorted(q1_plans + q2_plans, key=int)
+        ck(plans == expected, "one repro per plan",
+           "Plan ID values=%s expected=%s" % (plans, expected))
+        found = WW_WAITS.findall(out)
+        lock = [ms for p, c, ms in found if p == q1 and c == "Lock"]
+        ck(lock == [str(waits.get((q1, "Lock"), 0))],
+           "ww_q1 Lock wait covers both slots, matching Query Store",
+           "TotalWaitTime values=%s expected=%d" % (lock, waits.get((q1, "Lock"), 0)))
+        ck(not [p for p, c, _ms in found if p in q2_plans and c == "Lock"],
+           "no Lock wait for ww_q2 (control)",
+           "waits=%s" % [f for f in found if f[0] in q2_plans])
+
+        results = []
+        name = "waitwindow:whole_window"
+        for (ok, label, detail) in checks:
+            results.append((name, ok, label, detail))
+        if any(not ok for (ok, _l, _d) in checks):
+            print("FAIL  %s" % name)
+            for (ok, label, detail) in checks:
+                if not ok:
+                    print("        - %s :: %s" % (label, detail))
+        else:
+            print("PASS  %s" % name)
+        return results, None
+    finally:
+        _run_inline(server, password, WW_TEARDOWN, "ww_teardown")
+
+
 # ------------------------------------------------------------------ main
 
 def main():
@@ -1084,6 +1392,19 @@ def main():
 
     print("Running sp_QueryReproBuilder generate-and-execute tests against %s..." % args.server)
     print()
+
+    # Slot A of the wait window fixture runs first, so the plan cases put
+    # time between it and slot B.
+    ww_state = ww_setup_error = None
+    if not args.only or args.only in "waitwindow:whole_window":
+        ww_state, ww_setup_error = wait_window_setup(args.server, args.password)
+        if ww_setup_error:
+            print("ERROR: " + ww_setup_error)
+            sys.exit(1)
+        # Drop the database even if something between the slots fails. This
+        # runs before the WORKDIR cleanup registered at import.
+        atexit.register(_run_inline, args.server, args.password, WW_TEARDOWN,
+                        "ww_teardown_atexit")
 
     setup_out = _run_inline(args.server, args.password, FIXTURE_SETUP, "fixture_setup")
     setup_err = find_sql_errors(setup_out)
@@ -1127,6 +1448,13 @@ def main():
                         print("        - %s" % label)
     finally:
         _run_inline(args.server, args.password, FIXTURE_TEARDOWN, "fixture_teardown")
+
+    if ww_state:
+        ww_results, ww_error = run_wait_window_cases(args.server, args.password, ww_state)
+        if ww_error:
+            print("ERROR: " + ww_error)
+            sys.exit(1)
+        results.extend(ww_results)
 
     procname_results, procname_setup_error = run_procname_cases(
         args.server, args.password, only=args.only, verbose=args.verbose)
