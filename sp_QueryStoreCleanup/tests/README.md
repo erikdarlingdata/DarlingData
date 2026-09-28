@@ -10,7 +10,7 @@ procedure reports and what it actually removes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds several Query Store scratch databases, then asserts on reported and actual removal counts across parameters, report modes, and edge cases. 75 assertions. |
+| `run_tests.py` | Builds several Query Store scratch databases, then asserts on reported and actual removal counts across parameters, report modes, compat levels, and edge cases. 100 assertions on SQL Server 2025. |
 
 ```
 cd sp_QueryStoreCleanup/tests
@@ -18,7 +18,8 @@ python run_tests.py --server SQL2025
 ```
 
 Takes `--server` and `--password` (default `SQL2025` / the standard local
-`sa` password). Expect `75`.
+`sa` password). Expect `100` on SQL Server 2025. Older versions support fewer
+compat levels and skip the PSP tests, so they run fewer.
 
 The CI bundle leaves `sp_QueryStoreCleanup` out, so the harness installs the
 procedure itself. Pass `--proc-file` to test a version other than the repo
@@ -36,9 +37,9 @@ python run_tests.py --server SQL2025 --proc-file path/to/sp_QueryStoreCleanup.sq
   `@cleanup_targets` value, and each `@dedupe_by` value, plus the result set
   count.
 - Text search ignores case in a case-sensitive database (#882).
-- The procedure installed in a compat level 140 database runs the default
-  call without Msg 8622. It only adds a HASH JOIN at compat level 150 and
-  up (#867).
+- The procedure is installed at every compat level the server supports,
+  from 100 up to 170. At each level, the default call runs without Msg 8622,
+  finds the same 20 queries, and uses HASH JOIN in Step 4 (#867).
 - A forced plan is never removed.
 - A real removal removes exactly the listed query IDs and nothing else, in
   both `@sort_direction` orders.
@@ -62,8 +63,7 @@ The harness creates and drops these databases, all prefixed `qsc_`:
 | `qsc_psp` | A parameter sensitive plan parent query and its variants (SQL Server 2022 and up only). |
 | `qsc_readonly` | A Query Store forced into `READ_ONLY`. |
 | `qsc_noqs` | Query Store off, for the "not enabled" error. |
-| `qsc_tools_140` | The procedure installed at compat level 140, for the HASH JOIN gate test. |
-| `qsc_tools_high` | The procedure installed at the highest compat level the server supports. |
+| `qsc_tools_100` to `qsc_tools_170` | The procedure installed at one compat level each, for the HASH JOIN test. The harness only creates the levels the server supports. `qsc_tools_140` also holds the copy for the Msg 12402 test. |
 
 `qsc_missing_db` is named in one test but never created, to check the
 "database not found" error. A `finally` block drops every database above

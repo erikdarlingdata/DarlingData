@@ -3741,7 +3741,16 @@ SELECT
     qsq.initial_compile_start_time,
     qsq.last_compile_start_time,
     qsq.last_execution_time
-FROM #query_store_plan AS qsp
+FROM
+(
+    /*
+    A query with more than one plan would otherwise get a row per plan
+    */
+    SELECT DISTINCT
+        qsp.query_id
+    FROM #query_store_plan AS qsp
+    WHERE qsp.database_id = @database_id
+) AS qsp
 CROSS APPLY
 (
     SELECT TOP (1)
@@ -3751,7 +3760,6 @@ CROSS APPLY
     ORDER BY
         qsq.last_execution_time DESC
 ) AS qsq
-WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -3796,7 +3804,16 @@ SELECT
     qsqt.statement_sql_handle,
     qsqt.is_part_of_encrypted_module,
     qsqt.has_restricted_text
-FROM #query_store_query AS qsq
+FROM
+(
+    /*
+    Queries can share a query text, so take each text once
+    */
+    SELECT DISTINCT
+        qsq.query_text_id
+    FROM #query_store_query AS qsq
+    WHERE qsq.database_id = @database_id
+) AS qsq
 CROSS APPLY
 (
     SELECT TOP (1)
@@ -3804,7 +3821,6 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     WHERE qsqt.query_text_id = qsq.query_text_id
 ) AS qsqt
-WHERE qsq.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -4046,14 +4062,18 @@ FROM
                     qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
-    FROM #query_store_runtime_stats AS qsrs
+    FROM #query_store_runtime_stats AS qsrs_plans
     CROSS APPLY
     (
         /*
-        Pull every wait category captured for this (interval, plan).
-        #query_store_runtime_stats holds one row per plan, at the latest
-        interval in the window that the plan ran in, so these waits come
-        from that one interval, not from the whole window. A TOP (5)
+        Pull every wait category for the runtime stats rows that
+        #query_store_runtime_stats aggregated for this plan. The EXISTS
+        uses the same date filter, so waits cover the whole time window
+        like every other metric, not just the latest interval that the
+        plan ran in. Waits with no time are skipped. Filtering on
+        min_query_wait_time_ms > 0 here used to drop real waits: Query
+        Store can report a minimum of 0 for a wait category that has wait
+        time in the interval. A TOP (5)
         ORDER BY avg_query_wait_time_ms DESC here used to drop every wait
         category past the fifth. Query Store keeps a small, fixed set of
         wait categories, so pulling all of them does not blow up the
@@ -4062,18 +4082,36 @@ FROM
         SELECT
             qsws.*
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-        WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
-        AND   qsws.plan_id = qsrs.plan_id
+        WHERE qsws.plan_id = qsrs_plans.plan_id
         AND   qsws.wait_category > 0
-        AND   qsws.min_query_wait_time_ms > 0
+        AND   qsws.total_query_wait_time_ms > 0
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                  WHERE qsrs.plan_id = qsws.plan_id
+                  AND   qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+                  AND   qsrs.execution_type = qsws.execution_type';
+
+    /*Same date filtering as #query_store_runtime_stats*/
+    IF @start_date <= @end_date
+    BEGIN
+        SELECT
+            @sql += N'
+                  AND   qsrs.last_execution_time >= @start_date
+                  AND   qsrs.last_execution_time < @end_date';
+    END;
+
+    SELECT
+        @sql += N'
+              )
     ) AS qsws
-    WHERE qsrs.database_id = @database_id
+    WHERE qsrs_plans.database_id = @database_id
 ) AS qsws_with_lasts
 GROUP BY
     qsws_with_lasts.plan_id,
     qsws_with_lasts.wait_category_desc
-HAVING
-    SUM(qsws_with_lasts.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -4098,8 +4136,12 @@ OPTION(RECOMPILE);' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id integer',
-        @database_id;
+      N'@database_id integer,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @database_id,
+        @start_date,
+        @end_date;
 END;
 
 /*

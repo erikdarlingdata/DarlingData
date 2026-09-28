@@ -13,8 +13,8 @@ What it covers:
   - Report mode counts on a duplicate fixture, for the default call, each
     @cleanup_targets value and each @dedupe_by value, plus the result set count.
   - Text search ignores case in a case-sensitive database (#882).
-  - The procedure installed in a compat 140 database runs the default call
-    without Msg 8622, and only adds HASH JOIN at compat 150 and up (#867).
+  - The procedure installed at every compat level the server supports runs
+    the default call without Msg 8622, and Step 4 uses HASH JOIN (#867).
   - A forced plan is never removed.
   - A real removal removes exactly the listed query_ids and nothing else, in
     both @sort_direction orders.
@@ -55,10 +55,12 @@ DUPES_DB = "qsc_dupes"          # duplicate fixture, Latin1_General_100_CS_AS
 PSP_DB = "qsc_psp"              # PSP parent and variants, 2022+ only
 READONLY_DB = "qsc_readonly"    # Query Store in READ_ONLY
 NOQS_DB = "qsc_noqs"            # Query Store off
-TOOLS_140 = "qsc_tools_140"     # procedure installed at compat 140
-TOOLS_HIGH = "qsc_tools_high"   # procedure installed at the highest compat, 150+
+TOOLS_DB = "qsc_tools_%d"       # procedure installed at one compat level
+TOOLS_140 = TOOLS_DB % 140      # also home to the remove-twice copy
 MISSING_DB = "qsc_missing_db"   # never created
-ALL_DBS = [DUPES_DB, PSP_DB, READONLY_DB, NOQS_DB, TOOLS_140, TOOLS_HIGH]
+ALL_COMPAT_LEVELS = range(100, 180, 10)
+ALL_DBS = ([DUPES_DB, PSP_DB, READONLY_DB, NOQS_DB] +
+           [TOOLS_DB % level for level in ALL_COMPAT_LEVELS])
 
 PROC = "dbo.sp_QueryStoreCleanup"
 TWICE_PROC = "dbo.sp_QueryStoreCleanup_twice"
@@ -658,38 +660,39 @@ def step4_sql(stdout):
     return stdout[start:min(ends) if ends else len(stdout)]
 
 
-def compat_tests(server, password, R, major):
-    G = "HASH JOIN gate (#867)"
-    out, all_text = run_qsc(server, password, DUPES_DB, ", @report_only = 1",
-                            home=TOOLS_140)
-    R.check(G, "compat 140: default call raises no Msg 8622",
-            "Msg 8622" not in all_text and not find_sql_errors(all_text),
-            (find_sql_errors(all_text) or [""])[0])
-    R.check(G, "compat 140: default call finds 20 queries",
-            found_to_remove(out) == 20, "found %s" % found_to_remove(out))
+def compat_tests(server, password, R, major, proc_text):
+    """Install the procedure at every compat level the server supports and
+    run the default call from each. The dynamic SQL compiles in the
+    procedure's own database, so that database's level is the one that
+    counts. Step 4 used to put both dupe lists in one EXISTS, which fails
+    with Msg 8622 under HASH JOIN below compat 150 (#867)."""
+    G = "HASH JOIN at every compat level (#867)"
+    for level in compat_levels(major):
+        db = TOOLS_DB % level
+        if level != 140:
+            if create_db(server, password, db, compat=level):
+                R.check(G, "compat %d: tools database created" % level, False,
+                        "create failed")
+                continue
+            if not install(server, password, db, proc_text, R,
+                           "into %s (compat %d)" % (db, level)):
+                continue
+        out, all_text = run_qsc(server, password, DUPES_DB,
+                                ", @report_only = 1, @debug = 1", home=db)
+        errors = find_sql_errors(all_text)
+        R.check(G, "compat %d: default call raises no Msg 8622 or other error" % level,
+                "Msg 8622" not in all_text and not errors, (errors or [""])[0])
+        R.check(G, "compat %d: default call finds 20 queries" % level,
+                found_to_remove(out) == 20, "found %s" % found_to_remove(out))
+        sql = step4_sql(out)
+        R.check(G, "compat %d: Step 4 uses HASH JOIN with both dupe lists" % level,
+                "OPTION(RECOMPILE, HASH JOIN);" in sql
+                and "#query_hash_dupes" in sql and "#plan_hash_dupes" in sql)
 
-    out, _ = run_qsc(server, password, DUPES_DB, ", @report_only = 1, @debug = 1",
-                     home=TOOLS_140)
-    sql = step4_sql(out)
-    R.check(G, "compat 140: Step 4 has both dupe lists (UNION ALL)", "UNION ALL" in sql)
-    R.check(G, "compat 140: Step 4 uses OPTION(RECOMPILE) without HASH JOIN",
-            "OPTION(RECOMPILE);" in sql and "HASH JOIN" not in sql)
 
-    if major < 15:
-        R.skip(G, "compat 150+: Step 4 uses HASH JOIN",
-               "SQL Server 2017 has no compat level above 140")
-        return
-    out, all_text = run_qsc(server, password, DUPES_DB, ", @report_only = 1, @debug = 1",
-                            home=TOOLS_HIGH)
-    sql = step4_sql(out)
-    R.check(G, "compat %d: Step 4 uses OPTION(RECOMPILE, HASH JOIN)" % high_compat(major),
-            "OPTION(RECOMPILE, HASH JOIN);" in sql and "UNION ALL" in sql
-            and not find_sql_errors(all_text) and found_to_remove(out) == 20,
-            "found %s" % found_to_remove(out))
-
-
-def high_compat(major):
-    return min(major, 17) * 10
+def compat_levels(major):
+    """Compat levels the server supports: 100 up to its own (170 at most)."""
+    return [level for level in ALL_COMPAT_LEVELS if level <= min(major, 17) * 10]
 
 
 def forced_plan_and_removal_tests(server, password, R):
@@ -955,19 +958,13 @@ def main():
         tools_ok = not create_db(server, password, TOOLS_140, compat=140)
         tools_ok = tools_ok and install(server, password, TOOLS_140, proc_text, R,
                                         "into %s (compat 140)" % TOOLS_140)
-        if major >= 15:
-            tools_ok = tools_ok and not create_db(server, password, TOOLS_HIGH,
-                                                  compat=high_compat(major))
-            tools_ok = tools_ok and install(server, password, TOOLS_HIGH, proc_text, R,
-                                            "into %s (compat %d)"
-                                            % (TOOLS_HIGH, high_compat(major)))
 
         if build_dupes(server, password, R) and build_noqs(server, password, R):
             parameter_tests(server, password, R)
             report_tests(server, password, R)
             case_tests(server, password, R)
             if tools_ok:
-                compat_tests(server, password, R, major)
+                compat_tests(server, password, R, major, proc_text)
             forced_plan_and_removal_tests(server, password, R)
             if tools_ok:
                 msg12402_tests(server, password, R, proc_text)
