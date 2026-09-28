@@ -2077,7 +2077,7 @@ SELECT
     currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
     sort_order = CONVERT(varchar(400), ''),
-    activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' ELSE 'blocking' END,
+    activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
 /* bd and bg are two independent APPLYs off the same event, not a chain, which looks
@@ -2208,7 +2208,7 @@ SELECT
     currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
     sort_order = CONVERT(varchar(400), ''),
-    activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' ELSE 'blocked' END,
+    activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
 /* bd and bg are two independent APPLYs off the same event, not a chain, which looks
@@ -2408,7 +2408,7 @@ SELECT
         CASE kheb.activity
              WHEN 'blocking'
              THEN '(' + kheb.blocking_desc + ') is blocking (' + kheb.blocked_desc + ')'
-             ELSE '(' + kheb.blocked_desc + ') is blocked by (' + kheb.blocking_desc + ')'
+             ELSE ' > (' + kheb.blocked_desc + ') is blocked by (' + kheb.blocking_desc + ')'
         END,
     spid =
         CASE kheb.activity

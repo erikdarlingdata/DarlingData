@@ -2323,15 +2323,19 @@ AND   ca.utc_timestamp < @end_date';
                     '19000101'
                 ),
             tc.wait_type,
-            waits = SUM(CONVERT(bigint, tc.waits)),
             /*
-            Weighted average rather than AVG(avg): tc.average_wait_time_ms
-            is already a per-event average, so AVG() over the bucket was
-            an unweighted mean of means — events with one wait got the
-            same pull on the output as events with thousands. Weight by
-            waits to get the true bucket-scoped average. NULLIF keeps us
-            safe if every contributing row had waits = 0.
+            Each system_health snapshot reports the waits, average and
+            max wait time since the server started, so the numbers only
+            grow from one snapshot to the next. Summing waits over a
+            bucket counted the same waits once per snapshot: about 12
+            times over with snapshots every 5 minutes and the default
+            60 minute buckets. MAX gives the count as of the last
+            snapshot in the bucket. The weighted average lands on the
+            since-startup average for the bucket, and MAX gives the
+            since-startup max. NULLIF keeps us safe if every
+            contributing row had waits = 0.
             */
+            waits = MAX(CONVERT(bigint, tc.waits)),
             average_wait_time_ms =
                 CONVERT
                 (
@@ -2600,17 +2604,13 @@ AND   ca.utc_timestamp < @end_date';
                 ),
             td.wait_type,
             /*
-            Weighted average rather than AVG(avg), same reasoning as #tc:
-            td.average_wait_time_ms is already a per-event average, so
-            aggregating by the raw metric columns (the prior GROUP BY) was
-            a no-op dedup, not an aggregation - a wait_type recurring with
-            identical metrics across buckets would vanish after its first
-            bucket, and a bucket with multiple distinct readings would
-            surface as un-combined duplicate rows instead of one summary
-            row. NULLIF keeps us safe if every contributing row had
-            waits = 0.
+            Same as #tc: each snapshot reports values since the server
+            started, so waits takes MAX, the weighted average lands on
+            the since-startup average for the bucket, and max takes MAX.
+            One row per wait type per bucket. NULLIF keeps us safe if
+            every contributing row had waits = 0.
             */
-            waits = SUM(CONVERT(bigint, td.waits)),
+            waits = MAX(CONVERT(bigint, td.waits)),
             average_wait_time_ms =
                 CONVERT
                 (

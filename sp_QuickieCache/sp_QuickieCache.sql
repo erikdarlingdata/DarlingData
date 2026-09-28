@@ -1290,6 +1290,9 @@ OPTION(RECOMPILE, MAXDOP 1);';
     All four stat DMVs feed into this single table.
     Statements group by query_hash; procedures, functions,
     and triggers group by database_id + object_id.
+
+    object_name holds [schema].[object], which can be longer
+    than a sysname: each QUOTENAME can return 258 characters.
     */
     CREATE TABLE
         #query_stats
@@ -1297,7 +1300,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
         id integer NOT NULL IDENTITY(1, 1),
         query_type varchar(20) NOT NULL,
         database_name sysname NULL,
-        object_name sysname NULL,
+        object_name nvarchar(517) NULL,
         query_hash binary(8) NULL,
         plan_count integer NOT NULL DEFAULT 0,
         total_executions bigint NOT NULL DEFAULT 0,
@@ -2090,7 +2093,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
         id integer NOT NULL,
         query_type varchar(20) NOT NULL,
         database_name sysname NULL,
-        object_name sysname NULL,
+        object_name nvarchar(517) NULL,
         query_hash binary(8) NULL,
         plan_count integer NOT NULL,
         total_executions bigint NOT NULL,
