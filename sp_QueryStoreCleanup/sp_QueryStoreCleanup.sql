@@ -1300,7 +1300,11 @@ OPTION(RECOMPILE);';
             @query_store_queries OUTPUT;
 
         /*
-        One row per query_hash, with the plan counts rolled up from #report_plans
+        One row per query_hash, with the plan counts rolled up from #report_plans.
+        A PSP parent query has no last_execution_time of its own (its variants
+        run instead), so the oldest and newest times come from the rows that
+        have one. MIN and MAX over the NULL would print "Null value is
+        eliminated by an aggregate" and give the same answer.
         */
         INSERT
             #report_groups
@@ -1324,8 +1328,8 @@ OPTION(RECOMPILE);';
             plans = MAX(ISNULL(p.plans, 0)),
             plan_hashes = MAX(ISNULL(p.plan_hashes, 0)),
             object_id = MAX(rq.object_id),
-            oldest_last_execution = MIN(rq.last_execution_time),
-            newest_last_execution = MAX(rq.last_execution_time),
+            oldest_last_execution = le.oldest_last_execution,
+            newest_last_execution = le.newest_last_execution,
             sample_query_id = MAX(rq.query_id)
         FROM #report_queries AS rq
         LEFT JOIN
@@ -1341,12 +1345,27 @@ OPTION(RECOMPILE);';
                 rq2.query_hash
         ) AS p
           ON p.query_hash = rq.query_hash
+        LEFT JOIN
+        (
+            SELECT
+                rq3.query_hash,
+                oldest_last_execution = MIN(rq3.last_execution_time),
+                newest_last_execution = MAX(rq3.last_execution_time)
+            FROM #report_queries AS rq3
+            WHERE rq3.last_execution_time IS NOT NULL
+            GROUP BY
+                rq3.query_hash
+        ) AS le
+          ON le.query_hash = rq.query_hash
         GROUP BY
-            rq.query_hash
+            rq.query_hash,
+            le.oldest_last_execution,
+            le.newest_last_execution
         OPTION(RECOMPILE);
 
         /*
-        Summary: one row for the whole removal list
+        Summary: one row for the whole removal list. The oldest and newest
+        times skip PSP parents' NULLs the same way the groups do.
         */
         SELECT
             queries_to_remove = COUNT_BIG(*),
@@ -1373,8 +1392,20 @@ OPTION(RECOMPILE);';
                         ELSE 0
                     END
                 ),
-            oldest_last_execution = MIN(rq.last_execution_time),
-            newest_last_execution = MAX(rq.last_execution_time),
+            oldest_last_execution =
+            (
+                SELECT
+                    MIN(rq2.last_execution_time)
+                FROM #report_queries AS rq2
+                WHERE rq2.last_execution_time IS NOT NULL
+            ),
+            newest_last_execution =
+            (
+                SELECT
+                    MAX(rq2.last_execution_time)
+                FROM #report_queries AS rq2
+                WHERE rq2.last_execution_time IS NOT NULL
+            ),
             psp_parents_to_remove =
             (
                 SELECT

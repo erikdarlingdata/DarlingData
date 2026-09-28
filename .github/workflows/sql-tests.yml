@@ -227,3 +227,16 @@ jobs:
           SQLCMD_CONN_ARGS: "-C -N disable"
         run: |
           python3 sp_QuickieStore/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      # sp_QueryStoreCleanup removes queries from Query Store, so the harness
+      # builds scratch databases with a known set of duplicates and asserts on
+      # what the procedure reports and what it actually removes. The CI bundle
+      # leaves this procedure out, so the harness installs it itself. It
+      # creates and drops its own qsc_* databases.
+      - name: sp_QueryStoreCleanup assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_QueryStoreCleanup/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
