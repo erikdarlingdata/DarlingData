@@ -1,6 +1,6 @@
 # sp_QueryStoreCleanup Tests
 
-**Run before and after any change to `sp_QueryStoreCleanup.sql`.** A bug here
+Run this harness before and after any change to `sp_QueryStoreCleanup.sql`. A bug here
 does not show a wrong number on a screen. It removes the wrong queries from
 Query Store, or refuses to remove the right ones. This harness builds Query
 Store scratch databases with a known set of queries. It asserts on what the
