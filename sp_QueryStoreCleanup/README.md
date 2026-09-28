@@ -54,6 +54,8 @@ The `@dedupe_by` parameter controls how duplicates are identified after text fil
 
 **Note:** Hash deduplication removes all copies of duplicated hashes, not all-but-one. This is intentional, as the queries targeted are noise that will be recaptured by Query Store if they execute again.
 
+With a text filter, deduplication only looks at queries that match the filter, and only removes those. A query that does not match is never removed, even when it shares a hash with one that does. With `@cleanup_targets = 'none'` there is no text filter, so every copy of a duplicated hash is removed.
+
 ### Splitting a Long Removal
 
 `sp_query_store_remove_query` removes one query at a time, and removals serialize on a lock, so a big cleanup can run for hours. Two sessions working one list from opposite ends finish sooner: in testing on a Query Store with about 800,000 queries, two sessions removed about 1.4 times as many queries a second as one. More than two sessions added nothing.

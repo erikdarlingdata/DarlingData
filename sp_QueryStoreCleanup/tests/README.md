@@ -10,7 +10,7 @@ procedure reports and what it actually removes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds several Query Store scratch databases, then asserts on reported and actual removal counts across parameters, report modes, compat levels, and edge cases. 100 assertions on SQL Server 2025. |
+| `run_tests.py` | Builds several Query Store scratch databases, then asserts on reported and actual removal counts across parameters, report modes, compat levels, and edge cases. 103 assertions on SQL Server 2025. |
 
 ```
 cd sp_QueryStoreCleanup/tests
@@ -22,10 +22,10 @@ Takes `--server` and `--password` (default `SQL2025` / the standard local
 
 | Version | Passed | Skipped |
 | --- | --- | --- |
-| SQL Server 2025 | 100 | 0 |
-| SQL Server 2022 | 96 | 0 |
-| SQL Server 2019 | 85 | 1 |
-| SQL Server 2017 | 81 | 1 |
+| SQL Server 2025 | 103 | 0 |
+| SQL Server 2022 | 99 | 0 |
+| SQL Server 2019 | 88 | 1 |
+| SQL Server 2017 | 84 | 1 |
 
 Older versions support fewer compat levels, so they run fewer checks. Versions
 before SQL Server 2022 skip the PSP test.
@@ -45,6 +45,11 @@ python run_tests.py --server SQL2025 --proc-file path/to/sp_QueryStoreCleanup.sq
 - Report mode counts on a duplicate fixture, for the default call, each
   `@cleanup_targets` value, and each `@dedupe_by` value, plus the result set
   count.
+- With a text filter, deduplication never lists a query outside the filter.
+  The fixture has one query that shares a query hash and plan hash with a
+  custom-marker group but lacks the marker. A custom filter never lists it.
+  With `@cleanup_targets = 'none'` there is no text filter, so it is listed
+  with the other copies.
 - Text search ignores case in a case-sensitive database (#882).
 - The procedure is installed at every compat level the server supports,
   from 100 up to 170. At each level, the default call runs without Msg 8622,
