@@ -93,7 +93,7 @@ BEGIN
                     WHEN N'@custom_query_filter'
                     THEN 'custom LIKE pattern for query text filtering; also applied when @cleanup_targets = all'
                     WHEN N'@dedupe_by'
-                    THEN 'deduplication strategy: all, query_hash, plan_hash, none. note: hash dedup removes ALL copies of duplicated hashes, not all-but-one'
+                    THEN 'deduplication strategy: all, query_hash, plan_hash, none. note: hash dedup removes ALL copies of duplicated hashes, not all-but-one. with a text filter, it only removes copies that match the filter'
                     WHEN N'@min_age_days'
                     THEN 'only remove queries whose last execution is older than this many days; NULL = no age filter'
                     WHEN N'@report_only'
@@ -1021,7 +1021,12 @@ OPTION(RECOMPILE, HASH JOIN);';
 
         /*
         DISTINCT because a query can be in both lists, and in the plan
-        hash list once per plan
+        hash list once per plan.
+
+        With a text filter, the duplicate hashes come from queries that
+        match it, but queries that don't match can share those hashes.
+        Only matching queries are removed, so a cleanup never reaches
+        past the filter it was given.
         */
         SELECT
             @sql = N'
@@ -1037,7 +1042,21 @@ SELECT DISTINCT
 FROM
 (' + @dedupe_candidates + N'
 ) AS qsq
-WHERE 1 = 1' + @removal_filters + N'
+WHERE 1 = 1' +
+            CASE
+                WHEN @no_text_filter = 0
+                THEN N'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq_text
+          JOIN #text_targets AS tt
+            ON tt.query_text_id = qsq_text.query_text_id
+          WHERE qsq_text.query_id = qsq.query_id
+      )'
+                ELSE N''
+            END + @removal_filters + N'
 OPTION(RECOMPILE, HASH JOIN);';
     END;
 

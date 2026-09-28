@@ -75,6 +75,9 @@ TWICE_PROC = "dbo.sp_QueryStoreCleanup_twice"
 #   X       system text, a single query: never a duplicate.
 #   M       maintenance text ((@_msparam...), 4 queries: duplicates by both.
 #   C1      custom marker, 4 queries: duplicates by both.
+#   C1T     C1's statement with its own marker instead of the custom one,
+#           1 query: same query_hash and plan hash as C1, never a text
+#           target. With a text filter it must never be removed.
 #   C2      custom marker, 2 queries with one query_hash but two plans
 #           (a skewed literal): duplicates by query_hash only.
 #   C3      custom marker, a single query.
@@ -85,14 +88,15 @@ GROUP_KEYS = [
     ("S2", "sys.indexes AS i"),
     ("X", "sys.types AS t"),
     ("M", "@_msparam_0"),
+    ("C1T", "qsc_hash_twin"),  # before C1: its text has C1's key too
     ("C1", "r.val, c = COUNT_BIG"),
     ("C2", "r.id, r.pad"),
     ("C3", "s = COUNT_BIG"),
     ("U", "o.val, c = COUNT_BIG"),
     ("T", "qsc_twice_marker"),
 ]
-GROUP_SIZES = {"S1": 8, "S2": 8, "X": 1, "M": 4, "C1": 4, "C2": 2,
-               "C3": 1, "U": 4, "T": 2}
+GROUP_SIZES = {"S1": 8, "S2": 8, "X": 1, "M": 4, "C1": 4, "C1T": 1,
+               "C2": 2, "C3": 1, "U": 4, "T": 2}
 
 CUSTOM_FILTER = "%qsc_custom_marker%"
 TWICE_FILTER = "%qsc_twice_marker%"
@@ -379,6 +383,9 @@ def dupes_workload():
         s.append("SELECT /* qsc_custom_marker */ r.val, c = COUNT_BIG(*) "
                  "FROM dbo.qsc_rows AS r JOIN dbo.qsc_other AS o ON o.val = r.val "
                  "WHERE r.id = %d GROUP BY r.val;" % i)
+    s.append("SELECT /* qsc_hash_twin */ r.val, c = COUNT_BIG(*) "
+             "FROM dbo.qsc_rows AS r JOIN dbo.qsc_other AS o ON o.val = r.val "
+             "WHERE r.id = 9005 GROUP BY r.val;")
     for v in (1, 9999):
         s.append("SELECT /* qsc_custom_marker */ r.id, r.pad FROM dbo.qsc_rows AS r "
                  "JOIN dbo.qsc_other AS o ON o.id = r.id WHERE r.val = %d;" % v)
@@ -442,8 +449,8 @@ def build_dupes(server, password, R):
     groups = fixture_queries(server, password)
     sizes = {g: sum(1 for v in groups.values() if v == g) for g in GROUP_SIZES}
     ok = sizes == GROUP_SIZES and "?" not in groups.values() and not errors
-    R.check("Fixture", "duplicate fixture captured: %d queries in 9 groups"
-            % sum(GROUP_SIZES.values()), ok,
+    R.check("Fixture", "duplicate fixture captured: %d queries in %d groups"
+            % (sum(GROUP_SIZES.values()), len(GROUP_SIZES)), ok,
             "got %s, unknown %d, %s" % (sizes, sum(1 for v in groups.values() if v == "?"),
                                         errors[:1]))
     return ok
@@ -585,7 +592,7 @@ def report_tests(server, password, R):
         ("system, @dedupe_by = 'none' (singletons too)",
          ", @cleanup_targets = 'system', @dedupe_by = 'none'", 17),
         ("@cleanup_targets = 'none', @dedupe_by = 'query_hash' (every duplicate)",
-         ", @cleanup_targets = 'none', @dedupe_by = 'query_hash'", 32),
+         ", @cleanup_targets = 'none', @dedupe_by = 'query_hash'", 33),
     ]
     for name, extra, expected in cases:
         out, all_text = run_qsc(server, password, DUPES_DB, extra + ", @report_only = 1")
@@ -608,6 +615,31 @@ def report_tests(server, password, R):
     out, _ = run_qsc(server, password, DUPES_DB, base + ", @dedupe_by = 'plan_hash'")
     R.check(G, "@dedupe_by = 'plan_hash' runs only the plan_hash step",
             "Found 1 duplicate plan hashes" in out and "duplicate query hashes" not in out)
+
+    # With a text filter, removal stays inside it: C1T shares C1's hashes but
+    # not the custom marker, so it is never listed. With no text filter,
+    # every copy of a duplicated hash is listed, C1T included.
+    groups = fixture_queries(server, password)
+    for name, extra, expected_groups in (
+            ("custom, @dedupe_by = 'all'",
+             ", @cleanup_targets = 'custom', @custom_query_filter = N'%s', "
+             "@dedupe_by = 'all'" % CUSTOM_FILTER, ("C1", "C2")),
+            ("custom, @dedupe_by = 'plan_hash'",
+             ", @cleanup_targets = 'custom', @custom_query_filter = N'%s', "
+             "@dedupe_by = 'plan_hash'" % CUSTOM_FILTER, ("C1",)),
+            ("@cleanup_targets = 'none', @dedupe_by = 'query_hash'",
+             ", @cleanup_targets = 'none', @dedupe_by = 'query_hash'",
+             ("S1", "S2", "M", "C1", "C1T", "C2", "U", "T"))):
+        out, all_text = run_qsc(server, password, DUPES_DB,
+                                extra + ", @report_only = 1, @debug = 1")
+        listed = debug_list(out)
+        expected = {q for q, g in groups.items() if g in expected_groups}
+        R.check(G, "%s lists exactly %s" % (name, " + ".join(expected_groups)),
+                not find_sql_errors(all_text) and listed == expected,
+                "listed %d, expected %d, extra groups %s, missing groups %s"
+                % (len(listed), len(expected),
+                   sorted({groups.get(q, "?") for q in listed - expected}),
+                   sorted({groups.get(q, "?") for q in expected - listed})))
 
     out, all_text = run_qsc(server, password, DUPES_DB, ", @report_only = 1")
     sets = result_sets(out)
@@ -648,6 +680,14 @@ def case_tests(server, password, R):
         R.check(G, "custom filter in %s matches in a CS_AS database" % label,
                 not find_sql_errors(all_text) and found_to_remove(out) == 6,
                 "found %s" % found_to_remove(out))
+
+
+def debug_list(stdout):
+    """The query_ids in the removal list that @debug = 1 returns."""
+    for header, rows in result_sets(stdout):
+        if header[:2] == ["query_id", "is_parent"]:
+            return {int(r[0]) for r in rows}
+    return set()
 
 
 def step4_sql(stdout):
@@ -719,10 +759,7 @@ AND   qsp.is_forced_plan = 1;""".format(db=DUPES_DB, q=forced))
             not errors and rows and rows[0][0] == "1", "%s %s" % (rows, errors[:1]))
 
     out, all_text = run_qsc(server, password, DUPES_DB, ", @report_only = 1, @debug = 1")
-    listed = set()
-    for header, rs in result_sets(out):
-        if header[:2] == ["query_id", "is_parent"]:
-            listed = {int(r[0]) for r in rs}
+    listed = debug_list(out)
     expected = {q for q, g in groups.items() if g in ("S1", "S2", "M")} - {forced}
     R.check("Forced plan", "report leaves the forced query off the list (19 queries)",
             forced not in listed and found_to_remove(out) == 19,
