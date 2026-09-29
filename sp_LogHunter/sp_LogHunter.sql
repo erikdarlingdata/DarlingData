@@ -73,8 +73,8 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '3.9',
-        @version_date = '20260901';
+        @version = '3.10',
+        @version_date = '20261001';
 
     IF @help = 1
     BEGIN

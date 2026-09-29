@@ -78,8 +78,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.9',
-    @version_date = '20260901';
+    @version = '6.10',
+    @version_date = '20261001';
 
 
 IF @help = 1
