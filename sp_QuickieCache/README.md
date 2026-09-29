@@ -40,7 +40,7 @@ While QuickieStore digs into Query Store data, QuickieCache uses the same Pareto
 | @start_date | datetime | only include plans created after this date | NULL |
 | @end_date | datetime | only include plans created before this date | NULL |
 | @minimum_execution_count | bigint | minimum execution count to include a query | 2 |
-| @ignore_system_databases | bit | exclude system databases (master, model, msdb, tempdb) | 1 |
+| @ignore_system_databases | bit | exclude system databases (master, model, msdb, tempdb), unless @database_name names one | 1 |
 | @impact_threshold | decimal(3,2) | minimum impact_score to surface | 0.50 |
 | @find_single_use_plans | bit | show single-use plans consuming the most memory | 0 |
 | @find_duplicate_plans | bit | show query hashes with multiple cached plans | 0 |

@@ -83,8 +83,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.9',
-        @version_date = N'20260901';
+        @version = N'2.10',
+        @version_date = N'20261001';
 
     /*
     Help section, for help.
@@ -139,15 +139,15 @@ BEGIN
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
                     WHEN N'@version_date' THEN 'OUTPUT parameter'
-                    WHEN N'@slow_read_ms' THEN 'any positive number of milliseconds'
-                    WHEN N'@slow_write_ms' THEN 'any positive number of milliseconds'
-                    WHEN N'@significant_wait_threshold_pct' THEN 'any positive percentage'
-                    WHEN N'@wait_high_pct' THEN 'any positive percentage'
-                    WHEN N'@wait_medium_pct' THEN 'any positive percentage'
-                    WHEN N'@memory_grant_warning' THEN 'any positive integer'
-                    WHEN N'@memory_grant_critical' THEN 'any positive integer'
-                    WHEN N'@memory_grant_timeout_warning' THEN 'any positive number'
-                    WHEN N'@memory_grant_timeout_critical' THEN 'any positive number'
+                    WHEN N'@slow_read_ms' THEN '0 or any positive number of milliseconds'
+                    WHEN N'@slow_write_ms' THEN '0 or any positive number of milliseconds'
+                    WHEN N'@significant_wait_threshold_pct' THEN '0 or any positive percentage'
+                    WHEN N'@wait_high_pct' THEN '0 or any positive percentage'
+                    WHEN N'@wait_medium_pct' THEN '0 or any positive percentage'
+                    WHEN N'@memory_grant_warning' THEN '0 or any positive integer'
+                    WHEN N'@memory_grant_critical' THEN '0 or any positive integer'
+                    WHEN N'@memory_grant_timeout_warning' THEN '0 or any positive number'
+                    WHEN N'@memory_grant_timeout_critical' THEN '0 or any positive number'
                     ELSE NULL
                 END,
             defaults =
@@ -2985,9 +2985,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN mf.physical_name LIKE N''http%''
                 THEN mf.physical_name
-                WHEN mf.physical_name LIKE N''\\\\%''
+                WHEN mf.physical_name LIKE N''\\%''
                 THEN N''UNC: '' +
-                     SUBSTRING(mf.physical_name, 3, CHARINDEX(N''\\'', mf.physical_name, 3) - 3)
+                     SUBSTRING(mf.physical_name, 3, CHARINDEX(N''\'', mf.physical_name, 3) - 3)
                 ELSE UPPER(LEFT(mf.physical_name, 2))
             END,
         physical_name = mf.physical_name
@@ -4752,7 +4752,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 database_name = @current_database_name,
                 details =
                     CASE
-                        WHEN qso.max_storage_size_mb < 1024
+                        WHEN qso.max_storage_size_mb < 1000
                         THEN N''Query Store max size ('' +
                              CONVERT(nvarchar(20), qso.max_storage_size_mb) +
                              '' MB) is less than 1 GB. This may be too small for production databases.''
@@ -5276,6 +5276,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url = N''https://erikdarling.com/sp_perfcheck/#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
+            AND   mf.type_desc IN (N''ROWS'', N''LOG'')
             AND   mf.growth * CONVERT(decimal(18, 2), 8.0) /
                   CONVERT(decimal(18, 2), 1024.0) /
                   CONVERT(decimal(18, 2), 1024.0) > 10.0; /* Growth > 10GB */';

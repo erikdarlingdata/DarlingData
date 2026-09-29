@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. 157 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 227 assertions. |
 
 ```
 cd sp_QuickieStore/tests
@@ -18,7 +18,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `157`.
+password). Expect `227`.
 
 ## What it actually covers
 
@@ -45,13 +45,66 @@ nonsense, `@query_type` partitioning proc from ad hoc, `@top`, and
 `@execution_count` set impossibly high. Every absence assertion is paired with a
 completion check so an errored or empty run cannot pass vacuously.
 
+The case-insensitive text search checks run in a second scratch database
+with a case-sensitive collation (`Latin1_General_100_CS_AS`). It holds one
+query with the marker `qs_Case_Marker`. A search for the marker in other cases
+must find that query, and `@query_text_search_not` in another case must remove
+it. `query_sql_text` is `SQL_Latin1_General_CP1_CI_AS` in every database, so a
+text search ignores case whatever the database collation is.
+
+Regression mode and wait stats need data in more than one Query Store
+interval, so they get their own scratch database with one-minute intervals.
+Its workload runs in two slots: slot A when the harness starts, and slot B
+after the other tests, in a later interval. In each slot, one `rm_q1`
+execution waits on a lock that a second session holds. Slot A runs that
+execution last, and slot B runs it first.
+
+`rm_q3` reads the same row and also waits once in each slot. It waits after
+`rm_q1` in slot A, and before it in slot B. So the latest Lock wait comes
+from a different query in each period. `rm_q2` never waits. It gets a new
+index between the slots, so it has a different plan in each slot.
+
+The checks compare the procedure's output with Query Store's own numbers:
+
+- **Regression mode**, with slot A as the baseline and slot B as the current
+  period. Each plan has one row per period. Each period has its own
+  execution count and Lock wait. Its last duration comes from its own last
+  run.
+- **Both slots in one window**, without regression mode. Each plan has one
+  row, with its execution count. The `rm_q1` Lock wait covers both slots,
+  not just the latest interval.
+- **Both runs**: `top_waits` shows the Lock wait for `rm_q1` and none for
+  `rm_q2`, and `compilation_stats` and `resource_stats` have one row per
+  query.
+- **Wait stats in total**, in both runs. Each wait category has one row, and
+  in regression mode one row per period. The Lock total covers `rm_q1` and
+  `rm_q3`, and it matches. Each total row also matches the by-query rows for
+  its category and period. Totals are the sum, and averages are the average
+  of the plan averages. Minimums and maximums are the lowest and the highest.
+  The last wait and the last duration come from the plan with the latest
+  wait in the category. That plan is `rm_q3` in the baseline period, and
+  `rm_q1` in the current period and in the whole window.
+- **Regression mode with `@log_to_table = 1`**. Each wait row in the
+  `WaitStatsByQuery` log table names its period, and the `rm_q1` Lock wait
+  for each period matches. The `WaitStatsTotal` log table has one Lock row
+  per period, and its total for `rm_q1` and `rm_q3` matches. This runs twice.
+  The first run logs to tables the procedure creates. The second logs to
+  `WaitStatsByQuery` and `WaitStatsTotal` tables built the way older versions
+  of the procedure built them, without the period column. The procedure has
+  to add the column first.
+
 ## Fixture
 
 The harness creates its own `quickiestore_test` database with Query Store on,
 runs a small varied workload (ad hoc queries at different costs plus a stored
 procedure, so `@query_type` has both kinds to separate), flushes Query Store, and
 drops the database in a `finally` block that runs even if assertions fail.
-Nothing outside that database is touched.
+Three smaller scratch databases get the same `finally` cleanup. The `@debug`
+check uses `quickiestore_test_empty`, which has Query Store on and no queries.
+The text search checks use `quickiestore_test_cs`, which is case sensitive.
+The regression and wait checks use `quickiestore_test_rm`, and the logging
+checks create their log tables there. Nothing outside these four databases is
+touched.
 
 ## Known client limitation: `@debug = 1`
 

@@ -94,8 +94,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.9',
-    @version_date = '20260901';
+    @version = '5.10',
+    @version_date = '20261001';
 
 IF @help = 1
 BEGIN
@@ -877,7 +877,7 @@ BEGIN
                 host_name nvarchar(256) NULL,
                 login_name nvarchar(256) NULL,
                 transaction_id bigint NULL,
-                blocked_process_report_xml xml NULL
+                blocked_process_report_xml xml NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
             /*
@@ -1422,12 +1422,11 @@ BEGIN
         log_used = bd.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
-        activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
+        activity = 'blocked',
         blocked_process_report = bd.query('.')
     INTO #blocked_sh
     FROM #blocking_xml_sh AS bx
-    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-    OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+    OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocked-process') AS bd(bd)
     WHERE bd.exist('process/@spid') = 1
     OPTION(RECOMPILE);
 
@@ -1479,12 +1478,11 @@ BEGIN
         log_used = bg.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
-        activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
+        activity = 'blocking',
         blocked_process_report = bg.query('.')
     INTO #blocking_sh
     FROM #blocking_xml_sh AS bx
-    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-    OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+    OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocking-process') AS bg(bg)
     WHERE bg.exist('process/@spid') = 1
     OPTION(RECOMPILE);
 
@@ -2082,6 +2080,14 @@ SELECT
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
+/*
+bd and bg are two independent APPLYs off the same event, not a chain, which looks
+like it could cross-join unrelated blocked/blocking pairs. Confirmed against live
+captures (separate unrelated pairs, and a genuine A-blocks-B-blocks-C chain) that a
+single blocked-process-report event always has exactly one blocked-process element,
+so this never cross products. Only blocking-process repeats, for one victim with
+multiple simultaneous blockers, which is a safe 1xN fan-out, not a cross product.
+*/
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
@@ -2207,6 +2213,14 @@ SELECT
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
+/*
+bd and bg are two independent APPLYs off the same event, not a chain, which looks
+like it could cross-join unrelated blocked/blocking pairs. Confirmed against live
+captures (separate unrelated pairs, and a genuine A-blocks-B-blocks-C chain) that a
+single blocked-process-report event always has exactly one blocked-process element,
+so this never cross products. Only blocking-process repeats, for one victim with
+multiple simultaneous blockers, which is a safe 1xN fan-out, not a cross product.
+*/
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)

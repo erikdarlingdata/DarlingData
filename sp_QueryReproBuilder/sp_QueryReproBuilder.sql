@@ -90,8 +90,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.9',
-    @version_date = '20260901';
+    @version = '1.10',
+    @version_date = '20261001';
 
 /*Help*/
 IF @help = 1
@@ -245,6 +245,9 @@ DECLARE
     @database_name_quoted sysname =
         QUOTENAME(@database_name),
     @collation sysname,
+    @text_search_column nvarchar(200),
+    @text_search_open nvarchar(10),
+    @text_search_close nvarchar(100),
     @query_store_exists bit = 'true',
     @procedure_name_quoted nvarchar(1024),
     @procedure_exists bit = 0,
@@ -2704,6 +2707,27 @@ BEGIN
         @sql;
 END;
 
+/*
+Text searches run under a binary collation, which is several times
+cheaper than a linguistic LIKE over query_sql_text. query_sql_text is
+SQL_Latin1_General_CP1_CI_AS whatever the database collation is, so
+a plain LIKE on it was always case-insensitive. Both sides are upper-cased
+first so the matches stay the same, and the search text is upper-cased
+under the column's collation, because a Turkish collation would turn
+i into a dotted capital I that the binary match can't find.
+*/
+IF
+(
+    @query_text_search IS NOT NULL
+ OR @query_text_search_not IS NOT NULL
+)
+BEGIN
+    SELECT
+        @text_search_column = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+        @text_search_open = N'UPPER(',
+        @text_search_close = N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2';
+END;
+
 /*Process @query_text_search parameter*/
 IF @query_text_search IS NOT NULL
 BEGIN
@@ -2768,7 +2792,7 @@ BEGIN
                           1/0
                       FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                       WHERE qsqt.query_text_id = qsq.query_text_id
-                      AND   qsqt.query_sql_text LIKE @query_text_search
+                      AND   ' + @text_search_column + N' LIKE ' + @text_search_open + N'@query_text_search' + @text_search_close + N'
                   )
           )';
 
@@ -2898,7 +2922,7 @@ BEGIN
                           1/0
                       FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                       WHERE qsqt.query_text_id = qsq.query_text_id
-                      AND   qsqt.query_sql_text LIKE @query_text_search_not
+                      AND   ' + @text_search_column + N' LIKE ' + @text_search_open + N'@query_text_search_not' + @text_search_close + N'
                   )
           )';
 
@@ -3717,7 +3741,16 @@ SELECT
     qsq.initial_compile_start_time,
     qsq.last_compile_start_time,
     qsq.last_execution_time
-FROM #query_store_plan AS qsp
+FROM
+(
+    /*
+    A query with more than one plan would otherwise get a row per plan
+    */
+    SELECT DISTINCT
+        qsp.query_id
+    FROM #query_store_plan AS qsp
+    WHERE qsp.database_id = @database_id
+) AS qsp
 CROSS APPLY
 (
     SELECT TOP (1)
@@ -3727,7 +3760,6 @@ CROSS APPLY
     ORDER BY
         qsq.last_execution_time DESC
 ) AS qsq
-WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -3772,7 +3804,16 @@ SELECT
     qsqt.statement_sql_handle,
     qsqt.is_part_of_encrypted_module,
     qsqt.has_restricted_text
-FROM #query_store_query AS qsq
+FROM
+(
+    /*
+    Queries can share a query text, so take each text once
+    */
+    SELECT DISTINCT
+        qsq.query_text_id
+    FROM #query_store_query AS qsq
+    WHERE qsq.database_id = @database_id
+) AS qsq
 CROSS APPLY
 (
     SELECT TOP (1)
@@ -3780,7 +3821,6 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     WHERE qsqt.query_text_id = qsq.query_text_id
 ) AS qsqt
-WHERE qsq.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -4000,13 +4040,13 @@ SELECT
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
     avg_query_wait_time_ms =
-        SUM(qsws_with_lasts.avg_query_wait_time_ms),
+        AVG(qsws_with_lasts.avg_query_wait_time_ms),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
-        SUM(qsws_with_lasts.min_query_wait_time_ms),
+        MIN(qsws_with_lasts.min_query_wait_time_ms),
     max_query_wait_time_ms =
-        SUM(qsws_with_lasts.max_query_wait_time_ms)
+        MAX(qsws_with_lasts.max_query_wait_time_ms)
 FROM
 (
     SELECT
@@ -4022,26 +4062,56 @@ FROM
                     qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
-    FROM #query_store_runtime_stats AS qsrs
+    FROM #query_store_runtime_stats AS qsrs_plans
     CROSS APPLY
     (
-        SELECT TOP (5)
+        /*
+        Pull every wait category for the runtime stats rows that
+        #query_store_runtime_stats aggregated for this plan. The EXISTS
+        uses the same date filter, so waits cover the whole time window
+        like every other metric, not just the latest interval that the
+        plan ran in. Waits with no time are skipped. Filtering on
+        min_query_wait_time_ms > 0 here used to drop real waits: Query
+        Store can report a minimum of 0 for a wait category that has wait
+        time in the interval. A TOP (5)
+        ORDER BY avg_query_wait_time_ms DESC here used to drop every wait
+        category past the fifth. Query Store keeps a small, fixed set of
+        wait categories, so pulling all of them does not blow up the
+        row count.
+        */
+        SELECT
             qsws.*
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-        WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
-        AND   qsws.plan_id = qsrs.plan_id
+        WHERE qsws.plan_id = qsrs_plans.plan_id
         AND   qsws.wait_category > 0
-        AND   qsws.min_query_wait_time_ms > 0
-        ORDER BY
-            qsws.avg_query_wait_time_ms DESC
+        AND   qsws.total_query_wait_time_ms > 0
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                  WHERE qsrs.plan_id = qsws.plan_id
+                  AND   qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+                  AND   qsrs.execution_type = qsws.execution_type';
+
+    /*Same date filtering as #query_store_runtime_stats*/
+    IF @start_date <= @end_date
+    BEGIN
+        SELECT
+            @sql += N'
+                  AND   qsrs.last_execution_time >= @start_date
+                  AND   qsrs.last_execution_time < @end_date';
+    END;
+
+    SELECT
+        @sql += N'
+              )
     ) AS qsws
-    WHERE qsrs.database_id = @database_id
+    WHERE qsrs_plans.database_id = @database_id
 ) AS qsws_with_lasts
 GROUP BY
     qsws_with_lasts.plan_id,
     qsws_with_lasts.wait_category_desc
-HAVING
-    SUM(qsws_with_lasts.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -4066,8 +4136,12 @@ OPTION(RECOMPILE);' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id integer',
-        @database_id;
+      N'@database_id integer,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @database_id,
+        @start_date,
+        @end_date;
 END;
 
 /*
@@ -4840,14 +4914,16 @@ SELECT
                     ELSE N''
                 END +
                 NCHAR(10) +
-                ISNULL
-                (
-                    N'SET' +
-                    REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
-                    N' ON;' +
-                    NCHAR(10),
-                    N''
-                ) +
+                CASE
+                    WHEN qsrs.context_settings IS NULL
+                    OR   qsrs.context_settings = N''
+                    THEN N''
+                    ELSE
+                        N'SET' +
+                        REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
+                        N' ON;' +
+                        NCHAR(10)
+                END +
                 ISNULL
                 (
                     N'SET LANGUAGE ' +
@@ -4860,12 +4936,12 @@ SELECT
                 (
                     N'SET DATEFORMAT ' +
                     CASE qcs.date_format
-                         WHEN 0 THEN N'mdy'
-                         WHEN 1 THEN N'dmy'
-                         WHEN 2 THEN N'ymd'
-                         WHEN 3 THEN N'ydm'
-                         WHEN 4 THEN N'myd'
-                         WHEN 5 THEN N'dym'
+                         WHEN 1 THEN N'mdy'
+                         WHEN 2 THEN N'dmy'
+                         WHEN 3 THEN N'ymd'
+                         WHEN 4 THEN N'ydm'
+                         WHEN 5 THEN N'myd'
+                         WHEN 6 THEN N'dym'
                          ELSE N'mdy'
                     END +
                     N';' +

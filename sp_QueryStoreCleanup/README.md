@@ -8,7 +8,9 @@ This procedure identifies and removes duplicate and noisy queries from Query Sto
 
 By default, it targets system queries (`FROM sys.%`), maintenance operations (index rebuilds, statistics updates, DBCC commands, etc.), and removes all copies of duplicated query and plan hashes. You can customize what to target, how to deduplicate, and whether to just report or actually remove.
 
-Queries with forced plans are always protected from removal.
+Queries with forced plans are always protected from removal. On SQL Server 2022 or later, the same protection applies to a query with a forced Query Store hint.
+
+On SQL Server 2022 or later, a parameter sensitive plan (PSP) parent query cannot be removed while any of its variant queries remain. The procedure removes parents after their variants, and leaves out a parent that has a variant not on the removal list, instead of failing on it.
 
 ## Parameters
 
@@ -19,7 +21,9 @@ Queries with forced plans are always protected from removal.
 | @custom_query_filter | nvarchar(1024) | custom LIKE pattern for query text filtering; also applied when @cleanup_targets = all | a valid LIKE pattern | NULL |
 | @dedupe_by | varchar(50) | deduplication strategy | all, query_hash, plan_hash, none | all |
 | @min_age_days | integer | only remove queries whose last execution is older than this many days | a positive integer | NULL; no age filter |
-| @report_only | bit | report what would be removed without removing | 0 or 1 | 0 |
+| @report_only | bit | report what would be removed without removing; see Report Mode | 0 or 1 | 0 |
+| @sort_direction | varchar(10) | removal order by query_id; see Splitting a Long Removal | ASC, DESC | ASC |
+| @compact_tables | bit | afterwards, compact Query Store's internal tables; see Compacting Query Store's Tables | 0 or 1 | 0 |
 | @debug | bit | prints dynamic sql and diagnostics | 0 or 1 | 0 |
 | @help | bit | how you got here | 0 or 1 | 0 |
 | @version | varchar(30) | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
@@ -49,6 +53,39 @@ The `@dedupe_by` parameter controls how duplicates are identified after text fil
 | `none` | Skip hash deduplication entirely; send all text-matched queries directly to removal |
 
 **Note:** Hash deduplication removes all copies of duplicated hashes, not all-but-one. This is intentional, as the queries targeted are noise that will be recaptured by Query Store if they execute again.
+
+With a text filter, deduplication only looks at queries that match the filter, and only removes those. A query that does not match is never removed, even when it shares a hash with one that does. With `@cleanup_targets = 'none'` there is no text filter, so every copy of a duplicated hash is removed.
+
+### Splitting a Long Removal
+
+`sp_query_store_remove_query` removes one query at a time, and removals serialize on a lock, so a big cleanup can run for hours. Two sessions working one list from opposite ends finish sooner: in testing on a Query Store with about 800,000 queries, two sessions removed about 1.4 times as many queries a second as one. More than two sessions added nothing.
+
+Run the same command in two sessions at the same time, one with `@sort_direction = 'ASC'` and one with `@sort_direction = 'DESC'`. Before each removal, the procedure checks that the query still exists, and it skips any query the other session already removed. Two sessions in the same order gain nothing, because they keep trying to remove the same queries.
+
+## Report Mode
+
+`@report_only = 1` removes nothing. It returns two result sets:
+
+1. One summary row for the whole removal list: the number of queries, distinct query hashes, query texts, plans and plan hashes, how many queries belong to modules, the oldest and newest last execution, and the share of all Query Store queries.
+2. One row per query_hash, biggest first: the same counts for that hash, the module name if there is one, the oldest and newest last execution, and a sample query_id with the first 200 characters of its text.
+
+With `@compact_tables = 1`, a third result set lists the Query Store indexes and their sizes. See Compacting Query Store's Tables.
+
+Add `@debug = 1` to also list every query_id on the removal list.
+
+## Compacting Query Store's Tables
+
+Removing many queries leaves Query Store's internal tables (`sys.plan_persist_*`) holding the pages those queries lived on, part empty. `@compact_tables = 1` compacts each of their indexes with `DBCC INDEXDEFRAG` after the removal, smallest table first. `ALTER INDEX` cannot see these tables outside the dedicated admin connection, but `DBCC INDEXDEFRAG` can, by `object_id` and `index_id`.
+
+- It runs online, one index at a time, as many small transactions. Cancelling keeps the work already done.
+- Every page it moves is logged. In an availability group, that log goes to every secondary, so run it at a quiet time after a big removal.
+- It gives space back inside Query Store, which lowers `current_storage_size_mb`. It does not shrink the data file.
+- It runs even when there is nothing to remove. With `@cleanup_targets = 'none'` and `@dedupe_by = 'none'` it only compacts.
+- It runs when Query Store is READ_ONLY, for example after it hits `MAX_STORAGE_SIZE_MB`. Removal is skipped in that state, so only the compaction runs. The procedure still checks the other parameters first, and a bad value raises an error.
+- Space freed inside LOB pages (plan XML and query text) can stay reserved to the table after compaction. Query Store reuses it for new plans and texts, but `current_storage_size_mb` may not drop by all of it.
+- In report mode it lists the indexes and their sizes without compacting them.
+
+It returns one row per index with its size before and after, in MB, and the seconds it took.
 
 ## Examples
 
@@ -91,6 +128,21 @@ EXECUTE dbo.sp_QueryStoreCleanup
 EXECUTE dbo.sp_QueryStoreCleanup
     @database_name = N'YourDatabase',
     @min_age_days = 30;
+
+-- Split a long removal: run these two at the same time, in separate sessions
+EXECUTE dbo.sp_QueryStoreCleanup
+    @database_name = N'YourDatabase',
+    @cleanup_targets = 'custom',
+    @custom_query_filter = N'%some_noisy_query%',
+    @dedupe_by = 'none',
+    @sort_direction = 'ASC';
+
+EXECUTE dbo.sp_QueryStoreCleanup
+    @database_name = N'YourDatabase',
+    @cleanup_targets = 'custom',
+    @custom_query_filter = N'%some_noisy_query%',
+    @dedupe_by = 'none',
+    @sort_direction = 'DESC';
 
 -- Debug mode to see the generated dynamic SQL
 EXECUTE dbo.sp_QueryStoreCleanup

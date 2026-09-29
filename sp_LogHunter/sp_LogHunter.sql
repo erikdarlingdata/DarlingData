@@ -73,8 +73,8 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '3.9',
-        @version_date = '20260901';
+        @version = '3.10',
+        @version_date = '20261001';
 
     IF @help = 1
     BEGIN
@@ -315,6 +315,20 @@ BEGIN
     BEGIN
         SELECT
              @start_date = DATEADD(DAY, -7, @end_date);
+    END;
+
+    /*
+    Reject a reversed date range up front. Without this, xp_readerrorlog
+    silently returns zero rows for a start date after the end date - the
+    exact "looks like a clean bill of health but never actually searched"
+    failure mode this proc's own comments guard against everywhere else.
+    */
+    IF  @start_date IS NOT NULL
+    AND @end_date IS NOT NULL
+    AND @start_date > @end_date
+    BEGIN
+        RAISERROR(N'@start_date must be earlier than @end_date.', 11, 1) WITH NOWAIT;
+        RETURN;
     END;
 
     /*

@@ -23,8 +23,8 @@
 | Parameter | Data Type | Default | Description |
 |-----------|-----------|---------|-------------|
 | @database_name | sysname | NULL | Specific database to check; NULL checks all accessible user databases |
-| @slow_read_ms | decimal(10, 2) | 20.0 | Flag data-file reads slower than this many ms; High at 5x this value |
-| @slow_write_ms | decimal(10, 2) | 20.0 | Flag data-file writes slower than this many ms; High at 5x this value |
+| @slow_read_ms | decimal(10, 2) | 20.0 | Flag data-file reads slower than this many ms (High at 5x this value) |
+| @slow_write_ms | decimal(10, 2) | 20.0 | Flag data-file writes slower than this many ms (High at 5x this value) |
 | @significant_wait_threshold_pct | decimal(38, 2) | 10.0 | Minimum percent of uptime for a wait to be reported |
 | @wait_high_pct | decimal(38, 2) | 50.0 | A resource wait at or above this percent of uptime is High priority |
 | @wait_medium_pct | decimal(38, 2) | 20.0 | A resource wait at or above this percent of uptime is Medium priority |

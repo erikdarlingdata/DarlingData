@@ -41,7 +41,7 @@ Two levers in the proc make that deterministic and fast, with no slow captures:
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Drives `dbo.sp_HumanEvents` over `sqlcmd`, exercising every accepted `@event_type` and a representative filter matrix with `@keep_alive = 1`, and asserts **195** expectations across seven groups. Self-cleaning and idempotent. |
+| `run_tests.py` | Drives `dbo.sp_HumanEvents` over `sqlcmd`, exercising every accepted `@event_type` and a representative filter matrix with `@keep_alive = 1`, and asserts **203** expectations across seven groups. Self-cleaning and idempotent. |
 
 ```
 cd sp_HumanEvents/tests
@@ -49,7 +49,7 @@ python run_tests.py --server SQL2022
 ```
 
 `--server` and `--password` default to `SQL2022` / the standard local `sa`
-password. Expect `195 passed, 0 failed`. The proc must be installed in `master`
+password. Expect `203 passed, 0 failed`. The proc must be installed in `master`
 on the target instance (there is a preflight that fails fast if it is not, and a
 guard that refuses Azure SQL DB, whose sessions are database-scoped).
 
@@ -104,7 +104,7 @@ quiet instance), and that the proc **dropped its own throwaway session**: the
 global count of `HumanEvents%` / `keeper_HumanEvents%` sessions is snapshotted
 before and after the call and must be equal.
 
-**6. Logging-to-table + cleanup (10).** `@keep_alive = 1` with
+**6. Logging-to-table + cleanup (18).** `@keep_alive = 1` with
 `@output_database_name` enters an **unbounded** collector loop that creates
 permanent tables/views for keeper sessions and harvests into them forever. The
 tables are created in the first pass (well under a second), so the harness runs
@@ -113,8 +113,15 @@ the loop **server-side** (verified: a batch cancelled this way does not keep
 running). It then asserts the base table `keeper_HumanEvents_waits` and the three
 `HumanEvents_Waits*` views were created, exercises the proc's own `@cleanup = 1`
 teardown, and asserts the proc removed the session, tables, and views itself.
-Everything is created in and dropped with a throwaway scratch database
-(`sp_HumanEvents_test_scratch`).
+
+A second case repeats this with `@event_type = 'query', @skip_plans = 1`. It
+asserts that `keeper_HumanEvents_query` and the `HumanEvents_Queries_np` view
+are created, and that `@cleanup = 1` removes them. This is a regression test for
+a bug in the view loop. The `#view_check` row for that view used the literal
+`HumanEvents_Queries` instead of `HumanEvents_Queries_np`. The step that adds
+the schema name then left a stray `_np` outside the brackets, and view creation
+failed with Msg 102. Everything is created in and dropped with a throwaway
+scratch database (`sp_HumanEvents_test_scratch`).
 
 **7. Session hygiene (2).** Around the whole run, `sys.server_event_sessions` is
 diffed and the suite asserts **zero net new sessions**, then confirms nothing
@@ -183,12 +190,17 @@ exercised.
 - **Blocking actually captured.** The blocking session's DDL validity is covered;
   inducing a real blocked-process-report event is not.
 
-## Not wired into CI
+## Wired into CI
 
-Like the other DarlingData behavioral suites, this is **not** part of any GitHub
-Actions workflow. It creates and drops server-global Extended Events sessions
-(and, for the blocking cases, will briefly set `blocked process threshold` if it
-is `0`, restoring it afterward), which is not something to run against shared CI
-infrastructure. Run it by hand against a test instance you own. It sweeps every
-session it creates and drops every object it creates, but it is a "run it on a
-box you control" tool by nature.
+`.github/workflows/sql-tests.yml` runs this harness on every push to `dev` and
+on every pull request into `dev` or `main`. It runs once for each SQL Server
+version in the build matrix (2017, 2019, 2022, 2025). Each matrix job gets its
+own throwaway `mcr.microsoft.com/mssql/server` container and discards it
+afterward. No shared or persistent instance is involved, so nothing else can
+collide with the server-wide Extended Events sessions that this suite creates
+and drops. The same applies to
+`blocked process threshold`: when it is `0`, the blocking cases change it
+briefly and then restore it.
+
+To run the suite by hand, point `--server` and `--password` at any test
+instance that you own.

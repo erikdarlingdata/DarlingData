@@ -40,6 +40,8 @@ ALTER PROCEDURE
     @dedupe_by varchar(50) = 'all',              /*deduplication strategy: all, query_hash, plan_hash, none*/
     @min_age_days integer = NULL,                /*only remove queries not executed in this many days*/
     @report_only bit = 0,                        /*1 = report what would be removed without removing*/
+    @sort_direction varchar(10) = 'ASC',         /*removal order by query_id: ASC or DESC*/
+    @compact_tables bit = 0,                     /*1 = afterwards, DBCC INDEXDEFRAG each Query Store internal table index*/
     @debug bit = 0,                              /*prints dynamic sql and diagnostics*/
     @help bit = 0,                               /*prints help information*/
     @version varchar(30) = NULL OUTPUT,          /*OUTPUT; for support*/
@@ -53,8 +55,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.6',
-        @version_date = '20260501';
+        @version = '1.10',
+        @version_date = '20261001';
 
     /*
     Help section
@@ -91,11 +93,15 @@ BEGIN
                     WHEN N'@custom_query_filter'
                     THEN 'custom LIKE pattern for query text filtering; also applied when @cleanup_targets = all'
                     WHEN N'@dedupe_by'
-                    THEN 'deduplication strategy: all, query_hash, plan_hash, none. note: hash dedup removes ALL copies of duplicated hashes, not all-but-one'
+                    THEN 'deduplication strategy: all, query_hash, plan_hash, none. note: hash dedup removes ALL copies of duplicated hashes, not all-but-one. with a text filter, it only removes copies that match the filter'
                     WHEN N'@min_age_days'
                     THEN 'only remove queries whose last execution is older than this many days; NULL = no age filter'
                     WHEN N'@report_only'
-                    THEN 'report what would be removed without removing'
+                    THEN 'report what would be removed without removing: one summary row, then one row per query_hash, biggest first. @debug = 1 also lists every query_id'
+                    WHEN N'@sort_direction'
+                    THEN 'removal order by query_id. to split a long removal, run two sessions at once, one ASC and one DESC. each skips queries the other already removed'
+                    WHEN N'@compact_tables'
+                    THEN 'afterwards, compact every Query Store internal table index with DBCC INDEXDEFRAG, to give back the pages removed queries leave part empty. online and cancellable, but logged, so an AG ships it to secondaries. with @cleanup_targets = none and @dedupe_by = none it only compacts, and on a READ_ONLY Query Store it compacts without removing'
                     WHEN N'@debug'
                     THEN 'prints dynamic sql and diagnostics'
                     WHEN N'@help'
@@ -120,6 +126,10 @@ BEGIN
                     THEN 'any positive integer, e.g. 7, 30, 90'
                     WHEN N'@report_only'
                     THEN '0 or 1'
+                    WHEN N'@sort_direction'
+                    THEN 'ASC, DESC'
+                    WHEN N'@compact_tables'
+                    THEN '0 or 1'
                     WHEN N'@debug'
                     THEN '0 or 1'
                     WHEN N'@help'
@@ -143,6 +153,10 @@ BEGIN
                     WHEN N'@min_age_days'
                     THEN 'NULL; no age filter'
                     WHEN N'@report_only'
+                    THEN '0'
+                    WHEN N'@sort_direction'
+                    THEN 'ASC'
+                    WHEN N'@compact_tables'
                     THEN '0'
                     WHEN N'@debug'
                     THEN '0'
@@ -199,8 +213,15 @@ BEGIN
         SELECT  '/* only remove queries not executed in 30+ days */' UNION ALL
         SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @min_age_days = 30;' UNION ALL
         SELECT  '' UNION ALL
+        SELECT  '/* split a long removal across two sessions: run both at the same time */' UNION ALL
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @cleanup_targets = ''custom'', @custom_query_filter = N''%my_noisy_query%'', @dedupe_by = ''none'', @sort_direction = ''ASC'';' UNION ALL
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @cleanup_targets = ''custom'', @custom_query_filter = N''%my_noisy_query%'', @dedupe_by = ''none'', @sort_direction = ''DESC'';' UNION ALL
+        SELECT  '' UNION ALL
         SELECT  '/* emergency flush: remove all noise older than 7 days */' UNION ALL
-        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @dedupe_by = ''none'', @min_age_days = 7;';
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @dedupe_by = ''none'', @min_age_days = 7;' UNION ALL
+        SELECT  '' UNION ALL
+        SELECT  '/* compact Query Store''s internal tables after a big removal, without removing anything */' UNION ALL
+        SELECT  'EXECUTE dbo.sp_QueryStoreCleanup @database_name = N''YourDatabase'', @cleanup_targets = ''none'', @dedupe_by = ''none'', @compact_tables = 1;';
 
         /*
         MIT License
@@ -240,6 +261,7 @@ SOFTWARE.
         @sql nvarchar(max) = N'',
         @database_name_quoted sysname = N'',
         @actual_state integer = NULL,
+        @has_query_store_hints bit = 0,
         @include_system bit = 0,
         @include_maintenance bit = 0,
         @include_custom bit = 0,
@@ -248,7 +270,7 @@ SOFTWARE.
         @dedupe_plan_hash bit = 0,
         @no_dedupe bit = 0,
         @text_filter nvarchar(max) = N'',
-        @exists_clause nvarchar(max) = N'',
+        @dedupe_candidates nvarchar(max) = N'',
         @removal_filters nvarchar(max) = N'',
         @age_cutoff datetime = NULL,
         @text_target_count bigint = 0,
@@ -260,9 +282,27 @@ SOFTWARE.
         @c CURSOR,
         @query_id bigint,
         @current bigint = 0,
-        @total bigint = 0,
         @removed bigint = 0,
-        @failed bigint = 0;
+        @skipped bigint = 0,
+        @was_removed tinyint = 0,
+        @is_parent bit = 0,
+        @has_query_variants bit = 0,
+        @variant_parents_kept bigint = 0,
+        @variant_waits bigint = 0,
+        @compact_cursor CURSOR,
+        @compact_object_id integer,
+        @compact_index_id integer,
+        @compact_table_name sysname,
+        @compact_sql nvarchar(400) = N'',
+        @compact_started datetime2(7),
+        @compact_saved_mb decimal(18,1) = 0,
+        @compact_saved_text nvarchar(30) = N'',
+        @failed bigint = 0,
+        @query_store_queries bigint = 0,
+        @database_id integer = NULL,
+        @search_text nvarchar(200) = N'',
+        @pattern_open nvarchar(10) = N'',
+        @pattern_close nvarchar(100) = N'';
 
     /*
     Default database to current
@@ -283,7 +323,8 @@ SOFTWARE.
     END;
 
     SELECT
-        @database_name_quoted = QUOTENAME(@database_name);
+        @database_name_quoted = QUOTENAME(@database_name),
+        @database_id = DB_ID(@database_name);
 
     /*
     Check Query Store is enabled
@@ -319,10 +360,16 @@ OPTION(RECOMPILE);';
     fails once per target in the cursor, producing noisy error output and leaving the
     caller with no useful result. Catch it up front instead. Only actual_state = 2
     (READ_WRITE) is safe for cleanup.
+    With @compact_tables = 1, a READ_ONLY Query Store skips removal and only
+    compacts: DBCC INDEXDEFRAG works on the pages directly and does not need
+    Query Store to accept writes, and a store that hit MAX_STORAGE_SIZE_MB is
+    where compaction helps most. That jump comes after the parameter checks
+    below, so a bad parameter still raises an error.
     */
-    IF @actual_state = 1
+    IF  @actual_state = 1
+    AND @compact_tables = 0
     BEGIN
-        RAISERROR('Query Store is in READ_ONLY state for database %s. Writes are blocked, so cleanup cannot run. This is typically caused by hitting MAX_STORAGE_SIZE_MB or by an explicit READ_ONLY operation_mode.', 16, 1, @database_name) WITH NOWAIT;
+        RAISERROR('Query Store is in READ_ONLY state for database %s. Writes are blocked, so cleanup cannot run. This is typically caused by hitting MAX_STORAGE_SIZE_MB or by an explicit READ_ONLY operation_mode. @compact_tables = 1 can still compact its internal tables.', 16, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
 
@@ -330,6 +377,41 @@ OPTION(RECOMPILE);';
     BEGIN
         RAISERROR('Query Store is in ERROR state for database %s. Cleanup cannot run until Query Store is recovered (see sys.database_query_store_options.readonly_reason).', 16, 1, @database_name) WITH NOWAIT;
         RETURN;
+    END;
+
+    /*
+    sys.query_store_query_hints is SQL Server 2022+ only (same probe pattern
+    sp_QuickieStore uses for its 2022-era catalog views). A query with a
+    forced hint gets the same removal protection as a query with a forced
+    plan, but only where the view exists to check.
+    */
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM sys.all_objects AS ao
+        WHERE ao.name = N'query_store_query_hints'
+    )
+    BEGIN
+        SELECT
+            @has_query_store_hints = 1;
+    END;
+
+    /*
+    sys.query_store_query_variant is SQL Server 2022+ only. A parameter
+    sensitive plan (PSP) parent query cannot be removed while any of its
+    variant queries remain (Msg 12465), so parents need special handling.
+    */
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM sys.all_objects AS ao
+        WHERE ao.name = N'query_store_query_variant'
+    )
+    BEGIN
+        SELECT
+            @has_query_variants = 1;
     END;
 
     /*
@@ -382,7 +464,7 @@ OPTION(RECOMPILE);';
     /*
     Validate custom filter
     */
-    IF @include_custom = 1
+    IF  @include_custom = 1
     AND @custom_query_filter IS NULL
     BEGIN
         RAISERROR('@custom_query_filter is required when @cleanup_targets includes ''custom''.', 16, 1) WITH NOWAIT;
@@ -438,11 +520,46 @@ OPTION(RECOMPILE);';
     Validate that @cleanup_targets and @dedupe_by aren't both none
     That would remove every query in query store
     */
-    IF @no_text_filter = 1
+    IF  @no_text_filter = 1
     AND @no_dedupe = 1
+    AND @compact_tables = 0
     BEGIN
         RAISERROR('@cleanup_targets = ''none'' and @dedupe_by = ''none'' would remove every query in query store. That''s probably not what you want.', 16, 1) WITH NOWAIT;
         RETURN;
+    END;
+
+    /*
+    Validate @min_age_days
+    A negative value would push @age_cutoff into the future, which would
+    silently disable the age filter instead of erroring, since nothing
+    has a last_execution_time in the future.
+    */
+    IF @min_age_days <= 0
+    BEGIN
+        RAISERROR('@min_age_days must be a positive integer. You passed: %d', 16, 1, @min_age_days) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /*
+    Validate @sort_direction
+    */
+    SELECT
+        @sort_direction = UPPER(LTRIM(RTRIM(ISNULL(@sort_direction, 'ASC'))));
+
+    IF @sort_direction NOT IN ('ASC', 'DESC')
+    BEGIN
+        RAISERROR('@sort_direction must be ASC or DESC. You passed: %s', 16, 1, @sort_direction) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /*
+    A READ_ONLY Query Store only gets here with @compact_tables = 1:
+    skip removal and only compact
+    */
+    IF @actual_state = 1
+    BEGIN
+        RAISERROR('Query Store is in READ_ONLY state for database %s, so no queries can be removed. Compacting its internal tables only.', 0, 1, @database_name) WITH NOWAIT;
+        GOTO compact_tables;
     END;
 
     /*
@@ -471,14 +588,53 @@ OPTION(RECOMPILE);';
     CREATE TABLE
         #removals
     (
-        query_id bigint NOT NULL PRIMARY KEY
+        query_id bigint NOT NULL PRIMARY KEY,
+        is_parent bit NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE
+        #query_variants
+    (
+        parent_query_id bigint NOT NULL,
+        query_variant_query_id bigint NOT NULL
+    );
+
+    CREATE TABLE
+        #dispatcher_queries
+    (
+        query_id bigint NOT NULL
+    );
+
+    /*
+    No cleanup targets and no deduplication, with @compact_tables = 1:
+    skip removal and only compact
+    */
+    IF  @no_text_filter = 1
+    AND @no_dedupe = 1
+    BEGIN
+        RAISERROR('No cleanup targets. Compacting Query Store internal tables only.', 0, 1) WITH NOWAIT;
+        GOTO compact_tables;
+    END;
 
     /*
     Step 1: Find text targets
     */
     IF @no_text_filter = 0
     BEGIN
+        /*
+        Text search runs under a binary collation, which is several times
+        cheaper than a linguistic LIKE over query_sql_text. query_sql_text
+        is SQL_Latin1_General_CP1_CI_AS whatever the database collation is,
+        so a plain LIKE on it was always case-insensitive. Both sides are
+        upper-cased first so the matches stay the same, and the patterns are
+        upper-cased under the column's collation, because a Turkish collation
+        would turn i into a dotted capital I that the binary match can't find.
+        */
+        SELECT
+            @search_text = N'UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2',
+            @pattern_open = N'UPPER(',
+            @pattern_close = N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2';
+
         /*
         Build text filter WHERE clause
         Each condition is prefixed with newline + "OR    " (7 chars)
@@ -488,7 +644,7 @@ OPTION(RECOMPILE);';
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE N''%FROM sys.%''';
+OR    st.search_text LIKE ' + @pattern_open + N'N''%FROM sys.%''' + @pattern_close;
         END;
 
         /*
@@ -499,21 +655,21 @@ OR    qsqt.query_sql_text LIKE N''%FROM sys.%''';
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE N''ALTER INDEX%''
-OR    qsqt.query_sql_text LIKE N''ALTER TABLE%''
-OR    qsqt.query_sql_text LIKE N''CREATE%INDEX%''
-OR    qsqt.query_sql_text LIKE N''CREATE STATISTICS%''
-OR    qsqt.query_sql_text LIKE N''UPDATE STATISTICS%''
-OR    qsqt.query_sql_text LIKE N''%SELECT StatMan%''
-OR    qsqt.query_sql_text LIKE N''DBCC%''
-OR    qsqt.query_sql_text LIKE N''(@[_]msparam%''';
+OR    st.search_text LIKE ' + @pattern_open + N'N''ALTER INDEX%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''ALTER TABLE%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''CREATE%INDEX%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''CREATE STATISTICS%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''UPDATE STATISTICS%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''%SELECT StatMan%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''DBCC%''' + @pattern_close + N'
+OR    st.search_text LIKE ' + @pattern_open + N'N''(@[_]msparam%''' + @pattern_close;
         END;
 
         IF @include_custom = 1
         BEGIN
             SELECT
                 @text_filter += N'
-OR    qsqt.query_sql_text LIKE @custom_query_filter';
+OR    st.search_text LIKE ' + @pattern_open + N'@custom_query_filter' + @pattern_close;
         END;
 
         /*
@@ -534,6 +690,11 @@ WITH
 SELECT
     qsqt.query_text_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+CROSS APPLY
+(
+    SELECT
+        search_text = ' + @search_text + N'
+) AS st
 ' + @text_filter + N'
 OPTION(RECOMPILE);';
 
@@ -562,8 +723,8 @@ OPTION(RECOMPILE);';
 
         IF @text_target_count = 0
         BEGIN
-            RAISERROR('No matching query texts found. Exiting.', 0, 1) WITH NOWAIT;
-            RETURN;
+            RAISERROR('No matching query texts found.', 0, 1) WITH NOWAIT;
+            GOTO compact_tables;
         END;
     END;
 
@@ -591,6 +752,18 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 WHERE qsp.is_forced_plan = 0' +
+        CASE
+            WHEN @has_query_store_hints = 1
+            THEN N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+          WHERE qsqh.query_id = qsq.query_id
+      )'
+            ELSE N''
+        END +
         CASE
             WHEN @no_text_filter = 0
             THEN N'
@@ -656,6 +829,18 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 WHERE qsp.is_forced_plan = 0' +
         CASE
+            WHEN @has_query_store_hints = 1
+            THEN N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+          WHERE qsqh.query_id = qsq.query_id
+      )'
+            ELSE N''
+        END +
+        CASE
             WHEN @no_text_filter = 0
             THEN N'
 AND   EXISTS
@@ -698,17 +883,17 @@ OPTION(RECOMPILE);';
     /*
     Check if any duplicates were found (skip when @no_dedupe = 1)
     */
-    IF @no_dedupe = 0
+    IF  @no_dedupe = 0
     AND @query_hash_dupe_count = 0
     AND @plan_hash_dupe_count = 0
     BEGIN
-        RAISERROR('No duplicates found. Exiting.', 0, 1) WITH NOWAIT;
-        RETURN;
+        RAISERROR('No duplicates found.', 0, 1) WITH NOWAIT;
+        GOTO compact_tables;
     END;
 
     /*
     Build removal filters applied to both Step 4 paths:
-    forced plan protection + optional age filter
+    forced plan protection + forced hint protection + optional age filter
     */
     SELECT
         @removal_filters = N'
@@ -720,6 +905,19 @@ AND   NOT EXISTS
           WHERE qsp_forced.query_id = qsq.query_id
           AND   qsp_forced.is_forced_plan = 1
       )';
+
+    IF @has_query_store_hints = 1
+    BEGIN
+        SELECT
+            @removal_filters += N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh_forced
+          WHERE qsqh_forced.query_id = qsq.query_id
+      )';
+    END;
 
     IF @min_age_days IS NOT NULL
     BEGIN
@@ -765,44 +963,71 @@ WHERE EXISTS
           FROM #text_targets AS tt
           WHERE tt.query_text_id = qsq.query_text_id
       )' + @removal_filters + N'
-OPTION(RECOMPILE);';
+OPTION(RECOMPILE, HASH JOIN);';
     END;
     ELSE
     BEGIN
         /*
-        Build the EXISTS clause based on which strategies found results
+        Build one candidate list per strategy that found results.
+        Each is a plain EXISTS, which the optimizer can do as a hash
+        join at every compatibility level. Both lists in one EXISTS,
+        joined by UNION ALL, fail with Msg 8622 under HASH JOIN below
+        compatibility level 150, because each branch correlates a
+        different outer column. HASH JOIN makes the removal list much
+        faster on a big Query Store, so it stays.
         */
-        IF @dedupe_query_hash = 1
+        IF  @dedupe_query_hash = 1
         AND @query_hash_dupe_count > 0
         BEGIN
             SELECT
-                @exists_clause += N'
+                @dedupe_candidates += N'
     SELECT
-        1/0
-    FROM #query_hash_dupes AS qd
-    WHERE qd.query_hash = qsq.query_hash';
+        qsq.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_hash_dupes AS qd
+              WHERE qd.query_hash = qsq.query_hash
+          )';
         END;
 
-        IF @dedupe_plan_hash = 1
+        IF  @dedupe_plan_hash = 1
         AND @plan_hash_dupe_count > 0
         BEGIN
-            IF LEN(@exists_clause) > 0
+            IF LEN(@dedupe_candidates) > 0
             BEGIN
                 SELECT
-                    @exists_clause += N'
+                    @dedupe_candidates += N'
 
     UNION ALL
 ';
             END;
 
             SELECT
-                @exists_clause += N'
+                @dedupe_candidates += N'
     SELECT
-        1/0
-    FROM #plan_hash_dupes AS qd
-    WHERE qd.query_plan_hash = qsp.query_plan_hash';
+        qsp.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #plan_hash_dupes AS qd
+              WHERE qd.query_plan_hash = qsp.query_plan_hash
+          )';
         END;
 
+        /*
+        DISTINCT because a query can be in both lists, and in the plan
+        hash list once per plan.
+
+        With a text filter, the duplicate hashes come from queries that
+        match it, but queries that don't match can share those hashes.
+        Only matching queries are removed, so a cleanup never reaches
+        past the filter it was given.
+        */
         SELECT
             @sql = N'
 INSERT
@@ -813,14 +1038,26 @@ WITH
     query_id
 )
 SELECT DISTINCT
-    qsp.query_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-WHERE EXISTS
-      (' + @exists_clause + N'
-      )' + @removal_filters + N'
-OPTION(RECOMPILE);';
+    qsq.query_id
+FROM
+(' + @dedupe_candidates + N'
+) AS qsq
+WHERE 1 = 1' +
+            CASE
+                WHEN @no_text_filter = 0
+                THEN N'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq_text
+          JOIN #text_targets AS tt
+            ON tt.query_text_id = qsq_text.query_text_id
+          WHERE qsq_text.query_id = qsq.query_id
+      )'
+                ELSE N''
+            END + @removal_filters + N'
+OPTION(RECOMPILE, HASH JOIN);';
     END;
 
     IF @debug = 1
@@ -837,6 +1074,121 @@ OPTION(RECOMPILE);';
     SELECT
         @removal_count = ROWCOUNT_BIG();
 
+    /*
+    PSP parents: a parent can only be removed after all of its variants.
+    Drop parents with a variant that is not on the list, since removing
+    them would fail every time, and mark the rest so they go last.
+    A query that owns a dispatcher plan is marked as a parent too:
+    sys.query_store_query_variant does not show variants that have not
+    been flushed yet, but the removal still refuses the parent.
+    */
+    IF  @has_query_variants = 1
+    AND @removal_count > 0
+    BEGIN
+        SELECT
+            @sql = N'
+INSERT
+    #query_variants
+WITH
+    (TABLOCK)
+(
+    parent_query_id,
+    query_variant_query_id
+)
+SELECT
+    qsqv.parent_query_id,
+    qsqv.query_variant_query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsqv.parent_query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);
+
+INSERT
+    #dispatcher_queries
+WITH
+    (TABLOCK)
+(
+    query_id
+)
+SELECT DISTINCT
+    qsp.query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE qsp.plan_type = 1
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);';
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('/* Step 4b: PSP variants of parents on the list */', 0, 1) WITH NOWAIT;
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        DELETE
+            r
+        FROM #removals AS r
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #query_variants AS qv
+                  WHERE qv.parent_query_id = r.query_id
+                  AND   NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #removals AS r2
+                            WHERE r2.query_id = qv.query_variant_query_id
+                        )
+              )
+        OPTION(RECOMPILE);
+
+        SELECT
+            @variant_parents_kept = ROWCOUNT_BIG();
+
+        UPDATE
+            r
+        SET
+            r.is_parent = 1
+        FROM #removals AS r
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #query_variants AS qv
+                  WHERE qv.parent_query_id = r.query_id
+              )
+        OR    EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #dispatcher_queries AS dq
+                  WHERE dq.query_id = r.query_id
+              )
+        OPTION(RECOMPILE);
+
+        SELECT
+            @removal_count -= @variant_parents_kept;
+
+        IF @variant_parents_kept > 0
+        BEGIN
+            RAISERROR('Kept %I64d PSP parent queries that have a variant not on the removal list. A parent cannot be removed while any variant remains.', 0, 1, @variant_parents_kept) WITH NOWAIT;
+        END;
+    END;
+
     RAISERROR('Found %I64d queries to remove', 0, 1, @removal_count) WITH NOWAIT;
 
     IF @debug = 1
@@ -848,8 +1200,8 @@ OPTION(RECOMPILE);';
 
     IF @removal_count = 0
     BEGIN
-        RAISERROR('No queries to remove. Exiting.', 0, 1) WITH NOWAIT;
-        RETURN;
+        RAISERROR('No queries to remove.', 0, 1) WITH NOWAIT;
+        GOTO compact_tables;
     END;
 
     /*
@@ -858,63 +1210,335 @@ OPTION(RECOMPILE);';
     IF @report_only = 1
     BEGIN
         /*
-        Report mode: show what would be removed
+        Report mode: summarize what would be removed.
+        Each Query Store view goes into its own temp table first,
+        and only the temp tables are joined.
+        */
+        CREATE TABLE
+            #report_queries
+        (
+            query_id bigint NOT NULL,
+            query_hash binary(8) NOT NULL,
+            query_text_id bigint NOT NULL,
+            object_id bigint NOT NULL,
+            last_execution_time datetimeoffset(7) NULL
+        );
+
+        CREATE TABLE
+            #report_plans
+        (
+            plan_id bigint NOT NULL,
+            query_id bigint NOT NULL,
+            query_plan_hash binary(8) NOT NULL
+        );
+
+        CREATE TABLE
+            #report_groups
+        (
+            query_hash binary(8) NOT NULL,
+            queries bigint NOT NULL,
+            query_texts bigint NOT NULL,
+            plans bigint NOT NULL,
+            plan_hashes bigint NOT NULL,
+            object_id bigint NOT NULL,
+            oldest_last_execution datetimeoffset(7) NULL,
+            newest_last_execution datetimeoffset(7) NULL,
+            sample_query_id bigint NOT NULL
+        );
+
+        SELECT
+            @sql = N'
+INSERT
+    #report_queries
+WITH
+    (TABLOCK)
+(
+    query_id,
+    query_hash,
+    query_text_id,
+    object_id,
+    last_execution_time
+)
+SELECT
+    qsq.query_id,
+    qsq.query_hash,
+    qsq.query_text_id,
+    qsq.object_id,
+    qsq.last_execution_time
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsq.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);
+
+INSERT
+    #report_plans
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    query_id,
+    query_plan_hash
+)
+SELECT
+    qsp.plan_id,
+    qsp.query_id,
+    qsp.query_plan_hash
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #removals AS r
+          WHERE r.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);
+
+SELECT
+    @query_store_queries = COUNT_BIG(*)
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+OPTION(RECOMPILE);';
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('/* Step 5: Report staging */', 0, 1) WITH NOWAIT;
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql,
+            N'@query_store_queries bigint OUTPUT',
+            @query_store_queries OUTPUT;
+
+        /*
+        One row per query_hash, with the plan counts rolled up from #report_plans.
+        A PSP parent query has no last_execution_time of its own (its variants
+        run instead), so the oldest and newest times come from the rows that
+        have one. MIN and MAX over the NULL would print "Null value is
+        eliminated by an aggregate" and give the same answer.
+        */
+        INSERT
+            #report_groups
+        WITH
+            (TABLOCK)
+        (
+            query_hash,
+            queries,
+            query_texts,
+            plans,
+            plan_hashes,
+            object_id,
+            oldest_last_execution,
+            newest_last_execution,
+            sample_query_id
+        )
+        SELECT
+            rq.query_hash,
+            queries = COUNT_BIG(*),
+            query_texts = COUNT_BIG(DISTINCT rq.query_text_id),
+            plans = MAX(ISNULL(p.plans, 0)),
+            plan_hashes = MAX(ISNULL(p.plan_hashes, 0)),
+            object_id = MAX(rq.object_id),
+            oldest_last_execution = le.oldest_last_execution,
+            newest_last_execution = le.newest_last_execution,
+            sample_query_id = MAX(rq.query_id)
+        FROM #report_queries AS rq
+        LEFT JOIN
+        (
+            SELECT
+                rq2.query_hash,
+                plans = COUNT_BIG(*),
+                plan_hashes = COUNT_BIG(DISTINCT rp.query_plan_hash)
+            FROM #report_plans AS rp
+            JOIN #report_queries AS rq2
+              ON rq2.query_id = rp.query_id
+            GROUP BY
+                rq2.query_hash
+        ) AS p
+          ON p.query_hash = rq.query_hash
+        LEFT JOIN
+        (
+            SELECT
+                rq3.query_hash,
+                oldest_last_execution = MIN(rq3.last_execution_time),
+                newest_last_execution = MAX(rq3.last_execution_time)
+            FROM #report_queries AS rq3
+            WHERE rq3.last_execution_time IS NOT NULL
+            GROUP BY
+                rq3.query_hash
+        ) AS le
+          ON le.query_hash = rq.query_hash
+        GROUP BY
+            rq.query_hash,
+            le.oldest_last_execution,
+            le.newest_last_execution
+        OPTION(RECOMPILE);
+
+        /*
+        Summary: one row for the whole removal list. The oldest and newest
+        times skip PSP parents' NULLs the same way the groups do.
+        */
+        SELECT
+            queries_to_remove = COUNT_BIG(*),
+            query_hashes = COUNT_BIG(DISTINCT rq.query_hash),
+            query_texts = COUNT_BIG(DISTINCT rq.query_text_id),
+            plans =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #report_plans AS rp
+            ),
+            plan_hashes =
+            (
+                SELECT
+                    COUNT_BIG(DISTINCT rp.query_plan_hash)
+                FROM #report_plans AS rp
+            ),
+            queries_in_modules =
+                SUM
+                (
+                    CASE
+                        WHEN rq.object_id <> 0
+                        THEN 1
+                        ELSE 0
+                    END
+                ),
+            oldest_last_execution =
+            (
+                SELECT
+                    MIN(rq2.last_execution_time)
+                FROM #report_queries AS rq2
+                WHERE rq2.last_execution_time IS NOT NULL
+            ),
+            newest_last_execution =
+            (
+                SELECT
+                    MAX(rq2.last_execution_time)
+                FROM #report_queries AS rq2
+                WHERE rq2.last_execution_time IS NOT NULL
+            ),
+            psp_parents_to_remove =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #removals AS r
+                WHERE r.is_parent = 1
+            ),
+            psp_parents_kept = @variant_parents_kept,
+            query_store_queries = @query_store_queries,
+            percent_of_query_store =
+                CONVERT
+                (
+                    decimal(5,2),
+                    COUNT_BIG(*) * 100. / NULLIF(@query_store_queries, 0)
+                )
+        FROM #report_queries AS rq
+        OPTION(RECOMPILE);
+
+        /*
+        Groups: one row per query_hash, biggest first, with a sample of the text
         */
         SELECT
             @sql = N'
 SELECT
-    r.query_id,
-    qsq.query_hash,
-    qsp.query_plan_hash,
-    query_sql_text =
+    rg.query_hash,
+    rg.queries,
+    rg.query_texts,
+    rg.plans,
+    rg.plan_hashes,
+    object_name =
+        CASE
+            WHEN rg.object_id <> 0
+            THEN OBJECT_SCHEMA_NAME(rg.object_id, @database_id) +
+                 N''.'' +
+                 OBJECT_NAME(rg.object_id, @database_id)
+        END,
+    rg.oldest_last_execution,
+    rg.newest_last_execution,
+    rg.sample_query_id,
+    sample_query_sql_text =
         SUBSTRING
         (
             qsqt.query_sql_text,
             1,
             200
         )
-FROM #removals AS r
-JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-  ON r.query_id = qsq.query_id
+FROM #report_groups AS rg
+JOIN #report_queries AS rq
+  ON rq.query_id = rg.sample_query_id
 JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-CROSS APPLY
-(
-    SELECT TOP (1)
-        qsp.query_plan_hash
-    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    WHERE qsp.query_id = qsq.query_id
-    ORDER BY
-        qsp.last_execution_time DESC
-) AS qsp
+  ON qsqt.query_text_id = rq.query_text_id
 ORDER BY
-    r.query_id
+    rg.queries DESC,
+    rg.query_hash
 OPTION(RECOMPILE);';
 
         IF @debug = 1
         BEGIN
-            RAISERROR('/* Step 5: Report */', 0, 1) WITH NOWAIT;
+            RAISERROR('/* Step 5: Report groups */', 0, 1) WITH NOWAIT;
             PRINT @sql;
         END;
 
         EXECUTE sys.sp_executesql
-            @sql;
+            @sql,
+            N'@database_id integer',
+            @database_id;
 
         RAISERROR('%I64d queries would be removed (report only mode)', 0, 1, @removal_count) WITH NOWAIT;
-        RETURN;
+        GOTO compact_tables;
     END;
 
     /*
     Removal mode: cursor through and remove each query
     */
+    /*
+    Skip queries that are already gone, so two sessions working
+    from opposite ends don't each retry the other's half
+    */
+    /*
+    PSP parents go last, and are skipped without a removal attempt if a
+    variant is still there (another session may not have reached it yet)
+    */
     SELECT
-        @total = @removal_count;
+        @remove_sql = N'
+IF EXISTS
+(
+    SELECT
+        1/0
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE qsq.query_id = @query_id
+)
+BEGIN' +
+        CASE
+            WHEN @has_query_variants = 1
+            THEN N'
+    IF  @is_parent = 1
+    AND EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+            WHERE qsqv.parent_query_id = @query_id
+        )
+    BEGIN
+        SELECT
+            @was_removed = 2;
+
+        RETURN;
+    END;
+'
+            ELSE N''
+        END + N'
+    EXECUTE ' + @database_name_quoted + N'.sys.sp_query_store_remove_query
+        @query_id = @query_id;
 
     SELECT
-        @remove_sql =
-            N'EXECUTE ' +
-            @database_name_quoted +
-            N'.sys.sp_query_store_remove_query @query_id = @query_id;';
+        @was_removed = 1;
+END;';
 
     IF @debug = 1
     BEGIN
@@ -922,22 +1546,48 @@ OPTION(RECOMPILE);';
         PRINT @remove_sql;
     END;
 
-    SET @c =
-        CURSOR
-        LOCAL
-        DYNAMIC
-        READ_ONLY
-        FORWARD_ONLY
-    FOR
-    SELECT
-        r.query_id
-    FROM #removals AS r;
+    IF @sort_direction = 'DESC'
+    BEGIN
+        SET @c =
+            CURSOR
+            LOCAL
+            DYNAMIC
+            READ_ONLY
+            FORWARD_ONLY
+        FOR
+        SELECT
+            r.query_id,
+            r.is_parent
+        FROM #removals AS r
+        ORDER BY
+            r.is_parent,
+            r.query_id DESC;
+    END;
+    ELSE
+    BEGIN
+        SET @c =
+            CURSOR
+            LOCAL
+            DYNAMIC
+            READ_ONLY
+            FORWARD_ONLY
+        FOR
+        SELECT
+            r.query_id,
+            r.is_parent
+        FROM #removals AS r
+        ORDER BY
+            r.is_parent,
+            r.query_id ASC;
+    END;
 
     OPEN @c;
 
     FETCH NEXT
     FROM @c
-    INTO @query_id;
+    INTO
+        @query_id,
+        @is_parent;
 
     WHILE @@FETCH_STATUS = 0
     BEGIN
@@ -945,30 +1595,298 @@ OPTION(RECOMPILE);';
             @current += 1;
 
         BEGIN TRY
+            SELECT
+                @was_removed = 0;
+
             EXECUTE sys.sp_executesql
                 @remove_sql,
-                N'@query_id bigint',
-                @query_id;
+                N'@query_id bigint, @is_parent bit, @was_removed tinyint OUTPUT',
+                @query_id,
+                @is_parent,
+                @was_removed OUTPUT;
 
-            SELECT
-                @removed += 1;
+            IF @was_removed = 1
+            BEGIN
+                SELECT
+                    @removed += 1;
 
-            RAISERROR('Query %I64d of %I64d: query_id %I64d removed', 0, 1, @current, @total, @query_id) WITH NOWAIT;
+                RAISERROR('Query %I64d of %I64d: query_id %I64d removed', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            ELSE IF @was_removed = 2
+            BEGIN
+                SELECT
+                    @variant_waits += 1;
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (PSP parent, variants still present)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    @skipped += 1;
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (already gone)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
         END TRY
         BEGIN CATCH
-            SELECT
-                @failed += 1,
-                @error_message = ERROR_MESSAGE();
+            /*
+            Msg 12465: a PSP parent whose variants are still there, including
+            variants the catalog view did not show yet. Not a failure.
+            */
+            IF ERROR_NUMBER() = 12465
+            BEGIN
+                SELECT
+                    @variant_waits += 1;
 
-            RAISERROR('Query %I64d of %I64d: query_id %I64d not removed (%s)', 0, 1, @current, @total, @query_id, @error_message) WITH NOWAIT;
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (PSP parent, variants still present)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            /*
+            Msg 12402: the query was there for the existence check, but
+            another session removed it first. Same as already gone.
+            */
+            ELSE IF ERROR_NUMBER() = 12402
+            BEGIN
+                SELECT
+                    @skipped += 1;
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d skipped (already gone)', 0, 1, @current, @removal_count, @query_id) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    @failed += 1,
+                    @error_message = ERROR_MESSAGE();
+
+                RAISERROR('Query %I64d of %I64d: query_id %I64d not removed (%s)', 0, 1, @current, @removal_count, @query_id, @error_message) WITH NOWAIT;
+            END;
         END CATCH;
 
         FETCH NEXT
         FROM @c
-        INTO @query_id;
+        INTO
+            @query_id,
+            @is_parent;
     END;
 
-    RAISERROR('Finished: %I64d of %I64d removed (%I64d failed)', 0, 1, @removed, @total, @failed) WITH NOWAIT;
+    RAISERROR('Finished: %I64d of %I64d removed (%I64d skipped, %I64d PSP parents waiting on variants, %I64d failed)', 0, 1, @removed, @removal_count, @skipped, @variant_waits, @failed) WITH NOWAIT;
+
+compact_tables:
+
+    /*
+    Compact Query Store's internal tables. Removed queries leave the pages
+    they lived on part empty inside sys.plan_persist_*. ALTER INDEX cannot
+    see those tables outside the DAC, but DBCC INDEXDEFRAG can, by object_id
+    and index_id. It runs online, one index at a time, as many small
+    transactions, so a cancel keeps the work already done. Every page it
+    moves is logged, and an availability group ships that to its
+    secondaries. In report mode this only lists the indexes and their sizes.
+    */
+    IF @compact_tables = 1
+    BEGIN
+        CREATE TABLE
+            #compact_indexes
+        (
+            object_id integer NOT NULL,
+            index_id integer NOT NULL,
+            table_name sysname NOT NULL,
+            table_mb decimal(18,1) NOT NULL,
+            before_mb decimal(18,1) NOT NULL,
+            after_mb decimal(18,1) NULL,
+            seconds integer NULL
+        );
+
+        SELECT
+            @sql = N'
+INSERT
+    #compact_indexes
+WITH
+    (TABLOCK)
+(
+    object_id,
+    index_id,
+    table_name,
+    table_mb,
+    before_mb
+)
+SELECT
+    x.object_id,
+    x.index_id,
+    x.table_name,
+    x.table_mb,
+    x.index_mb
+FROM
+(
+    SELECT
+        it.object_id,
+        i.index_id,
+        table_name = it.name,
+        index_mb = SUM(a.total_pages) / 128.0,
+        table_mb =
+            SUM(SUM(a.total_pages)) OVER
+            (
+                PARTITION BY
+                    it.object_id
+            ) / 128.0
+    FROM ' + @database_name_quoted + N'.sys.internal_tables AS it
+    JOIN ' + @database_name_quoted + N'.sys.indexes AS i
+      ON i.object_id = it.object_id
+    JOIN ' + @database_name_quoted + N'.sys.partitions AS p
+      ON  p.object_id = i.object_id
+      AND p.index_id = i.index_id
+    JOIN ' + @database_name_quoted + N'.sys.allocation_units AS a
+      ON a.container_id = p.partition_id
+    WHERE it.name LIKE N''plan[_]persist%''
+    AND   i.index_id > 0
+    GROUP BY
+        it.object_id,
+        it.name,
+        i.index_id
+) AS x
+WHERE x.index_mb > 0
+OPTION(RECOMPILE);';
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('/* Compact: Query Store internal indexes */', 0, 1) WITH NOWAIT;
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        /*
+        Smallest table first, so the large plan, text and runtime stats
+        tables come last and a cancel still leaves the rest done
+        */
+        SET @compact_cursor =
+            CURSOR
+            LOCAL
+            FAST_FORWARD
+        FOR
+        SELECT
+            ci.object_id,
+            ci.index_id,
+            ci.table_name
+        FROM #compact_indexes AS ci
+        ORDER BY
+            ci.table_mb,
+            ci.table_name,
+            ci.index_id;
+
+        OPEN @compact_cursor;
+
+        FETCH NEXT
+        FROM @compact_cursor
+        INTO
+            @compact_object_id,
+            @compact_index_id,
+            @compact_table_name;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SELECT
+                @compact_sql =
+                    N'DBCC INDEXDEFRAG (' +
+                    CONVERT(nvarchar(11), @database_id) +
+                    N', ' +
+                    CONVERT(nvarchar(11), @compact_object_id) +
+                    N', ' +
+                    CONVERT(nvarchar(11), @compact_index_id) +
+                    N') WITH NO_INFOMSGS;';
+
+            IF @report_only = 1
+            BEGIN
+                RAISERROR('Would compact %s index %d: %s', 0, 1, @compact_table_name, @compact_index_id, @compact_sql) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                RAISERROR('Compacting %s index %d', 0, 1, @compact_table_name, @compact_index_id) WITH NOWAIT;
+
+                SELECT
+                    @compact_started = SYSDATETIME();
+
+                BEGIN TRY
+                    EXECUTE sys.sp_executesql
+                        @compact_sql;
+
+                    UPDATE
+                        ci
+                    SET
+                        ci.seconds = DATEDIFF(SECOND, @compact_started, SYSDATETIME())
+                    FROM #compact_indexes AS ci
+                    WHERE ci.object_id = @compact_object_id
+                    AND   ci.index_id = @compact_index_id;
+                END TRY
+                BEGIN CATCH
+                    SELECT
+                        @error_message = ERROR_MESSAGE();
+
+                    RAISERROR('Compacting %s index %d failed: %s', 0, 1, @compact_table_name, @compact_index_id, @error_message) WITH NOWAIT;
+                END CATCH;
+            END;
+
+            FETCH NEXT
+            FROM @compact_cursor
+            INTO
+                @compact_object_id,
+                @compact_index_id,
+                @compact_table_name;
+        END;
+
+        IF @report_only = 0
+        BEGIN
+            SELECT
+                @sql = N'
+UPDATE
+    ci
+SET
+    ci.after_mb = s.index_mb
+FROM #compact_indexes AS ci
+JOIN
+(
+    SELECT
+        p.object_id,
+        p.index_id,
+        index_mb = SUM(a.total_pages) / 128.0
+    FROM ' + @database_name_quoted + N'.sys.partitions AS p
+    JOIN ' + @database_name_quoted + N'.sys.allocation_units AS a
+      ON a.container_id = p.partition_id
+    GROUP BY
+        p.object_id,
+        p.index_id
+) AS s
+  ON  s.object_id = ci.object_id
+  AND s.index_id = ci.index_id
+OPTION(RECOMPILE);';
+
+            EXECUTE sys.sp_executesql
+                @sql;
+
+            SELECT
+                @compact_saved_mb = ISNULL(SUM(ci.before_mb - ci.after_mb), 0)
+            FROM #compact_indexes AS ci;
+
+            SELECT
+                @compact_saved_text = CONVERT(nvarchar(30), @compact_saved_mb);
+        END;
+
+        SELECT
+            ci.table_name,
+            ci.index_id,
+            ci.before_mb,
+            ci.after_mb,
+            saved_mb = ci.before_mb - ci.after_mb,
+            ci.seconds
+        FROM #compact_indexes AS ci
+        ORDER BY
+            ci.table_mb DESC,
+            ci.table_name,
+            ci.index_id;
+
+        IF @report_only = 0
+        BEGIN
+            RAISERROR('Compacting finished: %s MB given back inside Query Store', 0, 1, @compact_saved_text) WITH NOWAIT;
+        END;
+    END;
 
 END;
 GO

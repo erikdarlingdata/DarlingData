@@ -62,7 +62,7 @@ ALTER PROCEDURE
     @start_date datetime = NULL, /*only include plans created after this date*/
     @end_date datetime = NULL, /*only include plans created before this date*/
     @minimum_execution_count bigint = 2, /*noise floor for single-exec queries*/
-    @ignore_system_databases bit = 1, /*exclude master, model, msdb, tempdb*/
+    @ignore_system_databases bit = 1, /*exclude master, model, msdb, tempdb, unless @database_name names one*/
     @impact_threshold decimal(3, 2) = 0.50, /*minimum impact_score to surface (0.00-1.00)*/
     @find_single_use_plans bit = 0, /*show single-use plans consuming the most memory*/
     @find_duplicate_plans bit = 0, /*show query hashes with multiple cached plans*/
@@ -78,8 +78,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.9',
-        @version_date = '20260901';
+        @version = '1.10',
+        @version_date = '20261001';
 
     /*
     ╔══════════════════════════════════════════════════╗
@@ -123,7 +123,7 @@ BEGIN
                     WHEN N'@minimum_execution_count'
                     THEN N'minimum execution count to include a query'
                     WHEN N'@ignore_system_databases'
-                    THEN N'exclude system databases (master, model, msdb, tempdb)'
+                    THEN N'exclude system databases (master, model, msdb, tempdb), unless @database_name names one'
                     WHEN N'@impact_threshold'
                     THEN N'minimum impact_score to surface in results'
                     WHEN N'@find_single_use_plans'
@@ -251,6 +251,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
+    Some parameters can't be NULL
+    */
+    SELECT
+        @top =
+            ISNULL(@top, 10),
+        @sort_order =
+            ISNULL(@sort_order, 'cpu'),
+        @minimum_execution_count =
+            ISNULL(@minimum_execution_count, 2),
+        @ignore_system_databases =
+            ISNULL(@ignore_system_databases, 1),
+        @impact_threshold =
+            ISNULL(@impact_threshold, 0.50),
+        @find_single_use_plans =
+            ISNULL(@find_single_use_plans, 0),
+        @find_duplicate_plans =
+            ISNULL(@find_duplicate_plans, 0),
+        @debug =
+            ISNULL(@debug, 0);
+
+    /*
     ╔══════════════════════════════════════════════════╗
     ║  Version detection                               ║
     ╚══════════════════════════════════════════════════╝
@@ -313,6 +334,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR(N'Database [%s] does not exist on this server.', 16, 1, @database_name) WITH NOWAIT;
             RETURN;
+        END;
+
+        /*
+        A system database named in @database_name
+        is searched even with @ignore_system_databases = 1
+        */
+        IF @database_id <= 4
+        BEGIN
+            SELECT
+                @ignore_system_databases = 0;
         END;
     END;
 
@@ -465,6 +496,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     Shows query hashes that have been compiled into
     multiple cached plans, sorted by plan count descending.
+
+    Grouped by (query_hash, database) rather than query_hash alone.
+    The same query text can hash identically across unrelated databases;
+    without the database in the grouping key, their plan counts and
+    resource totals would blend into one misleadingly-labeled row.
     */
     IF @find_duplicate_plans = 1
     BEGIN
@@ -504,7 +540,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             SELECT TOP (@top)
                 database_name =
-                    DB_NAME(CONVERT(integer, MAX(pa.value))),
+                    DB_NAME(CONVERT(integer, pa.value)),
                 qs.query_hash,
                 plan_count =
                     FORMAT(COUNT_BIG(DISTINCT qs.plan_handle), N'N0'),
@@ -553,8 +589,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
             AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
             AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+            /*
+            Honor @start_date / @end_date the same as the single-use-plans /
+            statement / procedure / function / trigger paths - this mode
+            was missed when those were fixed to stop silently ignoring them.
+            */
+            AND   (@start_date IS NULL OR qs.creation_time >= @start_date)
+            AND   (@end_date   IS NULL OR qs.creation_time <  @end_date)
             GROUP BY
-                qs.query_hash
+                qs.query_hash,
+                pa.value
             HAVING
                 COUNT_BIG(DISTINCT qs.plan_handle) > 1
             ORDER BY
@@ -1279,6 +1323,9 @@ OPTION(RECOMPILE, MAXDOP 1);';
     All four stat DMVs feed into this single table.
     Statements group by query_hash; procedures, functions,
     and triggers group by database_id + object_id.
+
+    object_name holds [schema].[object], which can be longer
+    than a sysname: each QUOTENAME can return 258 characters.
     */
     CREATE TABLE
         #query_stats
@@ -1286,7 +1333,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
         id integer NOT NULL IDENTITY(1, 1),
         query_type varchar(20) NOT NULL,
         database_name sysname NULL,
-        object_name sysname NULL,
+        object_name nvarchar(517) NULL,
         query_hash binary(8) NULL,
         plan_count integer NOT NULL DEFAULT 0,
         total_executions bigint NOT NULL DEFAULT 0,
@@ -1826,9 +1873,9 @@ OPTION(RECOMPILE, MAXDOP 1);';
         query_type = totals.query_type,
         database_name = DB_NAME(totals.database_id),
         object_name =
-            OBJECT_SCHEMA_NAME(totals.object_id, totals.database_id) +
+            QUOTENAME(OBJECT_SCHEMA_NAME(totals.object_id, totals.database_id)) +
             N'.' +
-            OBJECT_NAME(totals.object_id, totals.database_id),
+            QUOTENAME(OBJECT_NAME(totals.object_id, totals.database_id)),
         plan_count = totals.plan_count,
         total_executions = totals.total_executions,
         total_cpu_ms = totals.total_cpu_ms,
@@ -2079,7 +2126,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
         id integer NOT NULL,
         query_type varchar(20) NOT NULL,
         database_name sysname NULL,
-        object_name sysname NULL,
+        object_name nvarchar(517) NULL,
         query_hash binary(8) NULL,
         plan_count integer NOT NULL,
         total_executions bigint NOT NULL,
@@ -2140,6 +2187,97 @@ OPTION(RECOMPILE, MAXDOP 1);';
         sample_statement_end integer NULL
     );
 
+    WITH
+        ranked AS
+    (
+        SELECT
+            qs.*,
+            cpu_pctl =
+                CASE
+                    WHEN @total_cpu_ms > 0
+                    AND  qs.total_cpu_ms * 1.0 / @total_cpu_ms >= 0.001
+                    THEN PERCENT_RANK() OVER
+                         (
+                             ORDER BY
+                                 qs.total_cpu_ms
+                         )
+                    ELSE NULL
+                END,
+            duration_pctl =
+                CASE
+                    WHEN @total_duration_ms > 0
+                    AND  qs.total_duration_ms * 1.0 / @total_duration_ms >= 0.001
+                    THEN PERCENT_RANK() OVER
+                         (
+                             ORDER BY
+                                 qs.total_duration_ms
+                         )
+                    ELSE NULL
+                END,
+            reads_pctl =
+                CASE
+                    WHEN @total_physical_reads > 0
+                    AND  qs.total_physical_reads * 1.0 / @total_physical_reads >= 0.001
+                    THEN PERCENT_RANK() OVER
+                         (
+                             ORDER BY
+                                 qs.total_physical_reads
+                         )
+                    ELSE NULL
+                END,
+            writes_pctl =
+                CASE
+                    WHEN @total_logical_writes > 0
+                    AND  qs.total_logical_writes * 1.0 / @total_logical_writes >= 0.001
+                    THEN PERCENT_RANK() OVER
+                         (
+                             ORDER BY
+                                 qs.total_logical_writes
+                         )
+                    ELSE NULL
+                END,
+            grant_pctl =
+                CASE
+                    WHEN @total_grant_mb > 0
+                    AND  qs.total_grant_mb * 1.0 / @total_grant_mb >= 0.001
+                    THEN PERCENT_RANK() OVER
+                         (
+                             ORDER BY
+                                 qs.total_grant_mb
+                         )
+                    ELSE NULL
+                END,
+            spills_pctl =
+                CASE
+                    WHEN @total_spills > 0
+                    AND  qs.total_spills * 1.0 / @total_spills >= 0.001
+                    THEN PERCENT_RANK() OVER
+                         (
+                             ORDER BY
+                                 qs.total_spills
+                         )
+                    ELSE NULL
+                END,
+            executions_pctl =
+                CASE
+                    WHEN @total_executions > 0
+                    AND  qs.total_executions * 1.0 / @total_executions >= 0.001
+                    THEN PERCENT_RANK() OVER
+                         (
+                             ORDER BY
+                                 qs.total_executions
+                         )
+                    ELSE NULL
+                END
+        /*
+        PERCENT_RANK has to run here, over every row in #query_stats, before
+        the #candidates filter below narrows the rows down. Computing it
+        after that filter ranked candidates only against each other, not
+        against the full workload the comment below always said this was
+        measuring.
+        */
+        FROM #query_stats AS qs
+    )
     INSERT
         #scored
     WITH
@@ -2196,212 +2334,142 @@ OPTION(RECOMPILE, MAXDOP 1);';
         sample_statement_end
     )
     SELECT
-        id = qs.id,
-        query_type = qs.query_type,
-        database_name = qs.database_name,
-        object_name = qs.object_name,
-        query_hash = qs.query_hash,
-        plan_count = qs.plan_count,
-        total_executions = qs.total_executions,
-        total_cpu_ms = qs.total_cpu_ms,
-        total_duration_ms = qs.total_duration_ms,
-        total_physical_reads = qs.total_physical_reads,
-        total_logical_writes = qs.total_logical_writes,
-        total_rows = qs.total_rows,
-        total_grant_mb = qs.total_grant_mb,
-        total_used_grant_mb = qs.total_used_grant_mb,
-        max_grant_mb = qs.max_grant_mb,
-        max_used_grant_mb = qs.max_used_grant_mb,
-        total_spills = qs.total_spills,
-        max_spills = qs.max_spills,
-        max_dop = qs.max_dop,
-        min_rows = qs.min_rows,
-        max_rows = qs.max_rows,
-        min_cpu_ms = qs.min_cpu_ms,
-        max_cpu_ms = qs.max_cpu_ms,
-        min_physical_reads = qs.min_physical_reads,
-        max_physical_reads = qs.max_physical_reads,
-        min_duration_ms = qs.min_duration_ms,
-        max_duration_ms = qs.max_duration_ms,
+        id = r.id,
+        query_type = r.query_type,
+        database_name = r.database_name,
+        object_name = r.object_name,
+        query_hash = r.query_hash,
+        plan_count = r.plan_count,
+        total_executions = r.total_executions,
+        total_cpu_ms = r.total_cpu_ms,
+        total_duration_ms = r.total_duration_ms,
+        total_physical_reads = r.total_physical_reads,
+        total_logical_writes = r.total_logical_writes,
+        total_rows = r.total_rows,
+        total_grant_mb = r.total_grant_mb,
+        total_used_grant_mb = r.total_used_grant_mb,
+        max_grant_mb = r.max_grant_mb,
+        max_used_grant_mb = r.max_used_grant_mb,
+        total_spills = r.total_spills,
+        max_spills = r.max_spills,
+        max_dop = r.max_dop,
+        min_rows = r.min_rows,
+        max_rows = r.max_rows,
+        min_cpu_ms = r.min_cpu_ms,
+        max_cpu_ms = r.max_cpu_ms,
+        min_physical_reads = r.min_physical_reads,
+        max_physical_reads = r.max_physical_reads,
+        min_duration_ms = r.min_duration_ms,
+        max_duration_ms = r.max_duration_ms,
 
         /* resource shares (% of total workload) */
         cpu_share =
             CASE
                 WHEN @total_cpu_ms > 0
-                THEN CONVERT(decimal(5, 2), qs.total_cpu_ms * 100.0 / @total_cpu_ms)
+                THEN CONVERT(decimal(5, 2), r.total_cpu_ms * 100.0 / @total_cpu_ms)
                 ELSE 0
             END,
         duration_share =
             CASE
                 WHEN @total_duration_ms > 0
-                THEN CONVERT(decimal(5, 2), qs.total_duration_ms * 100.0 / @total_duration_ms)
+                THEN CONVERT(decimal(5, 2), r.total_duration_ms * 100.0 / @total_duration_ms)
                 ELSE 0
             END,
         reads_share =
             CASE
                 WHEN @total_physical_reads > 0
-                THEN CONVERT(decimal(5, 2), qs.total_physical_reads * 100.0 / @total_physical_reads)
+                THEN CONVERT(decimal(5, 2), r.total_physical_reads * 100.0 / @total_physical_reads)
                 ELSE 0
             END,
         writes_share =
             CASE
                 WHEN @total_logical_writes > 0
-                THEN CONVERT(decimal(5, 2), qs.total_logical_writes * 100.0 / @total_logical_writes)
+                THEN CONVERT(decimal(5, 2), r.total_logical_writes * 100.0 / @total_logical_writes)
                 ELSE 0
             END,
         grant_share =
             CASE
                 WHEN @total_grant_mb > 0
-                THEN CONVERT(decimal(5, 2), qs.total_grant_mb * 100.0 / @total_grant_mb)
+                THEN CONVERT(decimal(5, 2), r.total_grant_mb * 100.0 / @total_grant_mb)
                 ELSE 0
             END,
         spills_share =
             CASE
                 WHEN @total_spills > 0
-                THEN CONVERT(decimal(5, 2), qs.total_spills * 100.0 / @total_spills)
+                THEN CONVERT(decimal(5, 2), r.total_spills * 100.0 / @total_spills)
                 ELSE 0
             END,
         executions_share =
             CASE
                 WHEN @total_executions > 0
-                THEN CONVERT(decimal(5, 2), qs.total_executions * 100.0 / @total_executions)
+                THEN CONVERT(decimal(5, 2), r.total_executions * 100.0 / @total_executions)
                 ELSE 0
             END,
 
         /*
-        PERCENT_RANK across all entries in the workload (not just candidates).
-        NULL if the query contributes < 0.1% of total for that metric.
+        Already ranked in the CTE above, over the full workload, before the
+        #candidates filter below narrowed the rows down.
         */
-        cpu_pctl =
-            CASE
-                WHEN @total_cpu_ms > 0
-                AND  qs.total_cpu_ms * 1.0 / @total_cpu_ms >= 0.001
-                THEN PERCENT_RANK() OVER
-                     (
-                         ORDER BY
-                             qs.total_cpu_ms
-                     )
-                ELSE NULL
-            END,
-        duration_pctl =
-            CASE
-                WHEN @total_duration_ms > 0
-                AND  qs.total_duration_ms * 1.0 / @total_duration_ms >= 0.001
-                THEN PERCENT_RANK() OVER
-                     (
-                         ORDER BY
-                             qs.total_duration_ms
-                     )
-                ELSE NULL
-            END,
-        reads_pctl =
-            CASE
-                WHEN @total_physical_reads > 0
-                AND  qs.total_physical_reads * 1.0 / @total_physical_reads >= 0.001
-                THEN PERCENT_RANK() OVER
-                     (
-                         ORDER BY
-                             qs.total_physical_reads
-                     )
-                ELSE NULL
-            END,
-        writes_pctl =
-            CASE
-                WHEN @total_logical_writes > 0
-                AND  qs.total_logical_writes * 1.0 / @total_logical_writes >= 0.001
-                THEN PERCENT_RANK() OVER
-                     (
-                         ORDER BY
-                             qs.total_logical_writes
-                     )
-                ELSE NULL
-            END,
-        grant_pctl =
-            CASE
-                WHEN @total_grant_mb > 0
-                AND  qs.total_grant_mb * 1.0 / @total_grant_mb >= 0.001
-                THEN PERCENT_RANK() OVER
-                     (
-                         ORDER BY
-                             qs.total_grant_mb
-                     )
-                ELSE NULL
-            END,
-        spills_pctl =
-            CASE
-                WHEN @total_spills > 0
-                AND  qs.total_spills * 1.0 / @total_spills >= 0.001
-                THEN PERCENT_RANK() OVER
-                     (
-                         ORDER BY
-                             qs.total_spills
-                     )
-                ELSE NULL
-            END,
-        executions_pctl =
-            CASE
-                WHEN @total_executions > 0
-                AND  qs.total_executions * 1.0 / @total_executions >= 0.001
-                THEN PERCENT_RANK() OVER
-                     (
-                         ORDER BY
-                             qs.total_executions
-                     )
-                ELSE NULL
-            END,
+        cpu_pctl = r.cpu_pctl,
+        duration_pctl = r.duration_pctl,
+        reads_pctl = r.reads_pctl,
+        writes_pctl = r.writes_pctl,
+        grant_pctl = r.grant_pctl,
+        spills_pctl = r.spills_pctl,
+        executions_pctl = r.executions_pctl,
 
         resource_metrics =
         (
             SELECT
-                [cpu/@total_ms]              = qs.total_cpu_ms,
-                [cpu/@avg_ms]                = qs.total_cpu_ms / NULLIF(qs.total_executions, 0),
-                [cpu/@min_ms]                = qs.min_cpu_ms,
-                [cpu/@max_ms]                = qs.max_cpu_ms,
-                [duration/@total_ms]         = qs.total_duration_ms,
-                [duration/@avg_ms]           = qs.total_duration_ms / NULLIF(qs.total_executions, 0),
-                [duration/@min_ms]           = qs.min_duration_ms,
-                [duration/@max_ms]           = qs.max_duration_ms,
-                [physical_reads/@total]      = qs.total_physical_reads,
-                [physical_reads/@avg]        = CONVERT(decimal(38, 2), qs.total_physical_reads) / NULLIF(qs.total_executions, 0),
-                [physical_reads/@min]        = qs.min_physical_reads,
-                [physical_reads/@max]        = qs.max_physical_reads,
-                [logical_writes/@total]      = qs.total_logical_writes,
-                [logical_writes/@avg]        = CONVERT(decimal(38, 2), qs.total_logical_writes) / NULLIF(qs.total_executions, 0),
-                [rows/@total]                = qs.total_rows,
-                [rows/@avg]                  = CONVERT(decimal(38, 2), qs.total_rows) / NULLIF(qs.total_executions, 0),
-                [rows/@min]                  = qs.min_rows,
-                [rows/@max]                  = qs.max_rows,
-                [grant/@total_mb]            = qs.total_grant_mb,
-                [grant/@avg_mb]              = qs.total_grant_mb / NULLIF(qs.total_executions, 0),
-                [grant/@max_mb]              = qs.max_grant_mb,
-                [used_grant/@total_mb]       = qs.total_used_grant_mb,
-                [used_grant/@avg_mb]         = qs.total_used_grant_mb / NULLIF(qs.total_executions, 0),
-                [used_grant/@max_mb]         = qs.max_used_grant_mb,
-                [spills/@total]              = qs.total_spills,
-                [spills/@avg]                = CONVERT(decimal(38, 2), qs.total_spills) / NULLIF(qs.total_executions, 0),
-                [spills/@max]                = qs.max_spills,
-                [executions/@total]          = qs.total_executions,
-                [parallelism/@max_dop]       = qs.max_dop
+                [cpu/@total_ms]              = r.total_cpu_ms,
+                [cpu/@avg_ms]                = r.total_cpu_ms / NULLIF(r.total_executions, 0),
+                [cpu/@min_ms]                = r.min_cpu_ms,
+                [cpu/@max_ms]                = r.max_cpu_ms,
+                [duration/@total_ms]         = r.total_duration_ms,
+                [duration/@avg_ms]           = r.total_duration_ms / NULLIF(r.total_executions, 0),
+                [duration/@min_ms]           = r.min_duration_ms,
+                [duration/@max_ms]           = r.max_duration_ms,
+                [physical_reads/@total]      = r.total_physical_reads,
+                [physical_reads/@avg]        = CONVERT(decimal(38, 2), r.total_physical_reads) / NULLIF(r.total_executions, 0),
+                [physical_reads/@min]        = r.min_physical_reads,
+                [physical_reads/@max]        = r.max_physical_reads,
+                [logical_writes/@total]      = r.total_logical_writes,
+                [logical_writes/@avg]        = CONVERT(decimal(38, 2), r.total_logical_writes) / NULLIF(r.total_executions, 0),
+                [rows/@total]                = r.total_rows,
+                [rows/@avg]                  = CONVERT(decimal(38, 2), r.total_rows) / NULLIF(r.total_executions, 0),
+                [rows/@min]                  = r.min_rows,
+                [rows/@max]                  = r.max_rows,
+                [grant/@total_mb]            = r.total_grant_mb,
+                [grant/@avg_mb]              = r.total_grant_mb / NULLIF(r.total_executions, 0),
+                [grant/@max_mb]              = r.max_grant_mb,
+                [used_grant/@total_mb]       = r.total_used_grant_mb,
+                [used_grant/@avg_mb]         = r.total_used_grant_mb / NULLIF(r.total_executions, 0),
+                [used_grant/@max_mb]         = r.max_used_grant_mb,
+                [spills/@total]              = r.total_spills,
+                [spills/@avg]                = CONVERT(decimal(38, 2), r.total_spills) / NULLIF(r.total_executions, 0),
+                [spills/@max]                = r.max_spills,
+                [executions/@total]          = r.total_executions,
+                [parallelism/@max_dop]       = r.max_dop
             FOR
                 XML
                 PATH(N'metrics'),
                 TYPE
         ),
 
-        oldest_plan_creation = qs.oldest_plan_creation,
-        newest_plan_creation = qs.newest_plan_creation,
-        last_execution_time = qs.last_execution_time,
-        sample_sql_handle = qs.sample_sql_handle,
-        sample_plan_handle = qs.sample_plan_handle,
-        sample_statement_start = qs.sample_statement_start,
-        sample_statement_end = qs.sample_statement_end
-    FROM #query_stats AS qs
+        oldest_plan_creation = r.oldest_plan_creation,
+        newest_plan_creation = r.newest_plan_creation,
+        last_execution_time = r.last_execution_time,
+        sample_sql_handle = r.sample_sql_handle,
+        sample_plan_handle = r.sample_plan_handle,
+        sample_statement_start = r.sample_statement_start,
+        sample_statement_end = r.sample_statement_end
+    FROM ranked AS r
     WHERE EXISTS
     (
         SELECT
             1/0
         FROM #candidates AS c
-        WHERE c.id = qs.id
+        WHERE c.id = r.id
     )
     OPTION(RECOMPILE);
 
