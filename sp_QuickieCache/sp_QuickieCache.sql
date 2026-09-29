@@ -78,8 +78,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.9',
-        @version_date = '20260901';
+        @version = '1.10',
+        @version_date = '20261001';
 
     /*
     ╔══════════════════════════════════════════════════╗
@@ -589,9 +589,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
             AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
             AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
-            /* Honor @start_date / @end_date the same as the single-use-plans /
-               statement / procedure / function / trigger paths - this mode
-               was missed when those were fixed to stop silently ignoring them. */
+            /*
+            Honor @start_date / @end_date the same as the single-use-plans /
+            statement / procedure / function / trigger paths - this mode
+            was missed when those were fixed to stop silently ignoring them.
+            */
             AND   (@start_date IS NULL OR qs.creation_time >= @start_date)
             AND   (@end_date   IS NULL OR qs.creation_time <  @end_date)
             GROUP BY
