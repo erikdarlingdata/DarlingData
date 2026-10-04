@@ -49,6 +49,9 @@
 .EXAMPLE
     .\Export-SqlResults.ps1 -ServerInstance PROD01 -Database master -Query "EXEC dbo.sp_HumanEventsBlockViewer @session_name = N'blocked_process_report';" -OutDir C:\temp\prod01-blocking -Credential (Get-Credential)
 
+.EXAMPLE
+    .\Export-SqlResults.ps1 -ServerInstance PROD02 -Database master -Query "EXEC dbo.sp_IndexCleanup @database_name = N'StackOverflow';" -OutDir C:\temp\prod02-indexcleanup -ReadOnlyIntent
+
 .NOTES
     Copyright 2026 Darling Data, LLC
     https://www.erikdarling.com/
@@ -84,6 +87,12 @@ param(
     # SQL auth. Omit entirely for Windows auth. Passed as a SqlCredential so the
     # password never lands in the connection string.
     [pscredential]$Credential,
+
+    # Connect with ApplicationIntent=ReadOnly. AG secondaries set to
+    # ALLOW_CONNECTIONS = READ_ONLY only let read-intent sessions into their
+    # databases; without this the connection to master works but the AG
+    # databases do not.
+    [switch]$ReadOnlyIntent,
 
     # Collapse newlines inside CSV cells to single spaces. Off by default:
     # quoted CSV fields carry embedded newlines fine (Excel included), and
@@ -257,6 +266,10 @@ $csb['Data Source']            = $ServerInstance
 $csb['Initial Catalog']        = $Database
 $csb['Application Name']       = 'Export-SqlResults'
 $csb['TrustServerCertificate'] = $true
+
+if ($ReadOnlyIntent) {
+    $csb['ApplicationIntent'] = 'ReadOnly'
+}
 
 if ($Credential) {
     $pw = $Credential.Password.Copy()
