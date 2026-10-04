@@ -636,6 +636,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_indexed_view integer NOT NULL,
         is_foreign_key bit NULL,
         is_foreign_key_reference bit NULL,
+        /*
+        Whether a foreign key is BACKED BY this index, which is
+        sys.foreign_keys.key_index_id and not a property of any column.
+        is_foreign_key_reference above says only that some foreign key points at
+        this column, so it cannot tell which of two indexes on that column the
+        key actually depends on. ALTER INDEX ... DISABLE against the backing
+        index disables the foreign key too, and only prints a warning, so every
+        rule that picks a loser has to leave this index alone.
+        */
+        is_foreign_key_backing bit NULL,
         key_ordinal tinyint NOT NULL,
         index_column_id integer NOT NULL,
         is_descending_key bit NOT NULL,
@@ -2622,6 +2632,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        is_foreign_key_backing =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.foreign_keys AS fk
+                         WHERE fk.referenced_object_id = i.object_id
+                         AND   fk.key_index_id = i.index_id
+                     )
+                THEN 1
+                ELSE 0
+            END,
         ic.key_ordinal,
         ic.index_column_id,
         ic.is_descending_key,
@@ -2774,6 +2797,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_indexed_view,
         is_foreign_key,
         is_foreign_key_reference,
+        is_foreign_key_backing,
         key_ordinal,
         index_column_id,
         is_descending_key,
@@ -5495,6 +5519,62 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
+
+    /*
+    Never disable an index that a foreign key is backed by.
+
+    A foreign key names its backing index in sys.foreign_keys.key_index_id, and
+    ALTER INDEX ... DISABLE against that index disables the foreign key too. SQL
+    Server only prints a warning, so the cleanup script looks like it worked
+    while the key stops being enforced: measured on 2022 CU27, the key is left
+    is_disabled = 1 and is_not_trusted = 1, and an INSERT naming a parent row
+    that does not exist succeeds from then on.
+
+    The per-column is_foreign_key_reference flag the dedupe rules already check
+    cannot answer this. It says a key points at the COLUMN, so with two unique
+    indexes on the same column it is 1 for both and tells us nothing about which
+    one the key depends on. That is the pair in the repro: the key is backed by
+    the index the rules disabled.
+
+    This sits after every rule rather than inside each one. The rules pick a
+    loser in nine places, by priority, by width and by name, and a guard in each
+    is a guard the tenth rule can be written without. Running here also means
+    the pairing is cleared before superseded_by and the scripts are built, so no
+    keeper is left claiming it supersedes an index that is staying.
+
+    Both indexes are kept when the loser backs a key. Promoting the other one
+    instead is not safe to do blindly: when both back keys there is no loser to
+    pick at all, and that is the case this would get wrong.
+
+    Only DISABLE is reverted. MERGE INCLUDES rebuilds its index through
+    DROP_EXISTING with the key columns intact, so the key keeps its backing
+    index and the foreign key is never touched.
+    */
+    UPDATE
+        ia
+    SET
+        ia.action = N'KEEP',
+        ia.target_index_name = NULL,
+        ia.superseded_by = NULL
+    FROM #index_analysis AS ia
+    WHERE ia.action = N'DISABLE'
+    AND   ia.database_id = @current_database_id
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_fkb
+        WHERE id_fkb.index_hash = ia.index_hash
+        AND   id_fkb.is_foreign_key_backing = 1
+    )
+    OPTION(RECOMPILE);
+
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Kept %I64d index(es) a foreign key is backed by', 0, 0, @rc) WITH NOWAIT;
+    END;
 
     /* Insert merge scripts for indexes */
     IF @debug = 1
