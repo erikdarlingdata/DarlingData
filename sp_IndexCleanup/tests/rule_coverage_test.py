@@ -124,6 +124,22 @@ assertion fails or the fixture itself does not build.
     iteration happens. If any one of them silently stopped being true, every
     assertion below would go green while testing nothing at all.
 
+(g) Script generation (Groups I, J and K).
+
+    I: CREATE INDEX ... WITH (DROP_EXISTING = ON) resets IGNORE_DUP_KEY and
+    STATISTICS_NORECOMPUTE, so the MERGE, MAKE UNIQUE and filtered-index scripts
+    must name them again. These groups EXECUTE the generated script inside a
+    transaction they roll back, and read the options and a duplicate insert back.
+
+    J: a MERGE SCRIPT is a full rebuild, so it is only emitted when the include
+    list or the uniqueness changes. The index must still reach its compression row.
+
+    K: when the foreign-key guard keeps a loser, the winner is unwound so it is not
+    rebuilt with, or described as superseding, an index that stays.
+
+    Every run in these groups passes @dedupe_only = 1, so they test the same thing
+    at any server uptime.
+
 Usage:
     python rule_coverage_test.py [--server SQL2022] [--password "L!nt0044"]
 """
@@ -1052,6 +1068,153 @@ GO
 """ % {"first": MDB_DATABASE_FIRST, "second": MDB_DATABASE_SECOND}
 
 
+# Groups I, J and K: script generation. These tables live in the Crap database
+# next to Groups A-E and H, and every run against them passes @dedupe_only = 1 so
+# that Rule 1 (which turns on for a server up more than 7 days) never claims a
+# never-read fixture index and changes what is being tested.
+#
+#   ic_sg_opt      Group I: unique index with IGNORE_DUP_KEY and STATISTICS_NORECOMPUTE
+#                  plus a non-unique key duplicate, so the unique one wins a MERGE.
+#   ic_sg_optuc    Group I: a UNIQUE constraint with IGNORE_DUP_KEY and a non-unique
+#                  index that replaces it (MAKE UNIQUE).
+#   ic_sg_filt     Group I: a filtered unique index whose filter column is not in it
+#                  (SQL Server refuses IGNORE_DUP_KEY on a filtered index).
+#   ic_sg_sup      Group J: a superset that already has every column of its subset.
+#   ic_sg_uqnoop   Group J: a unique index that already replaces a constraint.
+#   ic_sg_real     Group J: a superset that really does absorb a column (control).
+#   ic_sg_p3/c3    Group K: the key is backed by the index that LOSES on name.
+#   ic_sg_p4/c4    Group K: the key is backed by the index that WINS on name.
+#   ic_sg_p5/c5a/b Group K: both indexes back a key.
+SCRIPTGEN_TABLES = (
+    "ic_sg_c3", "ic_sg_c4", "ic_sg_c5a", "ic_sg_c5b", "ic_sg_p3", "ic_sg_p4",
+    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_sup",
+    "ic_sg_uqnoop", "ic_sg_real",
+)
+
+SCRIPTGEN_CLEANUP_SQL = "SET NOCOUNT ON;\n" + "".join(
+    "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES)
+
+
+def _sg_rows(table, columns, values):
+    """A 1,000-row INSERT. RN in a value expression is ROW_NUMBER(), so a unique
+    key is easy to ask for."""
+    rn = "ROW_NUMBER() OVER (ORDER BY (SELECT NULL))"
+    return (
+        "INSERT dbo.%s (%s)\nSELECT TOP (1000) %s\n"
+        "FROM sys.all_columns AS ac1\nCROSS JOIN sys.all_columns AS ac2\n"
+        "OPTION(MAXDOP 1);\n"
+        % (table, columns, ", ".join(v.replace("RN", rn) for v in values))
+    )
+
+
+SCRIPTGEN_SETUP_SQL = SCRIPTGEN_CLEANUP_SQL + "GO\n" + """
+CREATE TABLE dbo.ic_sg_opt (id integer NOT NULL CONSTRAINT pk_ic_sg_opt PRIMARY KEY, k integer NOT NULL, x integer NULL, y integer NULL);
+""" + _sg_rows("ic_sg_opt", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
+CREATE UNIQUE INDEX ux_sg_opt ON dbo.ic_sg_opt (k) INCLUDE (x) WITH (IGNORE_DUP_KEY = ON, STATISTICS_NORECOMPUTE = ON);
+CREATE INDEX ix_sg_opt ON dbo.ic_sg_opt (k) INCLUDE (y);
+GO
+
+CREATE TABLE dbo.ic_sg_optuc (id integer NOT NULL CONSTRAINT pk_ic_sg_optuc PRIMARY KEY, k integer NOT NULL, x integer NULL, CONSTRAINT uq_sg_optuc UNIQUE (k) WITH (IGNORE_DUP_KEY = ON));
+""" + _sg_rows("ic_sg_optuc", "id, k, x", ["RN", "RN", "1"]) + """
+CREATE INDEX ix_sg_optuc ON dbo.ic_sg_optuc (k) INCLUDE (x);
+GO
+
+CREATE TABLE dbo.ic_sg_filt (id integer NOT NULL CONSTRAINT pk_ic_sg_filt PRIMARY KEY, k integer NOT NULL, f integer NOT NULL);
+""" + _sg_rows("ic_sg_filt", "id, k, f", ["RN", "RN", "1"]) + """
+CREATE UNIQUE INDEX ux_sg_filt ON dbo.ic_sg_filt (k) WHERE f = 1 WITH (STATISTICS_NORECOMPUTE = ON);
+GO
+
+CREATE TABLE dbo.ic_sg_sup (id integer NOT NULL CONSTRAINT pk_ic_sg_sup PRIMARY KEY, a integer NULL, b integer NULL, c integer NULL);
+""" + _sg_rows("ic_sg_sup", "id, a, b, c", ["RN", "RN", "1", "2"]) + """
+CREATE INDEX ix_sg_sup_ab ON dbo.ic_sg_sup (a, b) INCLUDE (c);
+CREATE INDEX ix_sg_sup_a ON dbo.ic_sg_sup (a) INCLUDE (c);
+GO
+
+CREATE TABLE dbo.ic_sg_uqnoop (id integer NOT NULL CONSTRAINT pk_ic_sg_uqnoop PRIMARY KEY, k integer NOT NULL, x integer NULL, CONSTRAINT uq_sg_uqnoop UNIQUE (k));
+""" + _sg_rows("ic_sg_uqnoop", "id, k, x", ["RN", "RN", "1"]) + """
+CREATE UNIQUE INDEX ux_sg_uqnoop ON dbo.ic_sg_uqnoop (k) INCLUDE (x);
+GO
+
+CREATE TABLE dbo.ic_sg_real (id integer NOT NULL CONSTRAINT pk_ic_sg_real PRIMARY KEY, a integer NULL, b integer NULL, c integer NULL, d integer NULL);
+""" + _sg_rows("ic_sg_real", "id, a, b, c, d", ["RN", "RN", "1", "2", "3"]) + """
+CREATE INDEX ix_sg_real_sup ON dbo.ic_sg_real (a, b) INCLUDE (c);
+CREATE INDEX ix_sg_real_sub ON dbo.ic_sg_real (a) INCLUDE (d);
+GO
+
+/* Group K, case 1: the key is backed by ux_z3_code, which loses on name. */
+CREATE TABLE dbo.ic_sg_p3 (pid integer NOT NULL CONSTRAINT pk_ic_sg_p3 PRIMARY KEY, code integer NOT NULL, e1 integer NULL, e2 integer NULL);
+CREATE UNIQUE INDEX ux_z3_code ON dbo.ic_sg_p3 (code) INCLUDE (e1);
+CREATE TABLE dbo.ic_sg_c3 (cid integer NOT NULL CONSTRAINT pk_ic_sg_c3 PRIMARY KEY, code integer NOT NULL, CONSTRAINT fk_ic_sg_c3 FOREIGN KEY (code) REFERENCES dbo.ic_sg_p3 (code));
+CREATE UNIQUE INDEX ux_a3_code ON dbo.ic_sg_p3 (code) INCLUDE (e2);
+GO
+
+/* Group K, case 2: the key is backed by ux_a4_code, which wins on name. */
+CREATE TABLE dbo.ic_sg_p4 (pid integer NOT NULL CONSTRAINT pk_ic_sg_p4 PRIMARY KEY, code integer NOT NULL, e1 integer NULL, e2 integer NULL);
+CREATE UNIQUE INDEX ux_a4_code ON dbo.ic_sg_p4 (code) INCLUDE (e1);
+CREATE TABLE dbo.ic_sg_c4 (cid integer NOT NULL CONSTRAINT pk_ic_sg_c4 PRIMARY KEY, code integer NOT NULL, CONSTRAINT fk_ic_sg_c4 FOREIGN KEY (code) REFERENCES dbo.ic_sg_p4 (code));
+CREATE UNIQUE INDEX ux_z4_code ON dbo.ic_sg_p4 (code) INCLUDE (e2);
+GO
+
+/*
+Group K, case 3: both indexes back a key. Each key is created while only its own
+index could back it: FK 1 on ux_z5_code, then ux_a5_code, then ux_z5_code goes
+away so FK 2 can only pick ux_a5_code, then ux_z5_code comes back and FK 1 is
+trusted again.
+*/
+CREATE TABLE dbo.ic_sg_p5 (pid integer NOT NULL CONSTRAINT pk_ic_sg_p5 PRIMARY KEY, code integer NOT NULL, e1 integer NULL, e2 integer NULL);
+CREATE UNIQUE INDEX ux_z5_code ON dbo.ic_sg_p5 (code) INCLUDE (e1);
+CREATE TABLE dbo.ic_sg_c5a (cid integer NOT NULL CONSTRAINT pk_ic_sg_c5a PRIMARY KEY, code integer NOT NULL, CONSTRAINT fk_ic_sg_c5a FOREIGN KEY (code) REFERENCES dbo.ic_sg_p5 (code));
+CREATE UNIQUE INDEX ux_a5_code ON dbo.ic_sg_p5 (code) INCLUDE (e2);
+ALTER INDEX ux_z5_code ON dbo.ic_sg_p5 DISABLE;
+CREATE TABLE dbo.ic_sg_c5b (cid integer NOT NULL CONSTRAINT pk_ic_sg_c5b PRIMARY KEY, code integer NOT NULL, CONSTRAINT fk_ic_sg_c5b FOREIGN KEY (code) REFERENCES dbo.ic_sg_p5 (code));
+ALTER INDEX ux_z5_code ON dbo.ic_sg_p5 REBUILD;
+ALTER TABLE dbo.ic_sg_c5a WITH CHECK CHECK CONSTRAINT fk_ic_sg_c5a;
+GO
+"""
+
+# Reads back what a rebuilt index kept, then inserts a duplicate key. The 1000000
+# range is above the fixture's rows, so only the two new rows can collide.
+OPTION_PROBE_SQL = """
+SELECT marker = N'OPTS', ignore_dup_key = i.ignore_dup_key, no_recompute = s.no_recompute
+FROM sys.indexes AS i
+JOIN sys.stats AS s
+  ON  s.object_id = i.object_id
+  AND s.stats_id = i.index_id
+WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
+AND   i.name = N'%(i)s';
+BEGIN TRY
+    INSERT dbo.%(t)s (id, k) VALUES (1000001, 1000000), (1000002, 1000000);
+    SELECT marker = N'DUP', outcome = N'ignored', n = COUNT_BIG(*) FROM dbo.%(t)s WHERE k = 1000000;
+END TRY
+BEGIN CATCH
+    SELECT marker = N'DUP', outcome = N'error', n = ERROR_NUMBER();
+END CATCH;
+"""
+
+
+def exec_in_rolled_back_transaction(server, password, scripts, probe_sql):
+    """
+    Run generated scripts for real, then a probe, inside a transaction that is
+    always rolled back, and return (stdout, errors).
+
+    Reading a script is not the same as running it: an option the script leaves
+    out is only visible in sys.indexes afterwards, and a duplicate insert only
+    shows whether it is skipped or fails once the rebuilt index is in place.
+    """
+    sql = "SET NOCOUNT ON;\nBEGIN TRANSACTION;\n%s\n%s\nROLLBACK TRANSACTION;\n" % (
+        "\n".join(scripts), probe_sql)
+    stdout, stderr = run_sql_script(server, password, sql)
+    return stdout, sql_errors(stdout, stderr)
+
+
+def probe_fields(stdout, marker):
+    """The tab-split fields after the marker on the first output line that has it."""
+    for line in stdout.split("\n"):
+        if line.startswith(marker + "\t"):
+            return [c.strip() for c in line.split("\t")][1:]
+    return None
+
+
 def run_sqlcmd(server, password, input_file=None, query=None,
                database=TEST_DATABASE, timeout=600):
     """Run SQL from a file or a query string and capture output."""
@@ -1224,7 +1387,7 @@ def run_proc(server, password, table_name, extra="", debug=False):
     return parse_output(stdout), stdout
 
 
-def run_proc_all_databases(server, password, table_name):
+def run_proc_all_databases(server, password, table_name, extra=""):
     """
     Run sp_IndexCleanup across every database on the instance, scoped to one
     table, and return (rows, stdout).
@@ -1235,8 +1398,8 @@ def run_proc_all_databases(server, password, table_name):
     """
     query = (
         "EXECUTE master.dbo.sp_IndexCleanup "
-        "@get_all_databases = 1, @schema_name = 'dbo', @table_name = '%s';"
-        % table_name
+        "@get_all_databases = 1, @schema_name = 'dbo', @table_name = '%s'%s;"
+        % (table_name, extra)
     )
     stdout, _ = run_sqlcmd(server, password, database="master", query=query)
     return parse_output(stdout), stdout
@@ -1334,7 +1497,11 @@ def run_tests(server, password, uptime_days):
 
     # B3: write floor only. ix_w1/ix_w2 have 60 writes and zero reads, so they
     # clear on the write side alone.
-    rows, _ = run_proc(server, password, "ic_min_writes_test", extra=", @min_writes = 50")
+    # @dedupe_only = 1: on a server up more than 7 days Rule 1 would disable the
+    # never-read ix_w1/ix_w2 as unused, which has nothing to do with the screen
+    # under test and would pass this assertion for the wrong reason.
+    rows, _ = run_proc(server, password, "ic_min_writes_test",
+                       extra=", @min_writes = 50, @dedupe_only = 1")
 
     w1 = dedupe_rows(rows, "ix_w1")
     w2 = dedupe_rows(rows, "ix_w2")
@@ -1346,7 +1513,11 @@ def run_tests(server, password, uptime_days):
     # B4: the same pair against a reads floor it cannot meet. Together with B3
     # this is what makes the floors an OR rather than an AND: identical indexes,
     # identical usage, deduped under the write floor and not under the read floor.
-    rows, _ = run_proc(server, password, "ic_min_writes_test", extra=", @min_reads = 50")
+    # Same @dedupe_only = 1 as B3: without it Rule 1 disables the zero-read pair
+    # on a long-uptime server, so "not deduped" and "still compressed" both fail
+    # for a reason that is not the reads floor.
+    rows, _ = run_proc(server, password, "ic_min_writes_test",
+                       extra=", @min_reads = 50, @dedupe_only = 1")
 
     w1 = dedupe_rows(rows, "ix_w1")
     w2 = dedupe_rows(rows, "ix_w2")
@@ -1620,7 +1791,11 @@ def run_tests(server, password, uptime_days):
     # built or the rule silently stopped matching.
 
     # --- Bug 1: the include-merge winner must keep its INCLUDE list ---
-    merge_rows, _ = run_proc_all_databases(server, password, MDB_MERGE_TABLE)
+    # @dedupe_only = 1: the fixture indexes are never read, so on a server up more
+    # than 7 days Rule 1 would disable the would-be winner as unused and the
+    # include merge this group is about would never happen.
+    merge_rows, _ = run_proc_all_databases(server, password, MDB_MERGE_TABLE,
+                                           extra=", @dedupe_only = 1")
 
     # G-PC1: the merge winner was produced at all (Rule 4/6 fired for CrapA). If
     # it were not, "no merge script is missing its INCLUDE" would pass vacuously.
@@ -1664,7 +1839,8 @@ def run_tests(server, password, uptime_days):
                 % (len(merge_stripped), [r.get("script") for r in merge_stripped]))
 
     # --- Bug 2: a unique constraint must never get ALTER INDEX ... DISABLE ---
-    uc_rows, _ = run_proc_all_databases(server, password, MDB_UC_TABLE)
+    uc_rows, _ = run_proc_all_databases(server, password, MDB_UC_TABLE,
+                                         extra=", @dedupe_only = 1")
 
     # G-PC4: the constraint really was replaced -- it gets its correct
     # DROP CONSTRAINT. This is what makes the absence assertion meaningful:
@@ -1864,6 +2040,177 @@ def run_tests(server, password, uptime_days):
                 "@min_reads = 100: ix_fd_cold still gets COMPRESSION SCRIPT",
                 len(matches) == 1, "found %d" % len(matches))
 
+    # ---- Group I: DROP_EXISTING scripts carry IGNORE_DUP_KEY and STATISTICS_NORECOMPUTE ----
+    #
+    # CREATE INDEX ... WITH (DROP_EXISTING = ON) resets both options to OFF unless
+    # the WITH list names them again. Run, the script then "works" while a
+    # duplicate insert that used to be skipped with a warning starts failing with
+    # error 2601, and statistics someone froze start updating again. So these
+    # assertions EXECUTE the generated script (rolled back) and read the result
+    # back, rather than trusting the text of the script.
+    sg = ", @dedupe_only = 1"
+
+    rows, _ = run_proc(server, password, "ic_sg_opt", extra=sg)
+    merge = find_rows(rows, index_name="ux_sg_opt", script_type="MERGE SCRIPT")
+    script = merge[0]["script"] if merge else ""
+    assert_test("I-IndexOptions", "positive control: ux_sg_opt gets a MERGE SCRIPT",
+                len(merge) == 1, "found %d" % len(merge))
+    assert_test("I-IndexOptions", "MERGE SCRIPT carries IGNORE_DUP_KEY = ON",
+                "IGNORE_DUP_KEY = ON" in script, script)
+    assert_test("I-IndexOptions", "MERGE SCRIPT carries STATISTICS_NORECOMPUTE = ON",
+                "STATISTICS_NORECOMPUTE = ON" in script, script)
+
+    out, errs = exec_in_rolled_back_transaction(
+        server, password, [script],
+        OPTION_PROBE_SQL % {"t": "ic_sg_opt", "i": "ux_sg_opt"})
+    opts = probe_fields(out, "OPTS")
+    dup = probe_fields(out, "DUP")
+    assert_test("I-IndexOptions",
+                "executed MERGE SCRIPT: ux_sg_opt keeps ignore_dup_key = 1 and no_recompute = 1",
+                opts == ["1", "1"] and not errs, "options=%s errors=%s" % (opts, errs))
+    assert_test("I-IndexOptions",
+                "executed MERGE SCRIPT: a duplicate insert is ignored, not failed with 2601",
+                dup == ["ignored", "1"], "duplicate insert=%s" % dup)
+
+    # The constraint-replacement path. uq_sg_optuc skips duplicates, and is dropped
+    # by the paired DISABLE CONSTRAINT SCRIPT, so the index taking over uniqueness
+    # has to keep skipping them. It never had STATISTICS_NORECOMPUTE, so it must
+    # not gain it.
+    rows, _ = run_proc(server, password, "ic_sg_optuc", extra=sg)
+    merge = find_rows(rows, index_name="ix_sg_optuc", script_type="MERGE SCRIPT")
+    drop = find_rows(rows, index_name="uq_sg_optuc", script_type="DISABLE CONSTRAINT SCRIPT")
+    script = merge[0]["script"] if merge else ""
+    assert_test("I-IndexOptions",
+                "positive control: ix_sg_optuc is promoted to unique and uq_sg_optuc is dropped",
+                len(merge) == 1 and len(drop) == 1 and "CREATE UNIQUE INDEX" in script,
+                "merge=%d drop=%d" % (len(merge), len(drop)))
+    assert_test("I-IndexOptions",
+                "MAKE UNIQUE script carries IGNORE_DUP_KEY = ON from the constraint it replaces",
+                "IGNORE_DUP_KEY = ON" in script, script)
+    assert_test("I-IndexOptions", "MAKE UNIQUE script does not invent STATISTICS_NORECOMPUTE",
+                "STATISTICS_NORECOMPUTE" not in script, script)
+
+    out, errs = exec_in_rolled_back_transaction(
+        server, password, [script, drop[0]["script"] if drop else ""],
+        OPTION_PROBE_SQL % {"t": "ic_sg_optuc", "i": "ix_sg_optuc"})
+    opts = probe_fields(out, "OPTS")
+    dup = probe_fields(out, "DUP")
+    assert_test("I-IndexOptions",
+                "executed MAKE UNIQUE + DROP CONSTRAINT: the new unique index has ignore_dup_key = 1",
+                opts == ["1", "0"] and not errs, "options=%s errors=%s" % (opts, errs))
+    assert_test("I-IndexOptions",
+                "executed MAKE UNIQUE + DROP CONSTRAINT: a duplicate insert is still ignored",
+                dup == ["ignored", "1"], "duplicate insert=%s" % dup)
+
+    # The filtered-index include script is the other DROP_EXISTING script.
+    _, out = run_proc(server, password, "ic_sg_filt", extra=sg)
+    lines = [ln for ln in out.split("\n")
+             if "CREATE UNIQUE NONCLUSTERED INDEX [ux_sg_filt]" in ln]
+    text = lines[0] if lines else ""
+    assert_test("I-IndexOptions",
+                "positive control: the filtered-index include script is produced for ux_sg_filt",
+                len(lines) == 1, "found %d" % len(lines))
+    # SQL Server refuses IGNORE_DUP_KEY = ON on a filtered index (Msg 10618), so
+    # only STATISTICS_NORECOMPUTE can ride along on this script.
+    assert_test("I-IndexOptions",
+                "filtered-index include script carries STATISTICS_NORECOMPUTE = ON",
+                "STATISTICS_NORECOMPUTE = ON" in text, text)
+
+    # ---- Group J: no MERGE SCRIPT when the merge changes nothing ----
+    #
+    # A MERGE SCRIPT is a full DROP_EXISTING rebuild. It is only worth emitting
+    # when the include list or the uniqueness changes. When it is suppressed the
+    # index must still reach the compression row: on an uncompressed table the
+    # MERGE row used to be its only compression recommendation.
+    compression_types = ("COMPRESSION SCRIPT", "KEPT - NEEDS COMPRESSION")
+
+    rows, _ = run_proc(server, password, "ic_sg_sup", extra=sg)
+    sub = find_rows(rows, index_name="ix_sg_sup_a", script_type="DISABLE SCRIPT")
+    assert_test("J-NoOpMerge", "positive control: ix_sg_sup_a is still disabled as a key subset",
+                len(sub) == 1, "found %d" % len(sub))
+    merge = find_rows(rows, index_name="ix_sg_sup_ab", script_type="MERGE SCRIPT")
+    assert_test("J-NoOpMerge",
+                "ix_sg_sup_ab gets no MERGE SCRIPT (it already has every column of its subset)",
+                len(merge) == 0, "found %d: %s" % (len(merge), [r["script"] for r in merge]))
+    comp = [r for r in rows if r.get("index_name") == "ix_sg_sup_ab"
+            and r.get("script_type") in compression_types]
+    assert_test("J-NoOpMerge", "ix_sg_sup_ab still gets a compression recommendation",
+                len(comp) >= 1,
+                "rows: %s" % [r.get("script_type") for r in rows
+                              if r.get("index_name") == "ix_sg_sup_ab"])
+
+    rows, _ = run_proc(server, password, "ic_sg_uqnoop", extra=sg)
+    drop = find_rows(rows, index_name="uq_sg_uqnoop", script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("J-NoOpMerge",
+                "positive control: uq_sg_uqnoop still gets its DISABLE CONSTRAINT SCRIPT",
+                len(drop) == 1, "found %d" % len(drop))
+    merge = find_rows(rows, index_name="ux_sg_uqnoop", script_type="MERGE SCRIPT")
+    assert_test("J-NoOpMerge",
+                "ux_sg_uqnoop gets no MERGE SCRIPT (it is already unique and already has the includes)",
+                len(merge) == 0, "found %d: %s" % (len(merge), [r["script"] for r in merge]))
+    comp = [r for r in rows if r.get("index_name") == "ux_sg_uqnoop"
+            and r.get("script_type") in compression_types]
+    assert_test("J-NoOpMerge", "ux_sg_uqnoop still gets a compression recommendation",
+                len(comp) >= 1,
+                "rows: %s" % [r.get("script_type") for r in rows
+                              if r.get("index_name") == "ux_sg_uqnoop"])
+
+    # Control: a merge that does add a column is still emitted.
+    rows, _ = run_proc(server, password, "ic_sg_real", extra=sg)
+    merge = find_rows(rows, index_name="ix_sg_real_sup", script_type="MERGE SCRIPT")
+    assert_test("J-NoOpMerge",
+                "positive control: a superset that absorbs a new column still gets its MERGE SCRIPT",
+                len(merge) == 1 and "INCLUDE ([c], [d])" in merge[0]["script"],
+                "found %d: %s" % (len(merge), [r["script"] for r in merge]))
+
+    # ---- Group K: the winner is unwound when the foreign-key guard keeps a loser ----
+    #
+    # The guard keeps an index a foreign key is backed by even when a dedupe rule
+    # picked it as the loser. The claim "Supersedes <loser>" and the merged
+    # include list live on the WINNER's row, which the guard used to leave alone:
+    # the winner was still rebuilt with the kept index's includes while that index
+    # stayed.
+
+    # K1: the key is backed by the index that loses on name.
+    rows, _ = run_proc(server, password, "ic_sg_p3", extra=sg)
+    kept = find_rows(rows, index_name="ux_z3_code", script_type="KEPT - FOREIGN KEY")
+    assert_test("K-ForeignKeyWinner", "K1 positive control: ux_z3_code is KEPT - FOREIGN KEY",
+                len(kept) == 1, "found %d" % len(kept))
+    assert_test("K-ForeignKeyWinner", "K1: ux_z3_code is not disabled",
+                len(dedupe_rows(rows, "ux_z3_code")) == 0,
+                "found %s" % [r["script_type"] for r in dedupe_rows(rows, "ux_z3_code")])
+    merge = find_rows(rows, index_name="ux_a3_code", script_type="MERGE SCRIPT")
+    assert_test("K-ForeignKeyWinner",
+                "K1: ux_a3_code gets no MERGE SCRIPT adding the includes of an index that stays",
+                len(merge) == 0, "found %d: %s" % (len(merge), [r["script"] for r in merge]))
+    claims = [r for r in rows if r.get("index_name") == "ux_a3_code"
+              and "ux_z3_code" in (r.get("superseded_info") or "")]
+    assert_test("K-ForeignKeyWinner",
+                "K1: nothing says ux_a3_code supersedes ux_z3_code",
+                len(claims) == 0, "found %s" % [r["superseded_info"] for r in claims])
+
+    # K2: the key is backed by the index that wins on name. Nothing to unwind: the
+    # duplicate is disabled and the winner absorbs its includes, as before.
+    rows, _ = run_proc(server, password, "ic_sg_p4", extra=sg)
+    loser = find_rows(rows, index_name="ux_z4_code", script_type="DISABLE SCRIPT")
+    assert_test("K-ForeignKeyWinner",
+                "K2: key backed by the winner, the duplicate ux_z4_code is still disabled",
+                len(loser) == 1, "found %d" % len(loser))
+    merge = find_rows(rows, index_name="ux_a4_code", script_type="MERGE SCRIPT")
+    assert_test("K-ForeignKeyWinner", "K2: the winner ux_a4_code still absorbs its includes",
+                len(merge) == 1 and "INCLUDE ([e1], [e2])" in merge[0]["script"],
+                "found %d: %s" % (len(merge), [r["script"] for r in merge]))
+
+    # K3: both indexes back a key, so neither may be disabled, and the winner has
+    # nothing to absorb.
+    rows, _ = run_proc(server, password, "ic_sg_p5", extra=sg)
+    kept = find_rows(rows, index_name="ux_z5_code", script_type="KEPT - FOREIGN KEY")
+    assert_test("K-ForeignKeyWinner", "K3 positive control: ux_z5_code is KEPT - FOREIGN KEY",
+                len(kept) == 1, "found %d" % len(kept))
+    both = dedupe_rows(rows, "ux_z5_code") + dedupe_rows(rows, "ux_a5_code")
+    assert_test("K-ForeignKeyWinner", "K3: neither index is disabled or merged",
+                len(both) == 0, "found %s" % [(r["index_name"], r["script_type"]) for r in both])
+
     return results
 
 
@@ -1961,8 +2308,22 @@ def main():
             print("would pass for the wrong reason.")
             sys.exit(1)
 
+        # Groups I, J and K: script-generation fixtures in the Crap database.
+        stdout, stderr = run_sql_script(server, password, SCRIPTGEN_SETUP_SQL)
+        errors = sql_errors(stdout, stderr)
+
+        if errors:
+            print("ERROR: SQL errors during Group I/J/K fixture setup:")
+            for e in errors:
+                print("  " + e)
+            print()
+            print("Their fixtures did not build, so the assertions would be")
+            print("testing something other than what they claim.")
+            sys.exit(1)
+
         results = run_tests(server, password, uptime_days)
     finally:
+        run_sql_script(server, password, SCRIPTGEN_CLEANUP_SQL)
         run_sql_script(server, password, CLEANUP_SQL)
         run_sql_script(server, password, MDB_CLEANUP_SQL, database="master")
 
