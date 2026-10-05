@@ -332,6 +332,10 @@ and Rule 6 merges the subset's includes into the superset. col_b is already in
 the superset's KEY, and SQL Server rejects an index that includes its own key
 column with Msg 1909. Rule 6's key-column exclusion is the only thing that
 keeps col_b out of the INCLUDE list.
+
+The subset also includes filler, so the merge is a real change to the superset.
+A merge that adds nothing is no longer emitted at all, and the control below
+needs the merge to happen.
 */
 CREATE TABLE
     dbo.ic_key_include_test
@@ -612,7 +616,7 @@ CREATE INDEX ix_sort_asc ON dbo.ic_sort_dir_test (col_a, col_b) INCLUDE (col_c);
 CREATE INDEX ix_sort_desc ON dbo.ic_sort_dir_test (col_a, col_b DESC) INCLUDE (col_d);
 
 /* Subset whose include (col_b) is already a key column of the superset */
-CREATE INDEX ix_ki_subset ON dbo.ic_key_include_test (col_a) INCLUDE (col_b);
+CREATE INDEX ix_ki_subset ON dbo.ic_key_include_test (col_a) INCLUDE (col_b, filler);
 CREATE INDEX ix_ki_superset ON dbo.ic_key_include_test (col_a, col_b);
 
 /*
@@ -1641,6 +1645,10 @@ def run_tests(server, password, uptime_days):
                     "[col_b]" not in include_part,
                     "INCLUDE clause was '%s' in: %s"
                     % (include_part.strip()[:60], script[:110]))
+        assert_test("E-KeyInclude",
+                    "positive control: the merged superset absorbed the subset's filler",
+                    "[filler]" in include_part,
+                    "INCLUDE clause was '%s'" % include_part.strip()[:60])
 
     # And the subset really was disabled in its favor, so the merge above is the
     # live code path rather than a rule that never fired.
@@ -2105,7 +2113,8 @@ def run_tests(server, password, uptime_days):
     # The filtered-index include script is the other DROP_EXISTING script.
     _, out = run_proc(server, password, "ic_sg_filt", extra=sg)
     lines = [ln for ln in out.split("\n")
-             if "CREATE UNIQUE NONCLUSTERED INDEX [ux_sg_filt]" in ln]
+             if "CREATE UNIQUE NONCLUSTERED INDEX [ux_sg_filt]" in ln
+             and "DROP_EXISTING = ON" in ln]
     text = lines[0] if lines else ""
     assert_test("I-IndexOptions",
                 "positive control: the filtered-index include script is produced for ux_sg_filt",
