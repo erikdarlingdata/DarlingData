@@ -78,6 +78,35 @@ def parse_output(stdout):
     return rows
 
 
+def parse_findings(stdout):
+    """Parse the findings result sets into rows, kept apart from the main rows.
+
+    The advisory findings (FILTERED INDEXES NEEDING INCLUDED COLUMNS and the
+    others) come back as result sets of their own, headed by finding_type. They
+    have no script_type, so parse_output never starts a header for them, and
+    their rows are narrower than the main result set's so they fall through its
+    column-count check. They are parsed here instead, one header per result
+    set: each header runs until the blank line sqlcmd prints after the set.
+    """
+    rows = []
+    headers = None
+
+    for line in stdout.split("\n"):
+        if not line.strip():
+            headers = None
+            continue
+        cols = [c.strip() for c in line.split("\t")]
+        if cols[0] == "finding_type" and "index_name" in cols:
+            headers = cols
+            continue
+        if headers is None or line.startswith("---"):
+            continue
+        if len(cols) >= len(headers):
+            rows.append(dict(zip(headers, cols)))
+
+    return rows
+
+
 def find_rows(rows, **filters):
     """Find rows matching all filter criteria."""
     matches = []
@@ -103,8 +132,12 @@ def find_rows(rows, **filters):
     return matches
 
 
-def run_tests(rows):
-    """Run all assertions and return results."""
+def run_tests(rows, findings=()):
+    """Run all assertions and return results.
+
+    rows is the main result set, findings the advisory result sets (see
+    parse_findings).
+    """
     results = []
 
     def assert_test(group, name, condition, detail=""):
@@ -420,6 +453,132 @@ def run_tests(rows):
                 len(matches) == 1 and names_duplicate,
                 f"found {len(matches)} rows, names duplicate={names_duplicate}")
 
+    # ---- Group 14: A unique constraint with nothing to replace it (issue #903) ----
+
+    # 14a: THE one that matters. Rule 7 looks for a unique constraint with exactly
+    # the same keys, and nothing in that lookup excluded the index being tested,
+    # so every unique constraint matched ITSELF. Each one came back as a KEPT row
+    # labelled 'Unique Constraint Replacement' that says "This index is being
+    # kept", whether or not another index shared its keys: about 105 of them per
+    # database on the databases the report was written from, none a finding.
+    # uq_ucs_code is the only index on its key. The table is compressed already
+    # because an index that still needs compression gets a COMPRESSION SCRIPT row
+    # and no KEPT row, which would hide the label and let this pass for nothing.
+    labelled = find_rows(rows, table_name="test_ic_uc_solo", index_name="uq_ucs_code",
+                         consolidation_rule="Unique Constraint Replacement")
+    assert_test("14-UC-Self", "14a: lone unique constraint NOT labelled a replacement (#903)",
+                len(labelled) == 0,
+                f"found {len(labelled)} rows labelled Unique Constraint Replacement (expected 0)")
+
+    # 14b: the constraint is still reported. Without this, 14a would also pass if
+    # the fixture had failed to build or the constraint had dropped out of the
+    # results altogether.
+    reported = find_rows(rows, table_name="test_ic_uc_solo", index_name="uq_ucs_code")
+    assert_test("14-UC-Self", "14b: the lone unique constraint is still reported (#903)",
+                len(reported) >= 1, f"found {len(reported)} rows for uq_ucs_code")
+
+    # 14c: the KEPT label that IS right still arrives. Two constraints with the
+    # same keys match EACH OTHER, which is what Rule 7.5b needs both of them to
+    # carry before it can drop the loser, so the label on the keeper cannot have
+    # depended on a constraint matching itself. Compressed for the reason in 14a.
+    keeper = find_rows(rows, table_name="test_ic_uc_pair", index_name="uq_ucp_keeper",
+                       consolidation_rule="Unique Constraint Replacement")
+    assert_test("14-UC-Self", "14c: duplicate unique constraint keeper is still KEPT, labelled (#903)",
+                len(keeper) == 1, f"found {len(keeper)} (expected 1)")
+
+    # 14d: and its twin is still dropped, pointing at the keeper
+    matches = find_rows(rows, table_name="test_ic_uc_pair", index_name="uq_ucp_zloser",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    target_ok = len(matches) == 1 and matches[0].get("target_index_name") == "uq_ucp_keeper"
+    assert_test("14-UC-Self", "14d: duplicate unique constraint loser still dropped (#903)",
+                target_ok, f"found {len(matches)} drops, target={matches[0].get('target_index_name') if matches else None}")
+
+    # ---- Group 15: Filtered-index finder, column names that overlap (issue #904) ----
+
+    finder = "FILTERED INDEXES NEEDING INCLUDED COLUMNS"
+
+    # 15a: THE one that matters. The filter on ix_fs_site names site_id, which is
+    # the key, so nothing is missing. The finder tested each column with a LIKE
+    # of the bare name between two wildcards, and id is a substring of [site_id],
+    # so it reported [id] as a column the index needed and then wrote it into the
+    # CREATE ... DROP_EXISTING script. Not a column the filter references at all.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_sub",
+                        index_name="ix_fs_site")
+    detail = ", ".join(m.get("missing_included_columns", "") for m in matches)
+    assert_test("15-Filter-Cols", "15a: filter naming only a key column reports nothing missing (#904)",
+                len(matches) == 0, f"found {len(matches)} findings, missing_included_columns={detail or '(none)'} (expected 0)")
+
+    # 15b: positive control. ix_fs_qty filters on qty, which the index does not
+    # carry, so this one IS a finding and must survive the fix.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_sub",
+                        index_name="ix_fs_qty")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    assert_test("15-Filter-Cols", "15b: filter column really missing from the index is still found (#904)",
+                len(matches) == 1 and missing == "[qty]",
+                f"found {len(matches)} findings, missing_included_columns={missing}")
+
+    # 15c: both at once. ix_fs_site_qty filters on site_id (the key) AND qty (not
+    # in the index): only qty may be reported, and only qty may reach the script.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_sub",
+                        index_name="ix_fs_site_qty")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    script = matches[0].get("create_index_script", "") if matches else ""
+    assert_test("15-Filter-Cols", "15c: only the genuinely missing column is reported and scripted (#904)",
+                len(matches) == 1 and missing == "[qty]" and "INCLUDE ([qty])" in script,
+                f"found {len(matches)} findings, missing_included_columns={missing}, "
+                f"INCLUDE ([qty]) in script={'INCLUDE ([qty])' in script}")
+
+    # 15d: the findings group 3's filtered indexes always produced are unchanged.
+    # status_code is genuinely absent from each of them and its name overlaps
+    # nothing, so matching on the bracketed name has to keep finding it.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filtered",
+                        index_name="ix_filt_a_s1")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    assert_test("15-Filter-Cols", "15d: group 3's filtered index still reports [status_code] (#904)",
+                len(matches) == 1 and missing == "[status_code]",
+                f"found {len(matches)} findings, missing_included_columns={missing}")
+
+    # ---- Group 16: Same Keys Different Order, Rule 8 (issue #908) ----
+
+    label = "Same Keys Different Order"
+
+    # 16a: THE one that matters. Rule 8 only checked that every key of the FIRST
+    # index is a key of the second, and each pair is visited once with the lower
+    # index name first. ix_ksn_a_abc (a,b,c) sorts ahead of ix_ksn_b_acbd
+    # (a,c,b,d), so it passed that test and the pair was labelled "same keys"
+    # although the second index has a key column (d) the first does not.
+    matches = find_rows(rows, table_name="test_ic_ks_narrow_first", consolidation_rule=label)
+    assert_test("16-Same-Keys", "16a: narrower index sorting first NOT labelled same keys (#908)",
+                len(matches) == 0, f"found {len(matches)} rows (expected 0)")
+
+    # 16b: the same two indexes with the names swapped, so the wide one sorts
+    # first. It already came back unlabelled, because its extra column failed the
+    # one-way test, so this passes on the old code: it is the other half of "the
+    # answer no longer depends on which index name sorts first".
+    matches = find_rows(rows, table_name="test_ic_ks_wide_first", consolidation_rule=label)
+    assert_test("16-Same-Keys", "16b: wider index sorting first NOT labelled same keys (#908)",
+                len(matches) == 0, f"found {len(matches)} rows (expected 0)")
+
+    # 16c: positive control, one name order. The same key SET, a different order
+    # after the first column: still flagged, one row, naming its partner.
+    matches = find_rows(rows, table_name="test_ic_ks_same_1", script_type="NEEDS REVIEW",
+                        consolidation_rule=label)
+    ok = (len(matches) == 1 and matches[0].get("index_name") == "ix_kss1_a_abc"
+          and matches[0].get("target_index_name") == "ix_kss1_b_acb")
+    assert_test("16-Same-Keys", "16c: same key set, different order is still flagged (#908)",
+                ok, f"found {len(matches)} rows, index={matches[0].get('index_name') if matches else None}, "
+                    f"target={matches[0].get('target_index_name') if matches else None}")
+
+    # 16d: positive control, the other name order. The result must not depend on
+    # which index of the pair has the name that sorts first.
+    matches = find_rows(rows, table_name="test_ic_ks_same_2", script_type="NEEDS REVIEW",
+                        consolidation_rule=label)
+    ok = (len(matches) == 1 and matches[0].get("index_name") == "ix_kss2_a_acb"
+          and matches[0].get("target_index_name") == "ix_kss2_b_abc")
+    assert_test("16-Same-Keys", "16d: same key set, different order is still flagged, names swapped (#908)",
+                ok, f"found {len(matches)} rows, index={matches[0].get('index_name') if matches else None}, "
+                    f"target={matches[0].get('target_index_name') if matches else None}")
+
     return results
 
 
@@ -457,7 +616,8 @@ def main():
         sys.exit(1)
 
     rows = parse_output(stdout)
-    print(f"Captured {len(rows)} output rows from sp_IndexCleanup")
+    findings = parse_findings(stdout)
+    print(f"Captured {len(rows)} output rows and {len(findings)} findings from sp_IndexCleanup")
     print()
 
     if len(rows) == 0:
@@ -465,7 +625,7 @@ def main():
         print("stderr:", stderr[:500] if stderr else "(empty)")
         sys.exit(1)
 
-    results = run_tests(rows)
+    results = run_tests(rows, findings)
 
     # Report
     passed = sum(1 for r in results if r["passed"])

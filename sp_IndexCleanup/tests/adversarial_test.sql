@@ -42,6 +42,13 @@ DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
 DROP TABLE IF EXISTS dbo.test_ic_fk_child;
 DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
+DROP TABLE IF EXISTS dbo.test_ic_uc_solo;
+DROP TABLE IF EXISTS dbo.test_ic_uc_pair;
+DROP TABLE IF EXISTS dbo.test_ic_filt_sub;
+DROP TABLE IF EXISTS dbo.test_ic_ks_narrow_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_wide_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_1;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_2;
 GO
 
 /* ============================================= */
@@ -144,6 +151,65 @@ CREATE TABLE dbo.test_ic_fk_child
     code integer NOT NULL
 );
 
+/* Group 14: a unique constraint with no other index on its key (issue #903) */
+CREATE TABLE dbo.test_ic_uc_solo
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
+/* Group 14: two unique constraints on the same key, the pair that really is a duplicate */
+CREATE TABLE dbo.test_ic_uc_pair
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
+/* Group 15: a column whose name is a substring of another's (issue #904) */
+CREATE TABLE dbo.test_ic_filt_sub
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    site_id integer NOT NULL,
+    qty integer NULL
+);
+
+/* Group 16: Same Keys Different Order, which needs one table per index pair (issue #908) */
+CREATE TABLE dbo.test_ic_ks_narrow_first
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_ks_wide_first
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_ks_same_1
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_ks_same_2
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
 CREATE TABLE dbo.test_ic_interact
 (
     id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
@@ -230,6 +296,37 @@ SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns
 
 INSERT INTO dbo.test_ic_fk_child (code)
 SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+/* ROW_NUMBER and not a random value: the unique constraints below have to be creatable, see the note on test_ic_interact */
+INSERT INTO dbo.test_ic_uc_solo (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_uc_pair (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_filt_sub (site_id, qty)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 10, ABS(CHECKSUM(NEWID())) % 20
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_narrow_first (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_wide_first (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_same_1 (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_same_2 (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
 
 INSERT INTO dbo.test_ic_uc_dup (col_a, col_b, col_c)
 SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
@@ -336,6 +433,51 @@ ALTER TABLE dbo.test_ic_fk_child ADD CONSTRAINT fk_ic_child_code
     FOREIGN KEY (code) REFERENCES dbo.test_ic_fk_parent (code);
 CREATE UNIQUE INDEX ux_fkp_a_code ON dbo.test_ic_fk_parent (code);
 
+/* Group 14: A unique constraint with no other index on its key (issue #903)
+   - Rule 7 used to match every unique constraint against ITSELF, so each one
+     came back KEPT under 'Unique Constraint Replacement' with nothing to replace
+   - nothing else on this table has the key (code), so there is no replacement
+   - the table is compressed already, the way the issue's repro does it. An index
+     that still needs compression gets a COMPRESSION SCRIPT row and no KEPT row,
+     so the label would never reach the results and the test would pass for nothing
+   - uc_pair is the control: two constraints on one key ARE duplicates of each
+     other, so the keeper keeps its label and the loser is dropped */
+ALTER TABLE dbo.test_ic_uc_solo ADD CONSTRAINT uq_ucs_code UNIQUE (code);
+ALTER INDEX ALL ON dbo.test_ic_uc_solo REBUILD WITH (DATA_COMPRESSION = PAGE);
+ALTER TABLE dbo.test_ic_uc_pair ADD CONSTRAINT uq_ucp_keeper UNIQUE (code);
+ALTER TABLE dbo.test_ic_uc_pair ADD CONSTRAINT uq_ucp_zloser UNIQUE (code);
+ALTER INDEX ALL ON dbo.test_ic_uc_pair REBUILD WITH (DATA_COMPRESSION = PAGE);
+
+/* Group 15: Filtered indexes on a table whose column names overlap (issue #904)
+   - id is a substring of site_id, and the finder used to match column names
+     with LIKE '%' + name + '%', so a filter naming site_id also "needed" id
+   - ix_fs_site: the filter names site_id, which is the key. Nothing is missing.
+   - ix_fs_qty: the filter names qty and the index does not carry it. A real finding.
+   - ix_fs_site_qty: both. Only qty is missing, and only qty may be reported. */
+CREATE INDEX ix_fs_site ON dbo.test_ic_filt_sub (site_id) INCLUDE (qty) WHERE site_id = 1;
+CREATE INDEX ix_fs_qty ON dbo.test_ic_filt_sub (site_id) WHERE qty = 5;
+CREATE INDEX ix_fs_site_qty ON dbo.test_ic_filt_sub (site_id) WHERE site_id = 1 AND qty > 0;
+
+/* Group 16: Same Keys Different Order, Rule 8 (issue #908)
+   Rule 8 only checked that every key of the FIRST index is a key of the second,
+   and visits each pair once with the lower index name first, so the answer
+   depended on the names:
+   - narrow_first: (a,b,c) sorts ahead of (a,c,b,d), passed the one-way test and
+     was labelled "same keys" although the other index has an extra key column
+   - wide_first: the same two indexes with the names swapped. The wide index
+     sorts first, its extra column failed the one-way test, nothing was flagged
+   Neither pair has the same SET of keys, so neither gets the label.
+   - same_1 and same_2: positive controls. Exactly the same key set, a different
+     order after the first column, once with each name order. Both are flagged. */
+CREATE INDEX ix_ksn_a_abc ON dbo.test_ic_ks_narrow_first (col_a, col_b, col_c);
+CREATE INDEX ix_ksn_b_acbd ON dbo.test_ic_ks_narrow_first (col_a, col_c, col_b, col_d);
+CREATE INDEX ix_ksw_a_acbd ON dbo.test_ic_ks_wide_first (col_a, col_c, col_b, col_d);
+CREATE INDEX ix_ksw_b_abc ON dbo.test_ic_ks_wide_first (col_a, col_b, col_c);
+CREATE INDEX ix_kss1_a_abc ON dbo.test_ic_ks_same_1 (col_a, col_b, col_c);
+CREATE INDEX ix_kss1_b_acb ON dbo.test_ic_ks_same_1 (col_a, col_c, col_b);
+CREATE INDEX ix_kss2_a_acb ON dbo.test_ic_ks_same_2 (col_a, col_c, col_b);
+CREATE INDEX ix_kss2_b_abc ON dbo.test_ic_ks_same_2 (col_a, col_b, col_c);
+
 /* Group 12: Rule interactions */
 /* 12a: Multi-level subset: A ⊂ AB ⊂ ABC */
 CREATE INDEX ix_int_a ON dbo.test_ic_interact (col_a);
@@ -423,6 +565,23 @@ BEGIN
     /* Group 13: FK-backed unique index */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_z_code) WHERE code = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_a_code) WHERE code = 1;
+    /* Group 14: unique constraint with no sibling */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_solo WITH (INDEX = uq_ucs_code) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_pair WITH (INDEX = uq_ucp_keeper) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_pair WITH (INDEX = uq_ucp_zloser) WHERE code = 1;
+    /* Group 15: filtered indexes, overlapping column names */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_filt_sub WITH (INDEX = ix_fs_site) WHERE site_id = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_filt_sub WITH (INDEX = ix_fs_qty) WHERE site_id = 1 AND qty = 5;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_filt_sub WITH (INDEX = ix_fs_site_qty) WHERE site_id = 1 AND qty > 0;
+    /* Group 16: Same Keys Different Order */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_narrow_first WITH (INDEX = ix_ksn_a_abc) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_narrow_first WITH (INDEX = ix_ksn_b_acbd) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_wide_first WITH (INDEX = ix_ksw_a_acbd) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_wide_first WITH (INDEX = ix_ksw_b_abc) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_1 WITH (INDEX = ix_kss1_a_abc) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_1 WITH (INDEX = ix_kss1_b_acb) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_2 WITH (INDEX = ix_kss2_a_acb) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_2 WITH (INDEX = ix_kss2_b_abc) WHERE col_a = 1;
     /* Group 12: Interactions */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_a) WHERE col_a = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_ab) WHERE col_a = 1;
@@ -468,4 +627,11 @@ DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
 DROP TABLE IF EXISTS dbo.test_ic_fk_child;
 DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
+DROP TABLE IF EXISTS dbo.test_ic_uc_solo;
+DROP TABLE IF EXISTS dbo.test_ic_uc_pair;
+DROP TABLE IF EXISTS dbo.test_ic_filt_sub;
+DROP TABLE IF EXISTS dbo.test_ic_ks_narrow_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_wide_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_1;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_2;
 GO

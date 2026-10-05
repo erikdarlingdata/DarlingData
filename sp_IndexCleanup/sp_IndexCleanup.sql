@@ -392,6 +392,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* Availability group metadata is only worth asking for where an AG can exist, and never on Azure SQL DB */
+        @is_hadr_enabled bit =
+            CASE
+                WHEN CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('IsHadrEnabled')
+                     ) = 1
+                AND  CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('EngineEdition')
+                     ) <> 5
+                THEN 1
+                ELSE 0
+            END,
+        /* Why an availability group secondary was skipped, and what to do about it */
+        @read_intent_reason nvarchar(100) = N'Read-intent-only secondary, reconnect with ApplicationIntent=ReadOnly',
+        @non_readable_reason nvarchar(100) = N'Non-readable secondary, use the primary or a readable secondary',
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -1062,6 +1081,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         reason nvarchar(100) NOT NULL
     );
 
+    /*
+    Databases on this replica that are availability group secondaries the current
+    session cannot open, with how the local replica treats connections to its
+    secondary role (READ_ONLY or NO). Empty unless the lookup below finds some.
+    */
+    CREATE TABLE
+        #ag_secondary_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
+        secondary_role_allow_connections nvarchar(60) NOT NULL
+    );
+
     CREATE TABLE
         #computed_columns_analysis
     (
@@ -1326,6 +1357,56 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RETURN;
     END;
 
+    /*
+    A database on an availability group secondary reads as "no access" to
+    HAS_DBACCESS when the session has not asked for read intent, which is not a
+    permissions problem and must not be reported as one. Find the databases on
+    this replica that are secondaries this session cannot open, and whether the
+    local replica takes read-intent connections to its secondary role (READ_ONLY)
+    or no direct connections at all (NO), so the messages below can say which.
+
+    Dynamic SQL, so the procedure still compiles where these views and
+    functions do not exist. TRY/CATCH, so a permission error or anything else
+    that goes wrong learns nothing and leaves the generic no-access message.
+    */
+    IF @is_hadr_enabled = 1
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                d.name,
+                ar.secondary_role_allow_connections_desc
+            FROM sys.databases AS d
+            JOIN sys.availability_replicas AS ar
+              ON ar.replica_id = d.replica_id
+            WHERE d.replica_id IS NOT NULL
+            AND   ISNULL(HAS_DBACCESS(d.name), 0) = 0
+            AND   sys.fn_hadr_is_primary_replica(d.name) = 0
+            AND   ar.secondary_role_allow_connections_desc IN (N''READ_ONLY'', N''NO'')
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #ag_secondary_databases
+            WITH
+                (TABLOCK)
+            (
+                database_name,
+                secondary_role_allow_connections
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Availability group lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
     /* Build the #databases table */
     IF @get_all_databases = 0
     BEGIN
@@ -1393,9 +1474,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND ISNULL(HAS_DBACCESS(@database_name), 0) = 0
             BEGIN
                 SET @error_msg =
-                    N'The current login has no access to database ' +
-                    QUOTENAME(@database_name) +
-                    N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;';
+                    CASE
+                        /* An availability group secondary taking read-intent connections only: the login is fine, the session is not */
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #ag_secondary_databases AS ag
+                                 WHERE ag.database_name = @database_name
+                                 AND   ag.secondary_role_allow_connections = N'READ_ONLY'
+                             )
+                        THEN N'Database ' +
+                             QUOTENAME(@database_name) +
+                             N' is on an availability group secondary that only accepts read-intent connections, and this session did not ask for read intent. Reconnect with ApplicationIntent=ReadOnly (sqlcmd -K ReadOnly, or Export-SqlResults -ReadOnlyIntent) and run this again.'
+                        /* An availability group secondary that does not accept connections at all */
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #ag_secondary_databases AS ag
+                                 WHERE ag.database_name = @database_name
+                                 AND   ag.secondary_role_allow_connections = N'NO'
+                             )
+                        THEN N'Database ' +
+                             QUOTENAME(@database_name) +
+                             N' is on an availability group secondary that does not allow connections to its databases. Run this against the primary replica or a readable secondary.'
+                        ELSE N'The current login has no access to database ' +
+                             QUOTENAME(@database_name) +
+                             N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;'
+                    END;
 
                 RAISERROR(@error_msg, 16, 1);
                 RETURN;
@@ -1499,8 +1606,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             d.name,
-            reason = N'No database access for current login'
+            reason =
+                CASE
+                    /* Availability group secondaries say what the session needs, not what the login lacks */
+                    WHEN ag.secondary_role_allow_connections = N'READ_ONLY'
+                    THEN @read_intent_reason
+                    WHEN ag.secondary_role_allow_connections = N'NO'
+                    THEN @non_readable_reason
+                    ELSE N'No database access for current login'
+                END
         FROM sys.databases AS d
+        LEFT JOIN #ag_secondary_databases AS ag
+          ON ag.database_name = d.name
         WHERE d.database_id > 4
         AND   d.state = 0
         AND   d.is_in_standby = 0
@@ -1558,6 +1675,50 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET @error_msg = N'';
             END;
         END;
+
+        /*
+        The same warning for availability group secondaries this session cannot
+        read. They carry their own skip reasons, so the warning above, which
+        tells the reader to grant permissions, no longer names them.
+        */
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #requested_but_skipped_databases AS rbs
+               WHERE rbs.reason IN (@read_intent_reason, @non_readable_reason)
+           )
+        BEGIN
+            SET @error_msg = N'';
+
+            SELECT
+                @error_msg =
+                    @error_msg +
+                    rbs.database_name +
+                    N' (' +
+                    rbs.reason +
+                    N'), '
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.reason IN (@read_intent_reason, @non_readable_reason)
+            ORDER BY
+                rbs.database_name
+            OPTION(RECOMPILE);
+
+            IF DATALENGTH(@error_msg) > 0
+            BEGIN
+                SET @error_msg = LEFT(@error_msg, DATALENGTH(@error_msg) / 2 - 2);
+
+                SET @error_msg =
+                    N'Skipping these availability group secondaries - this session cannot read them: ' +
+                    @error_msg +
+                    N'.';
+
+                RAISERROR(@error_msg, 10, 1) WITH NOWAIT;
+
+                /* Reset for subsequent uses below. */
+                SET @error_msg = N'';
+            END;
+        END;
     END;
 
     /* Check for empty database list */
@@ -1607,12 +1768,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN d.database_id <= 4
                     THEN 'System database'
                     WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    AND  ag.secondary_role_allow_connections = N'READ_ONLY'
+                    THEN @read_intent_reason
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    AND  ag.secondary_role_allow_connections = N'NO'
+                    THEN @non_readable_reason
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
                     THEN 'No database access for current login'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
         LEFT JOIN sys.databases AS d
           ON id.database_name = d.name
+        LEFT JOIN #ag_secondary_databases AS ag
+          ON ag.database_name = d.name
         WHERE NOT EXISTS
               (
                   SELECT
@@ -3381,7 +3550,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
     END;
 
-    /* Analyze filtered indexes to identify columns used in filters that should be included */
+    /*
+    Analyze filtered indexes to identify columns used in filters that should be included.
+
+    A column is referenced by the filter when its bracketed name is in the
+    filter text, because filter_definition always stores column names in
+    brackets: ([SiteID]=(1)). Matching the bare name as a substring found [ID]
+    inside [SiteID] and recommended a column the filter never mentions. CHARINDEX
+    and not LIKE, since in a LIKE pattern the brackets are a character class.
+    */
     SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -3408,7 +3585,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 QUOTENAME(c.name)
                             FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                             WHERE c.object_id = ia.object_id
-                            AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
+                            AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
                             AND   NOT EXISTS
                             (
                                 SELECT
@@ -3439,7 +3616,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         1/0
                     FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                     WHERE c.object_id = ia.object_id
-                    AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
+                    AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
                     AND   NOT EXISTS
                     (
                         SELECT
@@ -4323,6 +4500,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_details AS id2
         WHERE id2.scope_hash = ia1.scope_hash
         AND   id2.is_unique_constraint = 1
+        /*
+        The constraint has to be a different index from ia1. ia1 can itself be
+        a unique constraint, and without this it matched its own index: the
+        two key sets are identical by definition, so every unique constraint in
+        the database qualified, and was reported KEPT as a replacement when no
+        other index shared its keys. Two constraints with the same keys still
+        match each other, which is what Rule 7.5b needs.
+        */
+        AND   id2.index_hash <> ia1.index_hash
         AND NOT EXISTS
         (
             /* Verify key columns match between index and unique constraint.
@@ -4905,10 +5091,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id2.index_hash = ia2.index_hash
             AND   id1.key_ordinal = 1
         )
-        /* Same set of key columns but in different order */
+        /*
+        Same set of key columns but in different order.
+
+        Both directions of EXCEPT have to come back empty for the two sets to be
+        identical. One direction only proves that the first index's keys are
+        all in the second, so an index with a subset of the other's keys passed
+        whenever its name happened to sort first (pairs are visited once, lower
+        name first) and was skipped whenever it sorted second: the label
+        depended on the index names, and went to pairs whose key columns differ.
+        */
         AND NOT EXISTS
         (
-            /* Make sure the sets of key columns are exactly the same */
+            /* Every key column of the first index is a key column of the second */
             SELECT
                 id1.column_name
             FROM #index_details AS id1
@@ -4924,6 +5119,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE id2.index_hash = ia2.index_hash
             AND   id2.is_included_column = 0
             AND   id2.key_ordinal > 0
+        )
+        AND NOT EXISTS
+        (
+            /* And every key column of the second index is a key column of the first */
+            SELECT
+                id2.column_name
+            FROM #index_details AS id2
+            WHERE id2.index_hash = ia2.index_hash
+            AND   id2.is_included_column = 0
+            AND   id2.key_ordinal > 0
+
+            EXCEPT
+
+            SELECT
+                id1.column_name
+            FROM #index_details AS id1
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id1.is_included_column = 0
+            AND   id1.key_ordinal > 0
         )
         /* But the order is different (excluding the first column) */
         AND EXISTS
