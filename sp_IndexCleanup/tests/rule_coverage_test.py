@@ -140,10 +140,23 @@ assertion fails or the fixture itself does not build.
     Every run in these groups passes @dedupe_only = 1, so they test the same thing
     at any server uptime.
 
+(h) Key duplicate winners (Group L).
+
+    Rule 5 gives each index the action and target of one partner, whichever row
+    its join applied, so which indexes reach the multi-winner step depends on the
+    plan, and the plan depends on creation order and on what else is in the
+    database. That step picked by include length and name without looking at
+    is_unique, so a non-unique duplicate could replace the unique index, and a
+    loser could be left pointing at another loser, whose includes then went
+    nowhere. Each shape is built in every creation order, every assertion must
+    hold in all of them, and the scripts are run (rolled back) to prove a
+    duplicate key still fails.
+
 Usage:
     python rule_coverage_test.py [--server SQL2022] [--password "L!nt0044"]
 """
 
+import itertools
 import os
 import re
 import shlex
@@ -1089,11 +1102,27 @@ GO
 #   ic_sg_p3/c3    Group K: the key is backed by the index that LOSES on name.
 #   ic_sg_p4/c4    Group K: the key is backed by the index that WINS on name.
 #   ic_sg_p5/c5a/b Group K: both indexes back a key.
+#   ic_sg_uk1-6    Group L: unique ux_ukN INCLUDE (x) with non-unique ix_a_ukN
+#                  INCLUDE (x, y, z) and ix_b_ukN INCLUDE (y), one table per
+#                  creation order.
+#   ic_sg_uk7      Group L: two unique indexes and a non-unique one. The wider
+#                  unique index wins, and its name sorts last.
+#   ic_sg_ch1-6    Group L: unique ux_chN INCLUDE (x) with non-unique ix_m_chN
+#                  INCLUDE (y) and ix_s_chN INCLUDE (z), one table per creation
+#                  order. A seek gives ix_s_chN the usage term, so Rule 5
+#                  disables ix_m_chN in its favor whenever it pairs the two.
+L_UK_ORDERS = list(itertools.permutations("uab"))
+L_CH_ORDERS = list(itertools.permutations("ums"))
+L_TABLES = tuple(
+    ["ic_sg_uk%d" % n for n in range(1, len(L_UK_ORDERS) + 2)]
+    + ["ic_sg_ch%d" % n for n in range(1, len(L_CH_ORDERS) + 1)]
+)
+
 SCRIPTGEN_TABLES = (
     "ic_sg_c3", "ic_sg_c4", "ic_sg_c5a", "ic_sg_c5b", "ic_sg_p3", "ic_sg_p4",
     "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_sup",
     "ic_sg_uqnoop", "ic_sg_real",
-)
+) + L_TABLES
 
 SCRIPTGEN_CLEANUP_SQL = "SET NOCOUNT ON;\n" + "".join(
     "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES)
@@ -1109,6 +1138,49 @@ def _sg_rows(table, columns, values):
         "OPTION(MAXDOP 1);\n"
         % (table, columns, ", ".join(v.replace("RN", rn) for v in values))
     )
+
+
+def _group_l_setup_sql():
+    """Group L's tables, built in code because each shape comes in every
+    creation order. Table N of a shape always has the Nth order of
+    L_UK_ORDERS or L_CH_ORDERS."""
+    indexes = {
+        "uk": {
+            "u": "CREATE UNIQUE INDEX ux_uk%(n)d ON dbo.ic_sg_uk%(n)d (k) INCLUDE (x);",
+            "a": "CREATE INDEX ix_a_uk%(n)d ON dbo.ic_sg_uk%(n)d (k) INCLUDE (x, y, z);",
+            "b": "CREATE INDEX ix_b_uk%(n)d ON dbo.ic_sg_uk%(n)d (k) INCLUDE (y);",
+        },
+        "ch": {
+            "u": "CREATE UNIQUE INDEX ux_ch%(n)d ON dbo.ic_sg_ch%(n)d (k) INCLUDE (x);",
+            "m": "CREATE INDEX ix_m_ch%(n)d ON dbo.ic_sg_ch%(n)d (k) INCLUDE (y);",
+            "s": "CREATE INDEX ix_s_ch%(n)d ON dbo.ic_sg_ch%(n)d (k) INCLUDE (z);",
+        },
+    }
+
+    def table(name):
+        return (
+            "CREATE TABLE dbo.%s (id integer NOT NULL CONSTRAINT pk_%s PRIMARY KEY, "
+            "k integer NOT NULL, x integer NULL, y integer NULL, z integer NULL);\n"
+            % (name, name)
+        ) + _sg_rows(name, "id, k, x, y, z", ["RN", "RN", "1", "2", "3"])
+
+    sql = ""
+    for shape, orders in (("uk", L_UK_ORDERS), ("ch", L_CH_ORDERS)):
+        for n, order in enumerate(orders, start=1):
+            sql += table("ic_sg_%s%d" % (shape, n))
+            sql += "\n".join(indexes[shape][o] % {"n": n} for o in order) + "\nGO\n"
+    sql += table("ic_sg_uk7") + (
+        "CREATE UNIQUE INDEX ux_a_uk7 ON dbo.ic_sg_uk7 (k) INCLUDE (x);\n"
+        "CREATE UNIQUE INDEX ux_b_uk7 ON dbo.ic_sg_uk7 (k) INCLUDE (x, y);\n"
+        "CREATE INDEX ix_uk7 ON dbo.ic_sg_uk7 (k) INCLUDE (x, y, z);\nGO\n"
+    )
+    # The seeks that give each ix_s_chN its usage term.
+    sql += "".join(
+        "SELECT s.z FROM dbo.ic_sg_ch%d AS s WITH (INDEX (ix_s_ch%d)) WHERE s.k = 1;\n"
+        % (n, n)
+        for n in range(1, len(L_CH_ORDERS) + 1)
+    ) + "GO\n"
+    return sql
 
 
 SCRIPTGEN_SETUP_SQL = SCRIPTGEN_CLEANUP_SQL + "GO\n" + """
@@ -1174,7 +1246,7 @@ CREATE TABLE dbo.ic_sg_c5b (cid integer NOT NULL CONSTRAINT pk_ic_sg_c5b PRIMARY
 ALTER INDEX ux_z5_code ON dbo.ic_sg_p5 REBUILD;
 ALTER TABLE dbo.ic_sg_c5a WITH CHECK CHECK CONSTRAINT fk_ic_sg_c5a;
 GO
-"""
+""" + _group_l_setup_sql()
 
 # Reads back what a rebuilt index kept, then inserts a duplicate key. The 1000000
 # range is above the fixture's rows, so only the two new rows can collide.
@@ -1192,6 +1264,18 @@ BEGIN TRY
 END TRY
 BEGIN CATCH
     SELECT marker = N'DUP', outcome = N'error', n = ERROR_NUMBER();
+END CATCH;
+"""
+
+# Group L's duplicate insert, one per table, each with its own marker. Same key
+# range as above, so only the two new rows can collide.
+DUP_PROBE_SQL = """
+BEGIN TRY
+    INSERT dbo.%(t)s (id, k) VALUES (1000001, 1000000), (1000002, 1000000);
+    SELECT marker = N'%(m)s', outcome = N'inserted', n = COUNT_BIG(*) FROM dbo.%(t)s WHERE k = 1000000;
+END TRY
+BEGIN CATCH
+    SELECT marker = N'%(m)s', outcome = N'error', n = ERROR_NUMBER();
 END CATCH;
 """
 
@@ -2220,6 +2304,104 @@ def run_tests(server, password, uptime_days):
     assert_test("K-ForeignKeyWinner", "K3: neither index is disabled or merged",
                 len(both) == 0, "found %s" % [(r["index_name"], r["script_type"]) for r in both])
 
+    # ---- Group L: a unique index keeps its uniqueness among key duplicates ----
+    #
+    # See (h) in the module docstring. Each table's outcome is reduced to the
+    # indexes it disables (with the index each points at), its MERGE SCRIPT rows
+    # and its scripts, and every assertion names the creation orders it failed in.
+    def outcome(table):
+        rows, _ = run_proc(server, password, table, extra=sg)
+        disables = find_rows(rows, script_type="DISABLE SCRIPT")
+        merges = find_rows(rows, script_type="MERGE SCRIPT")
+        return {
+            "disabled": {r["index_name"]: r.get("target_index_name") for r in disables},
+            "merges": {r["index_name"]: r for r in merges},
+            "scripts": [r["script"] for r in merges + disables],
+        }
+
+    uk = {n: outcome("ic_sg_uk%d" % n) for n in range(1, len(L_UK_ORDERS) + 2)}
+    ch = {n: outcome("ic_sg_ch%d" % n) for n in range(1, len(L_CH_ORDERS) + 1)}
+
+    def show(shape, n, result):
+        return "%s order %s: disabled %s, merged %s" % (
+            shape, "".join(dict(uk=L_UK_ORDERS, ch=L_CH_ORDERS)[shape][n - 1]),
+            result["disabled"], sorted(result["merges"]))
+
+    # L1: the #918 shape. The unique index has the shortest include list and the
+    # name that sorts last, so a non-unique index that reaches the multi-winner
+    # step beats it on both of the old tie-breakers.
+    lost = [show("uk", n, uk[n]) for n in range(1, len(L_UK_ORDERS) + 1)
+            if "ux_uk%d" % n in uk[n]["disabled"]]
+    assert_test("L-KeyDuplicateWinner",
+                "L1: in all six creation orders the unique index is not disabled",
+                len(lost) == 0, "; ".join(lost))
+    wrong = [show("uk", n, uk[n]) for n in range(1, len(L_UK_ORDERS) + 1)
+             if uk[n]["disabled"] != {"ix_a_uk%d" % n: "ux_uk%d" % n, "ix_b_uk%d" % n: "ux_uk%d" % n}
+             or sorted(uk[n]["merges"]) != ["ux_uk%d" % n]]
+    assert_test("L-KeyDuplicateWinner",
+                "L1: in all six orders the unique index gets the MERGE SCRIPT and both duplicates point at it",
+                len(wrong) == 0, "; ".join(wrong))
+
+    # Run every L1 script, then a duplicate insert into each table, rolled back.
+    scripts = [s for n in range(1, len(L_UK_ORDERS) + 1) for s in uk[n]["scripts"]]
+    out, errs = exec_in_rolled_back_transaction(
+        server, password, scripts,
+        "".join(DUP_PROBE_SQL % {"t": "ic_sg_uk%d" % n, "m": "DUP%d" % n}
+                for n in range(1, len(L_UK_ORDERS) + 1)))
+    dups = {n: probe_fields(out, "DUP%d" % n) for n in range(1, len(L_UK_ORDERS) + 1)}
+    allowed = ["order %s: %s" % ("".join(L_UK_ORDERS[n - 1]), dups[n])
+               for n in dups if dups[n] != ["error", "2601"]]
+    assert_test("L-KeyDuplicateWinner",
+                "L1: run, the scripts leave k unique: a duplicate insert fails with 2601 in all six tables",
+                len(allowed) == 0 and not errs, "%s errors=%s" % ("; ".join(allowed), errs))
+
+    # L2: two unique indexes. The wider one wins, and the index Rule 5 pointed at
+    # the narrower one is moved to the winner rather than left on a loser.
+    disabled = uk[len(L_UK_ORDERS) + 1]["disabled"]
+    merges = uk[len(L_UK_ORDERS) + 1]["merges"]
+    assert_test("L-KeyDuplicateWinner",
+                "L2: with two unique indexes the wider one wins and both others point at it",
+                disabled == {"ix_uk7": "ux_b_uk7", "ux_a_uk7": "ux_b_uk7"}
+                and sorted(merges) == ["ux_b_uk7"],
+                "disabled %s, merged %s" % (disabled, sorted(merges)))
+    sup = merges["ux_b_uk7"].get("superseded_info") if "ux_b_uk7" in merges else None
+    assert_test("L-KeyDuplicateWinner",
+                "L2: the winner's Supersedes text names both losers and not itself",
+                sup == "Supersedes ix_uk7, ux_a_uk7", "found %r" % sup)
+
+    # L3: the usage-skewed shape. When Rule 5 pointed ix_m_chN at ix_s_chN and
+    # ix_s_chN at the unique index, the single-winner merge found only ix_s_chN
+    # and ix_m_chN's include was merged into nothing while it was still disabled.
+    short = []
+    for n in range(1, len(L_CH_ORDERS) + 1):
+        winner = ch[n]["merges"].get("ux_ch%d" % n)
+        if "ux_ch%d" % n in ch[n]["disabled"] or winner is None \
+                or "INCLUDE ([x], [y], [z])" not in winner["script"]:
+            short.append(show("ch", n, ch[n]) + (
+                " (%s)" % winner["script"] if winner else ""))
+    assert_test("L-KeyDuplicateWinner",
+                "L3: in all six orders the unique index survives and includes every duplicate's columns",
+                len(short) == 0, "; ".join(short))
+    wrong = [show("ch", n, ch[n]) for n in range(1, len(L_CH_ORDERS) + 1)
+             if ch[n]["disabled"] != {"ix_m_ch%d" % n: "ux_ch%d" % n, "ix_s_ch%d" % n: "ux_ch%d" % n}]
+    assert_test("L-KeyDuplicateWinner",
+                "L3: in all six orders both duplicates point at the unique index",
+                len(wrong) == 0, "; ".join(wrong))
+
+    # Every winner in every Group L table names exactly the indexes that point at it.
+    texts = []
+    for shape, results_by_n in (("uk", uk), ("ch", ch)):
+        for n, result in results_by_n.items():
+            for name, row in result["merges"].items():
+                want = "Supersedes " + ", ".join(
+                    sorted(i for i, t in result["disabled"].items() if t == name))
+                if row.get("superseded_info") != want:
+                    texts.append("%s%d %s: %r, expected %r" % (
+                        shape, n, name, row.get("superseded_info"), want))
+    assert_test("L-KeyDuplicateWinner",
+                "L4: each winner's Supersedes text names exactly the indexes that point at it",
+                len(texts) == 0, "; ".join(texts))
+
     return results
 
 
@@ -2317,12 +2499,12 @@ def main():
             print("would pass for the wrong reason.")
             sys.exit(1)
 
-        # Groups I, J and K: script-generation fixtures in the Crap database.
+        # Groups I to L: script-generation fixtures in the Crap database.
         stdout, stderr = run_sql_script(server, password, SCRIPTGEN_SETUP_SQL)
         errors = sql_errors(stdout, stderr)
 
         if errors:
-            print("ERROR: SQL errors during Group I/J/K fixture setup:")
+            print("ERROR: SQL errors during Group I-L fixture setup:")
             for e in errors:
                 print("  " + e)
             print()

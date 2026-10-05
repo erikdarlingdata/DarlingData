@@ -950,7 +950,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         base_key_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
         winning_index_name sysname NULL,
-        index_list nvarchar(max) NULL,
         /* Hash columns for optimized matching */
         scope_hash AS
             CONVERT
@@ -5305,8 +5304,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         base_key_columns,
         filter_definition,
-        winning_index_name,
-        index_list
+        winning_index_name
     )
     SELECT
         ia.database_id,
@@ -5316,7 +5314,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name = MAX(ia.table_name),
         base_key_columns = ia.key_columns,
         filter_definition = ISNULL(ia.filter_definition, N''),
-        /* Choose the index with most included columns as the winner (or first alphabetically if tied) */
+        /* Choose a unique index first, then the one with the most included columns, then the first alphabetically */
         winning_index_name =
             (
                 SELECT TOP (1)
@@ -5327,38 +5325,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   candidate.action = N'MERGE INCLUDES'
                 AND   candidate.consolidation_rule = N'Key Duplicate'
                 ORDER BY
+                    /*
+                    A unique index first. Rule 5 leaves more than one candidate
+                    when an index's arbitrary partner was not the unique one, and
+                    disabling the unique index for a non-unique duplicate drops
+                    the uniqueness with nothing in the output to say so (#918)
+                    */
+                    candidate.is_unique DESC,
                     /* Then prefer indexes with more included columns (by length as a proxy) */
                     LEN(ISNULL(candidate.included_columns, '')) DESC,
                     /* Then alphabetically for stability */
                     candidate.index_name
-            ),
-        /* Build a list of other indexes in this group */
-        index_list =
-            STUFF
-            (
-              (
-                SELECT
-                    N', ' +
-                    inner_ia.index_name
-                FROM #index_analysis AS inner_ia
-                WHERE inner_ia.scope_hash = ia.scope_hash
-                  AND inner_ia.key_filter_hash = ia.key_filter_hash
-                  AND inner_ia.action = N'MERGE INCLUDES'
-                  AND inner_ia.consolidation_rule = N'Key Duplicate'
-                GROUP BY
-                    inner_ia.index_name,
-                    inner_ia.scope_hash,
-                    inner_ia.key_filter_hash
-                ORDER BY
-                    inner_ia.index_name
-                FOR
-                    XML
-                    PATH(''),
-                    TYPE
-              ).value('.', 'nvarchar(max)'),
-              1,
-              2,
-              ''
             )
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
@@ -5397,22 +5374,92 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
-    /* Update the winning index's superseded_by to list all other indexes */
+    /*
+    Point every key duplicate loser at its group's winner.
+
+    Rule 5 updates each index through a join to all of its duplicates, so each
+    index takes its action and its target from one partner, whichever row the
+    join applied. A loser can therefore point at an index that is itself being
+    disabled: a partner Rule 5 disabled in favor of a third index, or a
+    candidate the statement above just disabled. The single-winner merge below
+    and the unwind after the foreign key guard both find a winner's losers by
+    target_index_name, so a loser pointing at another loser could have its
+    includes merged into no index, and the report named an index that is going
+    away as its replacement.
+
+    After the statement above, each group holds one MERGE INCLUDES row, its
+    winner. Only a loser whose target is another key duplicate loser moves, so
+    a Rule 7.6 duplicate that points at its MAKE UNIQUE winner stays put.
+    */
     UPDATE
         ia
     SET
-        ia.superseded_by = N'Supersedes ' +
-        REPLACE
-        (
-            kdd.index_list,
-            ia.index_name + N', ',
-            N''
-        ) /* Remove self from list if present */
+        ia.target_index_name = winner.index_name
     FROM #index_analysis AS ia
-    JOIN #key_duplicate_dedupe AS kdd
-      ON  ia.scope_hash = kdd.scope_hash
-      AND ia.key_filter_hash = kdd.key_filter_hash
-    WHERE ia.index_name = kdd.winning_index_name
+    JOIN #index_analysis AS target_loser
+      ON  target_loser.scope_hash = ia.scope_hash
+      AND target_loser.index_name = ia.target_index_name
+    JOIN #index_analysis AS winner
+      ON  winner.scope_hash = ia.scope_hash
+      AND winner.key_filter_hash = ia.key_filter_hash
+    WHERE ia.action = N'DISABLE'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   target_loser.action = N'DISABLE'
+    AND   target_loser.consolidation_rule = N'Key Duplicate'
+    AND   winner.action = N'MERGE INCLUDES'
+    AND   winner.consolidation_rule = N'Key Duplicate'
+    AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    /*
+    Write each winner's "Supersedes <index>" text from the losers that now
+    point at it, so it names every index the winner replaces and never the
+    winner itself. Editing a list of the group's candidates with REPLACE left
+    the winner in its own list when its name sorted last, and Rule 5's text
+    names only the one partner each index was paired with.
+
+    Built from #index_analysis rows rather than by editing text, like the
+    unwind after the foreign key guard, so a name that contains another
+    index's name cannot be cut in the wrong place.
+    */
+    UPDATE
+        ia
+    SET
+        ia.superseded_by =
+            N'Supersedes ' +
+            sp.loser_part
+    FROM #index_analysis AS ia
+    CROSS APPLY
+    (
+        SELECT
+            loser_part =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_loser.index_name
+                        FROM #index_analysis AS ia_loser
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.key_filter_hash = ia.key_filter_hash
+                        AND   ia_loser.action = N'DISABLE'
+                        AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                        AND   ia_loser.target_index_name = ia.index_name
+                        ORDER BY
+                            ia_loser.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS sp
+    WHERE ia.action = N'MERGE INCLUDES'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   sp.loser_part IS NOT NULL
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
