@@ -198,10 +198,13 @@ def run_tests(rows, findings=()):
     assert_test("1-UC", "1d: NC subset of unique index flagged DISABLE",
                 len(matches) == 1, f"found {len(matches)}")
 
-    # 1d: Unique index merge → CREATE UNIQUE
+    # 1d: Unique index merge → CREATE UNIQUE. ix_uc_ac carries col_e, which
+    # uix_uc_acd lacks, so the merge really changes the index. A merge that
+    # changes nothing gets no MERGE SCRIPT at all (#906).
     matches = find_rows(rows, table_name="test_ic_uc", index_name="uix_uc_acd",
                         script_type="MERGE SCRIPT")
-    has_unique = any("CREATE UNIQUE" in m.get("script", "") for m in matches)
+    has_unique = any("CREATE UNIQUE" in m.get("script", "")
+                     and "[col_e]" in m.get("script", "") for m in matches)
     assert_test("1-UC", "1d: Unique index merge has CREATE UNIQUE",
                 has_unique, f"found {len(matches)} merge rows, unique={has_unique}")
 

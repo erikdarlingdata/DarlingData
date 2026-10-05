@@ -672,6 +672,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition nvarchar(max) NULL,
         is_max_length integer NOT NULL,
         optimize_for_sequential_key bit NOT NULL,
+        /*
+        Index options that CREATE INDEX ... WITH (DROP_EXISTING = ON) resets to
+        OFF unless the WITH list names them again: sys.indexes.ignore_dup_key and
+        the no_recompute flag of the statistics sys.stats keeps for the index
+        (stats_id = index_id). Every script that rebuilds through DROP_EXISTING has
+        to carry them, or a duplicate insert that used to be skipped with a warning
+        starts failing with error 2601, and statistics someone froze on purpose
+        start updating on their own again.
+        */
+        ignore_dup_key bit NOT NULL,
+        no_recompute bit NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
         user_lookups bigint NOT NULL,
@@ -2767,12 +2778,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     definition as ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY
     NONCLUSTERED. That code was unreachable until this CASE was fixed.
 
-    Keep prose out of the string literal below. Everything up to the first
-    CONVERT(nvarchar(max), ...) concatenates as nvarchar(4000), so padding
-    it silently truncates the batch mid-statement instead of failing loudly.
+    Keep prose out of the string literal below. Without a max type on the
+    left, everything up to the first CONVERT(nvarchar(max), ...) concatenates as
+    nvarchar(4000), so padding it silently truncates the batch mid-statement
+    instead of failing loudly. The empty nvarchar(max) the assignment starts from
+    makes the whole concatenation nvarchar(max), which is what let the
+    ignore_dup_key and no_recompute columns fit.
     */
     SELECT
-        @sql = N'
+        @sql = CONVERT(nvarchar(max), N'') + N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
@@ -2861,6 +2875,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE N'
         optimize_for_sequential_key = 0,'
         END + N'
+        ignore_dup_key = ISNULL(i.ignore_dup_key, 0),
+        no_recompute =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.stats AS st
+                         WHERE st.object_id = i.object_id
+                         AND   st.stats_id = i.index_id
+                         AND   st.no_recompute = 1
+                     )
+                THEN 1
+                ELSE 0
+            END,
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
         user_lookups = ISNULL(us.user_lookups, 0),
@@ -2994,6 +3023,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition,
         is_max_length,
         optimize_for_sequential_key,
+        ignore_dup_key,
+        no_recompute,
         user_seeks,
         user_scans,
         user_lookups,
@@ -4275,6 +4306,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         them, emitting a broken INCLUDE list while the paired DISABLE still ran.
         Reading the columns directly also removes the need to escape entities for
         the XML round-trip.
+
+        The no-op check before the MERGE SCRIPT compares this list with one it
+        builds the same way: QUOTENAME(column_name), joined with ', ', in
+        column_name order. Change the format here and it has to change there.
         */
         merged_includes =
             STUFF
@@ -5733,27 +5768,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
-    /* Update winning indexes that don't actually need changes to have action = N'KEEP' */
-    UPDATE
-        ia
-    SET
-        /* Change action to 'KEEP' for indexes that don't need to be modified */
-        ia.action = N'KEEP'
-    FROM #index_analysis AS ia
-    WHERE ia.action = N'MERGE INCLUDES'
-    AND   ia.superseded_by IS NOT NULL
-    /* Only change to KEEP if Rule 6 didn't compute merged includes for this index */
-    AND NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #merged_includes AS mi
-        WHERE mi.scope_hash = ia.scope_hash
-        AND   mi.index_name = ia.index_name
-    )
-    AND   ia.database_id = @current_database_id
-    OPTION(RECOMPILE);
-
     /*
     Never disable an index that a foreign key is backed by.
 
@@ -5772,9 +5786,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     This sits after every rule rather than inside each one. The rules pick a
     loser in nine places, by priority, by width and by name, and a guard in each
-    is a guard the tenth rule can be written without. Running here also means
-    superseded_by is cleared before the scripts are built, so no keeper is left
-    claiming it supersedes an index that is staying.
+    is a guard the tenth rule can be written without.
+
+    Clearing superseded_by on the LOSER row below changes nothing, because a
+    loser's superseded_by is already NULL: the claim "Supersedes <index>" and the
+    merged include list both live on the WINNER's row, which still carries them
+    after this statement. The statement after it unwinds the winners, so no
+    keeper is left claiming it supersedes an index that is staying, or getting a
+    MERGE SCRIPT that adds the includes of an index that is staying.
 
     consolidation_rule and target_index_name are deliberately LEFT ALONE. The
     rule still matched, and the reporting insert below reads both to say which
@@ -5818,6 +5837,242 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         RAISERROR('Kept %I64d index(es) a foreign key is backed by', 0, 0, @rc) WITH NOWAIT;
     END;
+
+    /*
+    Unwind the winners of the indexes the guard just kept.
+
+    A winner's include list and its "Supersedes <index>" text were built while
+    the loser was still going to be disabled. With the loser staying, a winner
+    left alone would be rebuilt with includes it has no reason to absorb, and its
+    report would claim it supersedes an index that is staying.
+
+    Each affected winner gets its include list rebuilt from its own includes plus
+    those of the losers still being disabled, and its superseded_by rebuilt from
+    the same losers. A MERGE INCLUDES winner left with no loser goes back to KEEP.
+    A MAKE UNIQUE winner is not reverted: it still replaces its constraint.
+
+    Both strings come from #index_details and #index_analysis rows rather than
+    from editing the old text, so a name that contains another index's name, or a
+    comma, cannot be cut in the wrong place.
+    */
+    UPDATE
+        ia
+    SET
+        ia.included_columns =
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        QUOTENAME(idc.column_name)
+                    FROM #index_details AS idc
+                    WHERE idc.is_included_column = 1
+                    AND
+                    (
+                        /* The winner's own includes */
+                        idc.index_hash = ia.index_hash
+                        /* Plus those of the losers still being disabled */
+                        OR EXISTS
+                           (
+                               SELECT
+                                   1/0
+                               FROM #index_analysis AS ia_loser
+                               WHERE ia_loser.scope_hash = ia.scope_hash
+                               AND   ia_loser.action = N'DISABLE'
+                               AND   ia_loser.target_index_name = ia.index_name
+                               AND   ia_loser.consolidation_rule IN
+                                     (
+                                         N'Key Subset',
+                                         N'Key Duplicate'
+                                     )
+                               AND   ia_loser.index_hash = idc.index_hash
+                           )
+                    )
+                    /* A column already in the winner's key doesn't need including */
+                    AND NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS idk
+                        WHERE idk.index_hash = ia.index_hash
+                        AND   idk.is_included_column = 0
+                        AND   idk.column_name = idc.column_name
+                    )
+                    GROUP BY
+                        idc.column_name
+                    ORDER BY
+                        idc.column_name
+                    FOR
+                        XML
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]', 'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        ia.superseded_by =
+            NULLIF
+            (
+                ISNULL(sp.constraint_part, N'') +
+                CASE
+                    WHEN sp.constraint_part IS NOT NULL
+                    AND  sp.loser_part IS NOT NULL
+                    THEN N', '
+                    ELSE N''
+                END +
+                ISNULL(N'Supersedes ' + sp.loser_part, N''),
+                N''
+            ),
+        ia.action =
+            CASE
+                WHEN ia.action = N'MERGE INCLUDES'
+                AND  sp.loser_part IS NULL
+                THEN N'KEEP'
+                ELSE ia.action
+            END
+    FROM #index_analysis AS ia
+    CROSS APPLY
+    (
+        SELECT
+            loser_part =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_loser.index_name
+                        FROM #index_analysis AS ia_loser
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.action = N'DISABLE'
+                        AND   ia_loser.target_index_name = ia.index_name
+                        AND   ia_loser.consolidation_rule IN
+                              (
+                                  N'Key Subset',
+                                  N'Key Duplicate'
+                              )
+                        ORDER BY
+                            ia_loser.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                ),
+            constraint_part =
+                N'Will replace constraint ' +
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_uc.index_name
+                        FROM #index_analysis AS ia_uc
+                        WHERE ia_uc.scope_hash = ia.scope_hash
+                        AND   ia_uc.action = N'DISABLE'
+                        AND   ia_uc.consolidation_rule = N'Unique Constraint Replacement'
+                        AND   ia_uc.target_index_name = ia.index_name
+                        ORDER BY
+                            ia_uc.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS sp
+    WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    AND   ia.database_id = @current_database_id
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_kept
+        JOIN #foreign_key_kept AS fkk
+          ON fkk.index_hash = ia_kept.index_hash
+        WHERE ia_kept.scope_hash = ia.scope_hash
+        AND   ia_kept.target_index_name = ia.index_name
+        AND   ia_kept.consolidation_rule IN
+              (
+                  N'Key Subset',
+                  N'Key Duplicate'
+              )
+    )
+    OPTION(RECOMPILE);
+
+    /*
+    Update winning indexes that don't actually need changes to have action = N'KEEP'.
+
+    A MERGE SCRIPT rebuilds the whole index through DROP_EXISTING, which is a lot
+    of work on a large table, so it is only worth emitting when it changes the
+    index: the merged include list differs from the index's current one, or a
+    MAKE UNIQUE row turns a non-unique index into a unique one. Options such as
+    compression are covered by the compression row below, which an index reaches
+    once it is KEEP, so no compression advice is lost.
+
+    The merged list is compared with the index's own includes, rebuilt from
+    #index_details in the same order the list was built in. The check this
+    replaces asked whether Rule 6 had recorded merged includes for the index, but
+    Rule 6 records a row for every Key Superset winner whether or not the list
+    changed, and the check only ever looked at MERGE INCLUDES rows, so it missed
+    both a superset that already covers its subset and a unique index that
+    already replaces its constraint.
+
+    Every statement that writes included_columns builds the list the same way:
+    QUOTENAME(column_name), joined with ', ', in column_name order. That covers
+    Rule 6, the other merges, and the winner unwind above. If one of them ever
+    orders the list differently, an unchanged list stops matching here, and the
+    index gets a MERGE SCRIPT that changes nothing again. Keep them in step.
+    */
+    UPDATE
+        ia
+    SET
+        /* Change action to 'KEEP' for indexes that don't need to be modified */
+        ia.action = N'KEEP'
+    FROM #index_analysis AS ia
+    WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    AND   ia.database_id = @current_database_id
+    /* A MAKE UNIQUE row only changes the index when it is not unique yet */
+    AND
+    (
+         ia.action = N'MERGE INCLUDES'
+      OR ia.is_unique = 1
+    )
+    /* The merged include list is the index's own include list */
+    AND   ISNULL(ia.included_columns, N'') =
+          ISNULL
+          (
+              STUFF
+              (
+                  (
+                      SELECT
+                          N', ' +
+                          QUOTENAME(idc.column_name)
+                      FROM #index_details AS idc
+                      WHERE idc.index_hash = ia.index_hash
+                      AND   idc.is_included_column = 1
+                      GROUP BY
+                          idc.column_name
+                      ORDER BY
+                          idc.column_name
+                      FOR
+                          XML
+                          PATH(''),
+                          TYPE
+                  ).value('text()[1]', 'nvarchar(max)'),
+                  1,
+                  2,
+                  N''
+              ),
+              N''
+          )
+    OPTION(RECOMPILE);
 
     /* Insert merge scripts for indexes */
     IF @debug = 1
@@ -5927,6 +6182,55 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id_ofsk.optimize_for_sequential_key = 1
                 )
                 THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
+            /*
+            DROP_EXISTING resets both options below to OFF, so carry them. A MAKE
+            UNIQUE row also carries IGNORE_DUP_KEY from the unique constraint it
+            replaces: the constraint is dropped next, and the index that takes over
+            enforcing uniqueness has to keep skipping duplicates the constraint
+            used to skip, or those inserts start failing with error 2601.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = ia.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                )
+                OR
+                (
+                    ia.action = N'MAKE UNIQUE'
+                    AND EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_analysis AS ia_ucr
+                        JOIN #index_details AS id_ucr
+                          ON id_ucr.index_hash = ia_ucr.index_hash
+                        WHERE ia_ucr.scope_hash = ia.scope_hash
+                        AND   ia_ucr.action = N'DISABLE'
+                        AND   ia_ucr.consolidation_rule = N'Unique Constraint Replacement'
+                        AND   ia_ucr.target_index_name = ia.index_name
+                        AND   id_ucr.is_unique_constraint = 1
+                        AND   id_ucr.ignore_dup_key = 1
+                    )
+                )
+                THEN N', IGNORE_DUP_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_nrc
+                    WHERE id_nrc.index_hash = ia.index_hash
+                    AND   id_nrc.no_recompute = 1
+                )
+                THEN N', STATISTICS_NORECOMPUTE = ON'
                 ELSE N''
             END +
             N')' +
@@ -8563,6 +8867,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         AND   id_ofsk.optimize_for_sequential_key = 1
                     )
                     THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_idk
+                        WHERE id_idk.index_hash = ia.index_hash
+                        AND   id_idk.ignore_dup_key = 1
+                    )
+                    THEN N', IGNORE_DUP_KEY = ON'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_nrc
+                        WHERE id_nrc.index_hash = ia.index_hash
+                        AND   id_nrc.no_recompute = 1
+                    )
+                    THEN N', STATISTICS_NORECOMPUTE = ON'
                     ELSE N''
                 END +
                 N')' +

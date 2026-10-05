@@ -361,7 +361,8 @@ CREATE NONCLUSTERED INDEX ix_uc_ab ON dbo.test_ic_uc (col_a, col_b);
 CREATE NONCLUSTERED INDEX ix_uc_ab_inc ON dbo.test_ic_uc (col_a, col_b) INCLUDE (col_e);
 CREATE NONCLUSTERED INDEX ix_uc_bc ON dbo.test_ic_uc (col_b, col_c);
 CREATE UNIQUE NONCLUSTERED INDEX uix_uc_acd ON dbo.test_ic_uc (col_a, col_c, col_d);
-CREATE NONCLUSTERED INDEX ix_uc_ac ON dbo.test_ic_uc (col_a, col_c);
+/* col_e is what uix_uc_acd gains from the merge: without it the merge would change nothing (#906) */
+CREATE NONCLUSTERED INDEX ix_uc_ac ON dbo.test_ic_uc (col_a, col_c) INCLUDE (col_e);
 ALTER TABLE dbo.test_ic_uc ADD CONSTRAINT uq_uc_ad UNIQUE (col_a, col_d);
 
 /* Group 2: Sort direction */
