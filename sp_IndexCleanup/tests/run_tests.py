@@ -408,6 +408,18 @@ def run_tests(rows):
     assert_test("13-FK-Backed", "13b: its duplicate is left alone too (#902)",
                 len(matches) == 0, f"found {len(matches)} (expected 0)")
 
+    # 13c: and the reader is told the pair is there. Without a row of its own the
+    # index reaches the results only through its compression row, where the rule
+    # reads N/A, so nothing says a duplicate exists or that something stopped it
+    # from being cleaned up. Both are the reader's call to make.
+    matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_z_code",
+                        script_type="KEPT - FOREIGN KEY")
+    info = matches[0].get("additional_info", "") if matches else ""
+    names_duplicate = "ux_fkp_a_code" in info
+    assert_test("13-FK-Backed", "13c: the kept index says why, and names its duplicate",
+                len(matches) == 1 and names_duplicate,
+                f"found {len(matches)} rows, names duplicate={names_duplicate}")
+
     return results
 
 

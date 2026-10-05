@@ -867,6 +867,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (database_id, schema_id, object_id, index_id, can_compress)
     );
 
+    /*
+    The indexes the foreign key guard took a DISABLE away from.
+
+    Written by the guard and read by its reporting insert, so the report can
+    tell the two kinds of kept index apart. An index a foreign key is backed by
+    can also be the legitimate WINNER of a dedupe pair, with its duplicate
+    disabled as normal; saying "kept because of a foreign key" there would claim
+    the guard did something it never did. Only the rows the guard changed are in
+    here.
+
+    Accumulates across databases like #index_analysis does, which needs no
+    per-database filter of its own: index_hash is built from database_id,
+    object_id and index_id, so a row cannot match an index in another database.
+    */
+    CREATE TABLE
+        #foreign_key_kept
+    (
+        index_hash varbinary(32) NOT NULL PRIMARY KEY CLUSTERED
+    );
+
     CREATE TABLE
         #index_cleanup_results
     (
@@ -5539,8 +5559,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     This sits after every rule rather than inside each one. The rules pick a
     loser in nine places, by priority, by width and by name, and a guard in each
     is a guard the tenth rule can be written without. Running here also means
-    the pairing is cleared before superseded_by and the scripts are built, so no
-    keeper is left claiming it supersedes an index that is staying.
+    superseded_by is cleared before the scripts are built, so no keeper is left
+    claiming it supersedes an index that is staying.
+
+    consolidation_rule and target_index_name are deliberately LEFT ALONE. The
+    rule still matched, and the reporting insert below reads both to say which
+    index this one duplicates, so a reader learns the pair exists instead of
+    seeing the index pass silently. The action is what decides what happens to
+    it, and that is now KEEP.
 
     Both indexes are kept when the loser backs a key. Promoting the other one
     instead is not safe to do blindly: when both back keys there is no loser to
@@ -5554,8 +5580,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia
     SET
         ia.action = N'KEEP',
-        ia.target_index_name = NULL,
         ia.superseded_by = NULL
+    OUTPUT
+        inserted.index_hash
+    INTO #foreign_key_kept
+        (index_hash)
     FROM #index_analysis AS ia
     WHERE ia.action = N'DISABLE'
     AND   ia.database_id = @current_database_id
@@ -6754,6 +6783,95 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
+    /*
+    Indexes a foreign key is backed by, which a dedupe rule had picked as the
+    loser before the guard above kept them.
+
+    Reported rather than passed over in silence: without this the index reaches
+    the results only through its compression row, where consolidation_rule is
+    N/A, so a reader is never told that a duplicate pair exists on the table or
+    that something stopped it from being cleaned up. Both of those are decisions
+    only the reader can make, and they need the pair named to make them.
+
+    A row of its own, after the compression insert and before the KEPT one, so
+    neither is changed: the compression recommendation still reaches the results
+    exactly as it did, and the generic "This index is being kept" row the KEPT
+    insert would otherwise emit is replaced by this one, which says why.
+
+    Driven by #foreign_key_kept, the rows the guard actually changed, and not by
+    is_foreign_key_backing. An index a foreign key is backed by can also win its
+    pair on merit, with the duplicate disabled as normal, and this row would then
+    credit the guard with a decision the rules had already made correctly.
+
+    The foreign key is not named here. Its name lives in the target database's
+    sys.foreign_keys, which only the collection's dynamic SQL can read, and
+    #index_details carries the fact and not the name.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, FOREIGN KEY BACKED', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        additional_info,
+        original_index_definition,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT DISTINCT
+        result_type = 'KEPT',
+        sort_order = 94, /* Between NEEDS REVIEW and the other kept indexes */
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'KEPT - FOREIGN KEY',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        additional_info =
+            N'A foreign key is backed by this index, so disabling it would disable the key too. Kept for that reason, although it matched ' +
+            ISNULL(ia.consolidation_rule, N'(unknown)') +
+            N' with ' +
+            ISNULL(ia.target_index_name, N'(unknown)') +
+            N'. Review the pair by hand if you want the duplicate gone.',
+        /* Original index definition for validation */
+        ia.original_index_definition,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps
+      ON ia.index_hash = ps.index_hash
+    LEFT JOIN #index_details AS id
+      ON  id.index_hash = ia.index_hash
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE ia.database_id = @current_database_id
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #foreign_key_kept AS fkk
+        WHERE fkk.index_hash = ia.index_hash
+    )
+    OPTION(RECOMPILE);
 
     /* Insert kept indexes into results - Consolidated all kept indexes logic in one place */
     IF @debug = 1
