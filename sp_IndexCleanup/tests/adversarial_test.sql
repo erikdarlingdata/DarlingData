@@ -40,6 +40,8 @@ DROP TABLE IF EXISTS dbo.test_ic_filter_eq;
 DROP TABLE IF EXISTS dbo.test_ic_uc_replace;
 DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
+DROP TABLE IF EXISTS dbo.test_ic_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
 GO
 
 /* ============================================= */
@@ -130,6 +132,18 @@ CREATE TABLE dbo.test_ic_uc_dup
     col_c integer NOT NULL
 );
 
+CREATE TABLE dbo.test_ic_fk_parent
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_fk_child
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
 CREATE TABLE dbo.test_ic_interact
 (
     id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
@@ -210,6 +224,12 @@ SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
     ABS(CHECKSUM(NEWID())) % 500, ABS(CHECKSUM(NEWID())) % 200,
     ABS(CHECKSUM(NEWID())) % 100
 FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_fk_parent (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_fk_child (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
 
 INSERT INTO dbo.test_ic_uc_dup (col_a, col_b, col_c)
 SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
@@ -306,6 +326,16 @@ CREATE NONCLUSTERED INDEX ix_ucr_ab_inc ON dbo.test_ic_uc_replace (col_a, col_b)
 ALTER TABLE dbo.test_ic_uc_dup ADD CONSTRAINT uq_ucd_keeper UNIQUE (col_a, col_b, col_c);
 ALTER TABLE dbo.test_ic_uc_dup ADD CONSTRAINT uq_ucd_zloser UNIQUE (col_a, col_b, col_c);
 
+/* Group 13: A unique index a foreign key is backed by (issue #902)
+   - ux_z is created first, so sys.foreign_keys.key_index_id names it
+   - ux_a is an exact duplicate that sorts earlier by name, which is the
+     tiebreak that used to make ux_z the loser and emit DISABLE against it,
+     silently disabling the foreign key too */
+CREATE UNIQUE INDEX ux_fkp_z_code ON dbo.test_ic_fk_parent (code);
+ALTER TABLE dbo.test_ic_fk_child ADD CONSTRAINT fk_ic_child_code
+    FOREIGN KEY (code) REFERENCES dbo.test_ic_fk_parent (code);
+CREATE UNIQUE INDEX ux_fkp_a_code ON dbo.test_ic_fk_parent (code);
+
 /* Group 12: Rule interactions */
 /* 12a: Multi-level subset: A ⊂ AB ⊂ ABC */
 CREATE INDEX ix_int_a ON dbo.test_ic_interact (col_a);
@@ -390,6 +420,9 @@ BEGIN
     /* Group 11b: UC-vs-UC duplicates */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_dup WITH (INDEX = uq_ucd_keeper) WHERE col_a = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_dup WITH (INDEX = uq_ucd_zloser) WHERE col_a = 1;
+    /* Group 13: FK-backed unique index */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_z_code) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_a_code) WHERE code = 1;
     /* Group 12: Interactions */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_a) WHERE col_a = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_ab) WHERE col_a = 1;
@@ -433,4 +466,6 @@ DROP TABLE IF EXISTS dbo.test_ic_filter_eq;
 DROP TABLE IF EXISTS dbo.test_ic_uc_replace;
 DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
+DROP TABLE IF EXISTS dbo.test_ic_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
 GO

@@ -386,6 +386,40 @@ def run_tests(rows):
                 kept_subset_col and kept_own_col,
                 f"INCLUDE={include or '(none)'} col_b={kept_subset_col} col_e={kept_own_col}")
 
+    # ---- Group 13: An index a foreign key is backed by (issue #902) ----
+
+    # 13a: THE one that matters. ALTER INDEX ... DISABLE against the index named
+    # by sys.foreign_keys.key_index_id disables the foreign key too, and SQL
+    # Server only warns, so the script looks like it worked while the key stops
+    # being enforced -- measured on 2022 CU27, is_disabled = 1, is_not_trusted =
+    # 1, and an INSERT with no parent row then succeeds. ux_fkp_z_code backs
+    # fk_ic_child_code and ux_fkp_a_code sorts earlier, so the name tiebreak used
+    # to pick exactly the wrong one of the pair.
+    matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_z_code",
+                        script_type="DISABLE SCRIPT")
+    assert_test("13-FK-Backed", "13a: FK-backed unique index NOT disabled (#902)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    # 13b: and the pair is left alone rather than the other one being promoted.
+    # Promoting blindly is what this cannot do safely: when both indexes back a
+    # key there is no loser to pick, so neither is disabled.
+    matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_a_code",
+                        script_type="DISABLE SCRIPT")
+    assert_test("13-FK-Backed", "13b: its duplicate is left alone too (#902)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    # 13c: and the reader is told the pair is there. Without a row of its own the
+    # index reaches the results only through its compression row, where the rule
+    # reads N/A, so nothing says a duplicate exists or that something stopped it
+    # from being cleaned up. Both are the reader's call to make.
+    matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_z_code",
+                        script_type="KEPT - FOREIGN KEY")
+    info = matches[0].get("additional_info", "") if matches else ""
+    names_duplicate = "ux_fkp_a_code" in info
+    assert_test("13-FK-Backed", "13c: the kept index says why, and names its duplicate",
+                len(matches) == 1 and names_duplicate,
+                f"found {len(matches)} rows, names duplicate={names_duplicate}")
+
     return results
 
 
