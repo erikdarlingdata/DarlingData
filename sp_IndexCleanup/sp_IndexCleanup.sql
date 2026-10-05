@@ -4306,6 +4306,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         them, emitting a broken INCLUDE list while the paired DISABLE still ran.
         Reading the columns directly also removes the need to escape entities for
         the XML round-trip.
+
+        The no-op check before the MERGE SCRIPT compares this list with one it
+        builds the same way: QUOTENAME(column_name), joined with ', ', in
+        column_name order. Change the format here and it has to change there.
         */
         merged_includes =
             STUFF
@@ -6019,6 +6023,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     changed, and the check only ever looked at MERGE INCLUDES rows, so it missed
     both a superset that already covers its subset and a unique index that
     already replaces its constraint.
+
+    Every statement that writes included_columns builds the list the same way:
+    QUOTENAME(column_name), joined with ', ', in column_name order. That covers
+    Rule 6, the other merges, and the winner unwind above. If one of them ever
+    orders the list differently, an unchanged list stops matching here, and the
+    index gets a MERGE SCRIPT that changes nothing again. Keep them in step.
     */
     UPDATE
         ia
