@@ -917,6 +917,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_hash varbinary(32) NOT NULL PRIMARY KEY CLUSTERED
     );
 
+    /*
+    The keepers that have to take over IGNORE_DUP_KEY from a structure the scripts
+    remove, and the loser each one takes it from (#916).
+
+    A pair is only ever in here because the keeper won for a reason that outranks
+    IGNORE_DUP_KEY, which today means a foreign key is backed by it, or because the
+    rule that settled the pair does not read index_priority at all - Rule 7 always
+    keeps the nonclustered index and drops the constraint. Where the IGNORE_DUP_KEY
+    structure wins its own pair on the term above, nothing needs carrying: the one
+    that stays is already the one that skips.
+
+    Separate from #index_analysis because two later blocks read it - the WITH list
+    of a rebuilt keeper and the script for one that is not rebuilt - and an EXISTS
+    written twice is two places to get it wrong. index_hash is built from
+    database_id, object_id and index_id, so this accumulates across databases
+    without a filter of its own.
+    */
+    CREATE TABLE
+        #ignore_dup_key_carried
+    (
+        index_hash varbinary(32) NOT NULL PRIMARY KEY CLUSTERED,
+        loser_index_name sysname NOT NULL,
+        /*
+        ALTER INDEX ... SET (IGNORE_DUP_KEY = ON) is REFUSED against the index that
+        backs a unique constraint: measured on SQL Server 2022 CU27, error 1979,
+        "Cannot use index option ignore_dup_key to alter index '...' as it enforces
+        a primary or unique constraint". So a constraint keeper cannot be given the
+        option after the fact, and no script may be written for one.
+
+        No shape reaches that today, and the term above is why: a constraint keeper
+        only arises in Rule 7.5b, which pairs two constraints, and there the one
+        with IGNORE_DUP_KEY outranks the strict one (450 against 50 plus whatever
+        usage it has, which caps at 400). The only term that could lift a strict
+        constraint over it is the foreign key one, and the rules exclude a column a
+        foreign key references from that pairing anyway - tested, a pair of unique
+        constraints on a referenced column reaches no dedupe rule and gets only a
+        compression row.
+
+        Carried as a column rather than trusted to stay unreachable, because it is
+        the ordering of two magic numbers that makes it so, and the cost of being
+        wrong is a generated script that fails. The filter is one predicate.
+        */
+        keeper_is_unique_constraint bit NOT NULL
+    );
+
     CREATE TABLE
         #index_cleanup_results
     (
@@ -3735,6 +3780,58 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 50  /* Indexes with includes get priority over those without */
                 ELSE 0
             END /* Prefer indexes with included columns */
+            +
+            /*
+            Two properties the score could not see, so a pair holding one of them was
+            settled on index_name - by the alphabet (#917, #916). A foreign key is backed
+            by this index, and IGNORE_DUP_KEY decides what an insert of a duplicate key
+            does. Removing either structure changes something a caller did not ask to
+            change: the key gets disabled with its backing index, or inserts that used to
+            skip a duplicate start failing.
+
+            Where the two terms sit, and why:
+
+            Each has to outrank every term that can DIFFER between the two structures of
+            a pair, which is the seek (200), the scan (100) and the include (50) terms,
+            350 together. 400 clears that.
+
+            The foreign key term then has to outrank the IGNORE_DUP_KEY one plus those
+            three, 750, because the ORDER of the two decides the case where one structure
+            backs a key and the other skips duplicates. Measured on SQL Server 2022 CU27:
+            keeping the index the key is backed by and giving it IGNORE_DUP_KEY leaves the
+            key enabled and trusted, still skips a duplicate parent key, and still refuses
+            an orphan child with 547 - while keeping the other one and disabling this one
+            makes that same insert fail with 2601. So 800.
+
+            Neither term reaches the clustered index's 1000 on its own. Their SUM can pass
+            it, and that is not reachable: a clustered index and a primary key carry
+            is_eligible_for_dedupe = 0 and never enter a pair. Keeping the sums under 1000
+            is not possible anyway - the ordering above forces the foreign key term past
+            700, and a unique index already carries 500.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_fkb
+                    WHERE id_fkb.index_hash = #index_analysis.index_hash
+                    AND   id_fkb.is_foreign_key_backing = 1
+                ) THEN 800
+                ELSE 0
+            END /* A foreign key is backed by this index */
+            +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = #index_analysis.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                ) THEN 400
+                ELSE 0
+            END /* This structure is the one that skips a duplicate key */
     WHERE #index_analysis.database_id = @current_database_id
     OPTION(RECOMPILE);
 
@@ -5816,6 +5913,67 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /*
+    Record the keepers that have to take over IGNORE_DUP_KEY from a loser (#916).
+
+    Two unique structures on the same keys can differ in IGNORE_DUP_KEY, and
+    removing the one that has it changes what an insert of a duplicate key does:
+    measured on 2022 CU27, SQL Server skips the row while either structure skips
+    it, and raises 2601 once the last one is gone. The term above makes the
+    skipper win its own pair, so the common case needs nothing carried. Two
+    things still reach here:
+
+      - A pair the skipper LOSES, which today means a foreign key is backed by
+        the other structure. That term outranks this one on purpose - keeping the
+        index the key depends on and giving it IGNORE_DUP_KEY is the one outcome
+        where nothing changes, measured in both directions.
+      - Rule 7, which does not read index_priority at all: it keeps the
+        nonclustered index and drops the constraint whichever of them skips.
+
+    Collected here, before the rules' losers are read by anything else, and
+    consumed in two places: the WITH list of a keeper that is being rebuilt
+    anyway, and an ALTER INDEX ... SET for one that is not.
+    */
+    INSERT INTO
+        #ignore_dup_key_carried
+    WITH
+        (TABLOCK)
+    (
+        index_hash,
+        loser_index_name,
+        keeper_is_unique_constraint
+    )
+    SELECT
+        ia_keep.index_hash,
+        loser_index_name =
+            MIN(ia_loser.index_name),
+        keeper_is_unique_constraint =
+            MAX(CONVERT(integer, id_keep.is_unique_constraint))
+    FROM #index_analysis AS ia_keep
+    JOIN #index_details AS id_keep
+      ON id_keep.index_hash = ia_keep.index_hash
+    JOIN #index_analysis AS ia_loser
+      ON  ia_loser.scope_hash = ia_keep.scope_hash
+      AND ia_loser.target_index_name = ia_keep.index_name
+      AND ia_loser.index_name <> ia_keep.index_name
+    JOIN #index_details AS id_loser
+      ON id_loser.index_hash = ia_loser.index_hash
+    WHERE ia_keep.database_id = @current_database_id
+    AND   ia_loser.action = N'DISABLE'
+    /* The loser skips duplicates and the keeper does not, so the behaviour would change */
+    AND   id_loser.ignore_dup_key = 1
+    AND   id_keep.ignore_dup_key = 0
+    GROUP BY
+        ia_keep.index_hash
+    OPTION(RECOMPILE);
+
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('%I64d keeper(s) have to take over IGNORE_DUP_KEY', 0, 0, @rc) WITH NOWAIT;
+    END;
+
+    /*
     Never disable an index that a foreign key is backed by.
 
     A foreign key names its backing index in sys.foreign_keys.key_index_id, and
@@ -6232,11 +6390,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N''
             END +
             /*
-            DROP_EXISTING resets both options below to OFF, so carry them. A MAKE
-            UNIQUE row also carries IGNORE_DUP_KEY from the unique constraint it
-            replaces: the constraint is dropped next, and the index that takes over
-            enforcing uniqueness has to keep skipping duplicates the constraint
+            DROP_EXISTING resets both options below to OFF, so carry them. The index
+            also carries IGNORE_DUP_KEY from any structure of its pair the scripts
+            remove, not only from a unique constraint a MAKE UNIQUE row replaces
+            (#914, generalised by #916): whatever is going away, the structure that
+            takes over enforcing uniqueness has to keep skipping the duplicates it
             used to skip, or those inserts start failing with error 2601.
+
+            #ignore_dup_key_carried is the whole population - a keeper that does not
+            skip with a loser that does - so this arm and the ALTER INDEX ... SET row
+            below read one definition rather than two that can drift apart. The
+            keeper's own flag still stands on its own: an index that already skips
+            keeps doing so through the rebuild whether or not it won a pair.
             */
             CASE
                 WHEN EXISTS
@@ -6247,23 +6412,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHERE id_idk.index_hash = ia.index_hash
                     AND   id_idk.ignore_dup_key = 1
                 )
-                OR
+                OR EXISTS
                 (
-                    ia.action = N'MAKE UNIQUE'
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_analysis AS ia_ucr
-                        JOIN #index_details AS id_ucr
-                          ON id_ucr.index_hash = ia_ucr.index_hash
-                        WHERE ia_ucr.scope_hash = ia.scope_hash
-                        AND   ia_ucr.action = N'DISABLE'
-                        AND   ia_ucr.consolidation_rule = N'Unique Constraint Replacement'
-                        AND   ia_ucr.target_index_name = ia.index_name
-                        AND   id_ucr.is_unique_constraint = 1
-                        AND   id_ucr.ignore_dup_key = 1
-                    )
+                    SELECT
+                        1/0
+                    FROM #ignore_dup_key_carried AS idkc
+                    WHERE idkc.index_hash = ia.index_hash
+                    AND   idkc.keeper_is_unique_constraint = 0
                 )
                 THEN N', IGNORE_DUP_KEY = ON'
                 ELSE N''
@@ -6402,6 +6557,91 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia.index_name
         OPTION(RECOMPILE);
     END;
+
+    /*
+    Hand IGNORE_DUP_KEY to a keeper that is not being rebuilt (#916).
+
+    A keeper that gets a MERGE SCRIPT already carries the option in its WITH list
+    above, so this row is for the rest: a plain KEEP, and the Rule 7 index that
+    replaces a constraint and was already unique, which #914 writes no script for
+    because the rebuild would add neither a column nor uniqueness.
+
+    sort_order 6, between the merge scripts (5) and the disables (20), and that
+    ordering is the point rather than cosmetics: while either structure skips a
+    duplicate, SQL Server skips it, so the keeper has to be skipping BEFORE the
+    loser is disabled. Run the other way round, an insert between the two
+    statements fails with 2601.
+
+    Measured on 2022 CU27: ALTER INDEX ... SET (IGNORE_DUP_KEY = ON) against a
+    plain unique index is accepted, leaves sys.indexes.ignore_dup_key = 1, and the
+    index then skips a duplicate for a single-row and a 500-row insert alike. The
+    constraint keeper that cannot take it never reaches here - it is filtered out
+    below, and its pair was left alone by the guard above.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, IGNORE_DUP_KEY', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        script,
+        additional_info
+    )
+    SELECT
+        result_type = 'IGNORE_DUP_KEY',
+        sort_order = 6,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = N'IGNORE_DUP_KEY SCRIPT',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        script =
+            N'ALTER INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' SET (IGNORE_DUP_KEY = ON);',
+        additional_info =
+            N'Takes over IGNORE_DUP_KEY from ' +
+            idkc.loser_index_name +
+            N', which the scripts remove. Without it, an insert of a duplicate key starts failing with error 2601 instead of skipping the row. Run this before the DISABLE script.'
+    FROM #index_analysis AS ia
+    JOIN #ignore_dup_key_carried AS idkc
+      ON idkc.index_hash = ia.index_hash
+    WHERE ia.database_id = @current_database_id
+    AND   idkc.keeper_is_unique_constraint = 0
+    /* A rebuilt keeper carries the option in its own WITH list instead */
+    AND   ia.action NOT IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    /* The loser has to actually be going away: either guard may have kept it */
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_loser
+        WHERE ia_loser.scope_hash = ia.scope_hash
+        AND   ia_loser.target_index_name = ia.index_name
+        AND   ia_loser.action = N'DISABLE'
+    )
+    OPTION(RECOMPILE);
 
     /* Insert disable scripts for unneeded indexes */
     IF @debug = 1

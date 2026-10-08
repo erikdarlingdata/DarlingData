@@ -40,6 +40,12 @@ DROP TABLE IF EXISTS dbo.test_ic_filter_eq;
 DROP TABLE IF EXISTS dbo.test_ic_uc_replace;
 DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk;
+DROP TABLE IF EXISTS dbo.test_ic_idk_pair;
+DROP TABLE IF EXISTS dbo.test_ic_idk_rule7;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con;
 DROP TABLE IF EXISTS dbo.test_ic_fk_child;
 DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
 DROP TABLE IF EXISTS dbo.test_ic_uc_solo;
@@ -49,6 +55,12 @@ DROP TABLE IF EXISTS dbo.test_ic_ks_narrow_first;
 DROP TABLE IF EXISTS dbo.test_ic_ks_wide_first;
 DROP TABLE IF EXISTS dbo.test_ic_ks_same_1;
 DROP TABLE IF EXISTS dbo.test_ic_ks_same_2;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk;
+DROP TABLE IF EXISTS dbo.test_ic_idk_pair;
+DROP TABLE IF EXISTS dbo.test_ic_idk_rule7;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con;
 GO
 
 /* ============================================= */
@@ -297,6 +309,50 @@ SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns
 INSERT INTO dbo.test_ic_fk_child (code)
 SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
 
+/*
+Group 17: IGNORE_DUP_KEY (issue #916)
+
+Four tables, because the four outcomes are decided in four different places:
+
+  test_ic_idk_pair    two unique indexes, the skipper sorting LAST, so the name
+                      tiebreak used to pick it as the loser. The term decides it now.
+  test_ic_idk_fk      the interaction: the strict index backs a foreign key, the
+                      skipper backs nothing. The key's index wins and takes the option.
+  test_ic_idk_rule7   Rule 7, which reads no priority: the skipping CONSTRAINT is
+                      dropped for the already-unique strict INDEX, so there is no
+                      rebuild for the option to ride along in.
+  test_ic_idk_con     two unique CONSTRAINTS, one backing a key and one skipping.
+                      ALTER INDEX cannot give a constraint the option (error 1979),
+                      so both have to stay.
+
+ROW_NUMBER rather than a random value everywhere: every key below is unique, and
+a duplicate would make the CREATE fail rather than the test.
+*/
+CREATE TABLE dbo.test_ic_idk_pair (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_fk (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_fk_child (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_rule7 (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_con (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_con_child (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+
+INSERT INTO dbo.test_ic_idk_pair (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_fk (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_fk_child (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_rule7 (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_con (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_con_child (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
 /* ROW_NUMBER and not a random value: the unique constraints below have to be creatable, see the note on test_ic_interact */
 INSERT INTO dbo.test_ic_uc_solo (code)
 SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
@@ -434,6 +490,28 @@ ALTER TABLE dbo.test_ic_fk_child ADD CONSTRAINT fk_ic_child_code
     FOREIGN KEY (code) REFERENCES dbo.test_ic_fk_parent (code);
 CREATE UNIQUE INDEX ux_fkp_a_code ON dbo.test_ic_fk_parent (code);
 
+/* Group 17: IGNORE_DUP_KEY (issue #916) */
+
+/* 17a: the skipper sorts LAST, which is what the name tiebreak used to punish */
+CREATE UNIQUE INDEX ux_idkp_a_strict ON dbo.test_ic_idk_pair (code);
+CREATE UNIQUE INDEX ux_idkp_z_skip ON dbo.test_ic_idk_pair (code) WITH (IGNORE_DUP_KEY = ON);
+
+/* 17b: the strict one backs the key, so it outranks the skipper and takes the option */
+CREATE UNIQUE INDEX ux_idkf_strict ON dbo.test_ic_idk_fk (code);
+ALTER TABLE dbo.test_ic_idk_fk_child ADD CONSTRAINT fk_ic_idk_child_code
+    FOREIGN KEY (code) REFERENCES dbo.test_ic_idk_fk (code);
+CREATE UNIQUE INDEX ux_idkf_skip ON dbo.test_ic_idk_fk (code) WITH (IGNORE_DUP_KEY = ON);
+
+/* 17c: Rule 7 drops the skipping constraint for the already-unique strict index */
+ALTER TABLE dbo.test_ic_idk_rule7 ADD CONSTRAINT uq_idk7_skip UNIQUE (code) WITH (IGNORE_DUP_KEY = ON);
+CREATE UNIQUE INDEX ux_idk7_strict ON dbo.test_ic_idk_rule7 (code);
+
+/* 17d: two CONSTRAINTS, one backing a key and one skipping. Neither can be altered. */
+ALTER TABLE dbo.test_ic_idk_con ADD CONSTRAINT uq_idkc_a_key UNIQUE (code);
+ALTER TABLE dbo.test_ic_idk_con_child ADD CONSTRAINT fk_ic_idkc_child_code
+    FOREIGN KEY (code) REFERENCES dbo.test_ic_idk_con (code);
+ALTER TABLE dbo.test_ic_idk_con ADD CONSTRAINT uq_idkc_z_skip UNIQUE (code) WITH (IGNORE_DUP_KEY = ON);
+
 /* Group 14: A unique constraint with no other index on its key (issue #903)
    - Rule 7 used to match every unique constraint against ITSELF, so each one
      came back KEPT under 'Unique Constraint Replacement' with nothing to replace
@@ -565,6 +643,15 @@ BEGIN
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_dup WITH (INDEX = uq_ucd_zloser) WHERE col_a = 1;
     /* Group 13: FK-backed unique index */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_z_code) WHERE code = 1;
+    /* Group 17: IGNORE_DUP_KEY */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_pair WITH (INDEX = ux_idkp_a_strict) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_pair WITH (INDEX = ux_idkp_z_skip) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_fk WITH (INDEX = ux_idkf_strict) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_fk WITH (INDEX = ux_idkf_skip) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_rule7 WITH (INDEX = uq_idk7_skip) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_rule7 WITH (INDEX = ux_idk7_strict) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_con WITH (INDEX = uq_idkc_a_key) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_con WITH (INDEX = uq_idkc_z_skip) WHERE code = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_a_code) WHERE code = 1;
     /* Group 14: unique constraint with no sibling */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_solo WITH (INDEX = uq_ucs_code) WHERE code = 1;
