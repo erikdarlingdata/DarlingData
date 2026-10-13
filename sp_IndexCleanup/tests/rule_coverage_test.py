@@ -2256,22 +2256,48 @@ def run_tests(server, password, uptime_days):
                 len(merge) == 1 and "INCLUDE ([c], [d])" in merge[0]["script"],
                 "found %d: %s" % (len(merge), [r["script"] for r in merge]))
 
-    # ---- Group K: the winner is unwound when the foreign-key guard keeps a loser ----
+    # ---- Group K: who wins a pair when a foreign key is backed by one of them ----
     #
     # The guard keeps an index a foreign key is backed by even when a dedupe rule
     # picked it as the loser. The claim "Supersedes <loser>" and the merged
     # include list live on the WINNER's row, which the guard used to leave alone:
     # the winner was still rebuilt with the kept index's includes while that index
     # stayed.
+    #
+    # index_priority can see the foreign key since #917, so a pair is no longer
+    # settled on index_name where one side backs one, and the guard is reached only
+    # where it still has to be: K3, where BOTH sides back a key and neither may go.
+    # K1 and K2 now both end with the FK index winning and the duplicate disabled -
+    # the same outcome from either name order, which is the point of the term.
 
-    # K1: the key is backed by the index that loses on name.
+    # K1: the key is backed by the index that loses on NAME - which is now the only
+    # thing it loses on. These two assertions used to read the other way, and the
+    # premise they were written against is the one index_priority just lost: with no
+    # foreign key term the pair was settled on index_name, the FK index was picked as
+    # the loser, and the guard had to rescue it. The term decides the pair now, so the
+    # FK index WINS and nothing ever tries to disable it - which is why there is no
+    # KEPT - FOREIGN KEY row to find. That makes this case the mirror of K2 below.
+    #
+    # Absorbing the includes is safe on an index a foreign key is backed by: the
+    # winner's rebuild is CREATE INDEX ... WITH (DROP_EXISTING = ON), which keeps the
+    # key columns and the uniqueness the constraint needs. Measured on SQL Server 2022
+    # CU27 (16.0.4295.3) on this fixture: the rebuild succeeds and sys.foreign_keys
+    # still reports key_index_id pointing at ux_z3_code afterwards. A plain DROP INDEX
+    # would be refused, and nothing here emits one for a winner.
     rows, _ = run_proc(server, password, "ic_sg_p3", extra=sg)
     kept = find_rows(rows, index_name="ux_z3_code", script_type="KEPT - FOREIGN KEY")
-    assert_test("K-ForeignKeyWinner", "K1 positive control: ux_z3_code is KEPT - FOREIGN KEY",
-                len(kept) == 1, "found %d" % len(kept))
-    assert_test("K-ForeignKeyWinner", "K1: ux_z3_code is not disabled",
-                len(dedupe_rows(rows, "ux_z3_code")) == 0,
-                "found %s" % [r["script_type"] for r in dedupe_rows(rows, "ux_z3_code")])
+    assert_test("K-ForeignKeyWinner", "K1: no guard row, because the FK index was never the loser (#917)",
+                len(kept) == 0, "found %d" % len(kept))
+    loser = find_rows(rows, index_name="ux_a3_code", script_type="DISABLE SCRIPT")
+    assert_test("K-ForeignKeyWinner", "K1: the duplicate ux_a3_code is the loser instead",
+                len(loser) == 1, "found %d" % len(loser))
+    winner = find_rows(rows, index_name="ux_z3_code", script_type="MERGE SCRIPT")
+    assert_test("K-ForeignKeyWinner", "K1: the FK-backed ux_z3_code wins the pair and absorbs the includes",
+                len(winner) == 1 and "INCLUDE ([e1], [e2])" in winner[0]["script"],
+                "found %d: %s" % (len(winner), [r["script"] for r in winner]))
+    gone = [r for r in dedupe_rows(rows, "ux_z3_code") if r["script_type"] != "MERGE SCRIPT"]
+    assert_test("K-ForeignKeyWinner", "K1: nothing disables or drops ux_z3_code",
+                len(gone) == 0, "found %s" % [r["script_type"] for r in gone])
     merge = find_rows(rows, index_name="ux_a3_code", script_type="MERGE SCRIPT")
     assert_test("K-ForeignKeyWinner",
                 "K1: ux_a3_code gets no MERGE SCRIPT adding the includes of an index that stays",
