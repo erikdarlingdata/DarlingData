@@ -431,30 +431,137 @@ def run_tests(rows, findings=()):
     # 1, and an INSERT with no parent row then succeeds. ux_fkp_z_code backs
     # fk_ic_child_code and ux_fkp_a_code sorts earlier, so the name tiebreak used
     # to pick exactly the wrong one of the pair.
+    #
+    # Since #917 it is not the tiebreak that saves it: index_priority carries a
+    # term for "a foreign key is backed by this index", so it wins the pair
+    # outright and the alphabet never gets a vote. #913's guard still stands
+    # behind that for the rules that do not read priority at all.
     matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_z_code",
                         script_type="DISABLE SCRIPT")
     assert_test("13-FK-Backed", "13a: FK-backed unique index NOT disabled (#902)",
                 len(matches) == 0, f"found {len(matches)} (expected 0)")
 
-    # 13b: and the pair is left alone rather than the other one being promoted.
-    # Promoting blindly is what this cannot do safely: when both indexes back a
-    # key there is no loser to pick, so neither is disabled.
+    # 13b: and now the duplicate is cleaned up, which is the half #917 added. The
+    # outcome used to depend on which name sorted first: with the backing index
+    # sorting LAST, #913's guard stopped the DISABLE and both indexes stayed. With
+    # the priority term the backing index wins either way, so there is a loser to
+    # pick and the redundant index goes.
     matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_a_code",
                         script_type="DISABLE SCRIPT")
-    assert_test("13-FK-Backed", "13b: its duplicate is left alone too (#902)",
-                len(matches) == 0, f"found {len(matches)} (expected 0)")
+    target = matches[0].get("target_index_name", "") if matches else ""
+    assert_test("13-FK-Backed", "13b: its duplicate IS disabled, naming the backing index (#917)",
+                len(matches) == 1 and target == "ux_fkp_z_code",
+                f"found {len(matches)}, target={target or '(none)'}")
 
-    # 13c: and the reader is told the pair is there. Without a row of its own the
-    # index reaches the results only through its compression row, where the rule
-    # reads N/A, so nothing says a duplicate exists or that something stopped it
-    # from being cleaned up. Both are the reader's call to make.
+    # 13c: and no KEPT - FOREIGN KEY row for this pair, because the guard had
+    # nothing to do. That row means "a rule picked this index and the guard took
+    # it back", so drawing it where the index won on its own merits would claim
+    # the guard did something it never did -- the distinction #913's review asked
+    # for, and the reason the row is driven by the rows the guard changed rather
+    # than by is_foreign_key_backing.
     matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_z_code",
                         script_type="KEPT - FOREIGN KEY")
+    assert_test("13-FK-Backed", "13c: no guard row where the backing index won on merit (#917)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    # ---- Group 17: IGNORE_DUP_KEY (issue #916) ----
+
+    # 17a: the skipper wins its own pair now. Two unique indexes on one key with
+    # IGNORE_DUP_KEY on only one: measured on 2022 CU27, SQL Server skips a
+    # duplicate row while EITHER structure skips it, and raises 2601 once the last
+    # one is gone. The pair used to be settled by index_priority and then by name,
+    # and neither saw the option, so ux_idkp_z_skip -- sorting last -- was the loser
+    # and the generated script turned a skipped insert into a failing one.
+    matches = find_rows(rows, table_name="test_ic_idk_pair", index_name="ux_idkp_z_skip",
+                        script_type="DISABLE SCRIPT")
+    assert_test("17-IgnoreDupKey", "17a: the IGNORE_DUP_KEY index is NOT disabled (#916)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    matches = find_rows(rows, table_name="test_ic_idk_pair", index_name="ux_idkp_a_strict",
+                        script_type="DISABLE SCRIPT")
+    target = matches[0].get("target_index_name", "") if matches else ""
+    assert_test("17-IgnoreDupKey", "17a: the strict duplicate is the loser instead (#916)",
+                len(matches) == 1 and target == "ux_idkp_z_skip",
+                f"found {len(matches)}, target={target or '(none)'}")
+
+    # 17b: the interaction the two terms have to settle together. The strict index
+    # backs the foreign key and the skipper backs nothing, so removing either one
+    # changes something: the key gets disabled, or duplicate inserts start failing.
+    # The one outcome that changes nothing is to keep the key's index and give it
+    # IGNORE_DUP_KEY -- measured in both directions, the key stays enabled and
+    # trusted, a duplicate parent key is still skipped, and an orphan child still
+    # fails with 547, while keeping the skipper alone makes that insert fail 2601.
+    matches = find_rows(rows, table_name="test_ic_idk_fk", index_name="ux_idkf_strict",
+                        script_type="DISABLE SCRIPT")
+    assert_test("17-IgnoreDupKey", "17b: the FK-backing index outranks the skipper (#916, #917)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    matches = find_rows(rows, table_name="test_ic_idk_fk", index_name="ux_idkf_skip",
+                        script_type="DISABLE SCRIPT")
+    assert_test("17-IgnoreDupKey", "17b: so the skipper is the loser here (#916)",
+                len(matches) == 1, f"found {len(matches)} (expected 1)")
+
+    matches = find_rows(rows, table_name="test_ic_idk_fk", index_name="ux_idkf_strict",
+                        script_type="IGNORE_DUP_KEY SCRIPT")
+    script = matches[0].get("script", "") if matches else ""
     info = matches[0].get("additional_info", "") if matches else ""
-    names_duplicate = "ux_fkp_a_code" in info
-    assert_test("13-FK-Backed", "13c: the kept index says why, and names its duplicate",
-                len(matches) == 1 and names_duplicate,
-                f"found {len(matches)} rows, names duplicate={names_duplicate}")
+    assert_test("17-IgnoreDupKey", "17b: the keeper is given IGNORE_DUP_KEY, naming the loser (#916)",
+                len(matches) == 1 and "IGNORE_DUP_KEY = ON" in script and "ux_idkf_skip" in info,
+                f"found {len(matches)}, script={script or '(none)'}")
+
+    # 17b: and it has to run BEFORE the disable. While either structure skips, SQL
+    # Server skips; run the other way round, an insert between the two statements
+    # fails with 2601. sort_order 6 against the disables' 20 is what orders them,
+    # and the result set is returned in that order, so position is the assertion.
+    order = [r.get("script_type") for r in rows
+             if r.get("table_name") == "test_ic_idk_fk"
+             and r.get("script_type") in ("IGNORE_DUP_KEY SCRIPT", "DISABLE SCRIPT")]
+    assert_test("17-IgnoreDupKey", "17b: the SET is ordered before the DISABLE (#916)",
+                order == ["IGNORE_DUP_KEY SCRIPT", "DISABLE SCRIPT"],
+                f"order={order}")
+
+    # 17c: Rule 7 reads no priority at all -- it keeps the nonclustered index and
+    # drops the constraint whichever of them skips. #914 carries IGNORE_DUP_KEY in
+    # the replacement's WITH list, but only where the replacement is being rebuilt,
+    # and it writes no script for one that is already unique: the rebuild would add
+    # neither a column nor uniqueness. So this is the case with no rebuild to ride
+    # along in, and it needs the ALTER of its own.
+    matches = find_rows(rows, table_name="test_ic_idk_rule7", index_name="ux_idk7_strict",
+                        script_type="IGNORE_DUP_KEY SCRIPT")
+    info = matches[0].get("additional_info", "") if matches else ""
+    assert_test("17-IgnoreDupKey", "17c: an already-unique Rule 7 replacement gets the ALTER (#916)",
+                len(matches) == 1 and "uq_idk7_skip" in info,
+                f"found {len(matches)} rows, names loser={'uq_idk7_skip' in info}")
+
+    # 17d: no script may ever target a unique constraint. ALTER INDEX ... SET
+    # (IGNORE_DUP_KEY = ON) is REFUSED against the index backing one -- measured on
+    # 2022 CU27, error 1979, "Cannot use index option ignore_dup_key to alter index
+    # '...' as it enforces a primary or unique constraint" -- so a script written
+    # for one would fail when the reader ran it.
+    #
+    # Nothing reaches that today, and the term ordering is why: a constraint keeper
+    # only comes out of Rule 7.5b, which pairs two constraints, and there the
+    # skipping one outranks the strict one. The only term that could lift a strict
+    # constraint past it is the foreign key one, and the rules exclude a column a
+    # foreign key references from that pairing: this fixture is exactly that pair,
+    # and it reaches no dedupe rule at all, just a compression row each. So the
+    # assertion is the invariant rather than a repro -- the filter is one predicate,
+    # and what it protects against is a script that errors.
+    constraint_names = ("uq_idkc_a_key", "uq_idkc_z_skip", "uq_idk7_skip")
+    matches = [r for r in find_rows(rows, script_type="IGNORE_DUP_KEY SCRIPT")
+               if r.get("index_name") in constraint_names]
+    assert_test("17-IgnoreDupKey", "17d: no IGNORE_DUP_KEY script targets a unique constraint (#916)",
+                len(matches) == 0,
+                f"found {len(matches)} for {[r.get('index_name') for r in matches]} (expected 0)")
+
+    # 17d: and the pair on the referenced column is left entirely alone, which is
+    # what makes the case above unreachable. Asserted so that a later change to the
+    # rules' foreign key exclusion shows up here rather than as a failing script.
+    matches = find_rows(rows, table_name="test_ic_idk_con", script_type="DISABLE SCRIPT")
+    drops = find_rows(rows, table_name="test_ic_idk_con", script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("17-IgnoreDupKey", "17d: two constraints on a referenced column reach no rule (#916)",
+                len(matches) == 0 and len(drops) == 0,
+                f"found {len(matches)} disables and {len(drops)} constraint drops (expected 0 and 0)")
 
     # ---- Group 14: A unique constraint with nothing to replace it (issue #903) ----
 
