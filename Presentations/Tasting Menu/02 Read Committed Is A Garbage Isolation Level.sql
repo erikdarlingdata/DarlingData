@@ -122,10 +122,11 @@ WHILE
     @i < 100000
 BEGIN
     SELECT 
-        @PostId = v.PostId,
-        @i += 1
+        @PostId = v.PostId
     FROM dbo.Votes AS v
     WHERE v.VoteTypeId = 8;
+
+    SET @i += 1;
 END;
 GO
 
