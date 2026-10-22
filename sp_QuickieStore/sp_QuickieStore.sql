@@ -11970,7 +11970,17 @@ BEGIN
     GROUP BY
         qsrs.plan_id
     ORDER BY
-        MAX(' +
+        ' +
+    /*
+    Executions and totals add up across intervals, so rank by the sum.
+    The max of one interval misses plans that run steadily.
+    */
+    CASE
+        WHEN @sort_order = 'executions'
+        OR   @sort_order LIKE 'total %'
+        THEN N'SUM('
+        ELSE N'MAX('
+    END +
     CASE @sort_order
          WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
          WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
