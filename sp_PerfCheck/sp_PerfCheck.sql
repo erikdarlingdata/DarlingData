@@ -2378,7 +2378,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             url = N'https://erikdarling.com/sp_perfcheck/#WaitStats'
         FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
+        /*
+        Both ways into #wait_stats: a large share of uptime, or a long
+        average wait (the priority CASE above rates those High for
+        resource waits). Filtering on the share alone dropped the second.
+        */
+        WHERE
+        (
+             ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
+          OR (ws.wait_time_ms * 1.0 / NULLIF(ws.waiting_tasks_count, 0)) > 1000.0
+        )
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
