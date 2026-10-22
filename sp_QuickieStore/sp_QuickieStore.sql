@@ -2028,7 +2028,7 @@ BEGIN
         (240, 'sort_order', 'wait_time', 'total_wait_time_from_sort_order_ms', 'waits.total_query_wait_time_ms', 0, NULL, NULL, 0, 'N0');
 END;
 
-/* ROW_NUMBER window function for sorting */
+/* ROW_NUMBER window function for sorting. plan_id repeats across databases, so partition by both */
 INSERT INTO
     @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
 VALUES
@@ -2037,7 +2037,7 @@ VALUES
         'metadata',
         'n',
         'n',
-        'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY ' +
+        'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY ' +
         CASE WHEN @regression_mode = 1 THEN
              /* As seen when populating #regression_changes */
              CASE @regression_direction
@@ -4738,7 +4738,7 @@ BEGIN
    UPDATE
        @ColumnDefinitions
    SET
-       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
    WHERE metric_type = N'n';
 END;
 
@@ -4859,7 +4859,7 @@ BEGIN
         UPDATE
             @ColumnDefinitions
         SET
-            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
         WHERE metric_type = N'n';
     END;
 END;
