@@ -676,8 +676,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     MIN(qs.creation_time),
                 newest_plan =
                     MAX(qs.creation_time),
+                /*
+                The statement, not the batch: MAX(st.text) gave every hash
+                from the same multi-statement batch the same sample text.
+                */
                 sample_query_text =
-                    MAX(st.text),
+                    MAX
+                    (
+                        SUBSTRING
+                        (
+                            st.text,
+                            (qs.statement_start_offset / 2) + 1,
+                            (
+                                CASE qs.statement_end_offset
+                                    WHEN -1
+                                    THEN DATALENGTH(st.text)
+                                    ELSE qs.statement_end_offset
+                                END - qs.statement_start_offset
+                            ) / 2 + 1
+                        )
+                    ),
                 sort_plan_count =
                     COUNT_BIG(DISTINCT qs.plan_handle),
                 sort_cpu =
