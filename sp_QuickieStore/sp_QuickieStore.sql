@@ -12053,6 +12053,12 @@ In regression mode, a plan's rows from both time periods
 go through the same LAST_VALUE windows, so each window is
 also partitioned by time period. Otherwise, the baseline
 row's last_ values would come from the current period.
+
+Query Store's avg_ columns are averages per interval, so the
+averages here are weighted by count_executions. A plain AVG
+gives an interval with one execution the same pull as an
+interval with thousands, and the total_ columns, which are
+avg_ * count_executions, would be wrong too.
 */
 SELECT
     @current_table = 'inserting #query_store_runtime_stats',
@@ -12091,38 +12097,38 @@ SELECT
     MIN(qsrs_with_lasts.first_execution_time),
     MAX(qsrs_with_lasts.partitioned_last_execution_time),
     SUM(qsrs_with_lasts.count_executions),
-    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    (SUM(qsrs_with_lasts.avg_duration * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
     MIN((qsrs_with_lasts.min_duration / 1000.)),
     MAX((qsrs_with_lasts.max_duration / 1000.)),
-    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    (SUM(qsrs_with_lasts.avg_cpu_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
     MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
     MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
-    AVG(((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_logical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.)),
-    AVG(((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_logical_io_writes * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.)),
-    AVG(((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    (SUM(qsrs_with_lasts.avg_clr_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
     MIN((qsrs_with_lasts.min_clr_time / 1000.)),
     MAX((qsrs_with_lasts.max_clr_time / 1000.)),
     MAX(qsrs_with_lasts.partitioned_last_dop),
     MIN(qsrs_with_lasts.min_dop),
     MAX(qsrs_with_lasts.max_dop),
-    AVG(((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_query_max_used_memory * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.)),
-    AVG(qsrs_with_lasts.avg_rowcount),
+    SUM(qsrs_with_lasts.avg_rowcount * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0),
     MAX(qsrs_with_lasts.partitioned_last_rowcount),
     MIN(qsrs_with_lasts.min_rowcount),
     MAX(qsrs_with_lasts.max_rowcount),';
@@ -12131,15 +12137,15 @@ IF @new = 1
 BEGIN
     SELECT
         @sql += N'
-    AVG(((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_log_bytes_used / 1048576.)),
+    (SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1048576.,
     MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 1048576.)),
     MIN((qsrs_with_lasts.min_log_bytes_used / 1048576.)),
     MAX((qsrs_with_lasts.max_log_bytes_used / 1048576.)),
-    AVG(((qsrs_with_lasts.avg_tempdb_space_used * 8) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_tempdb_space_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8) / 1024.)),
     MIN(((qsrs_with_lasts.min_tempdb_space_used * 8) / 1024.)),
     MAX(((qsrs_with_lasts.max_tempdb_space_used * 8) / 1024.)),';
