@@ -10711,18 +10711,22 @@ BEGIN
             SET STATISTICS XML ON;
         END;
 
+        /*
+        No TOP here: this is a filter, and @top applies after all of
+        the filters. A TOP here kept only the plans with the most of
+        this wait, so other filters could leave nothing behind.
+        */
         SELECT
             @sql += N'
-SELECT TOP (@top)
+SELECT
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 /*
 Restricting waits to the runtime stats rows the date range
 qualifies keeps the filter from matching queries whose waits
-of this category happened entirely outside of it, and keeps
-the TOP ranked by in-range wait totals rather than
-all-history ones. Matches the date semantics of the main
-where clause and the wait sort order joins.
+of this category happened entirely outside of it. Matches the
+date semantics of the main where clause and the wait sort
+order joins.
 */
 JOIN  ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
   ON  qsws.plan_id = qsrs.plan_id
@@ -10754,9 +10758,7 @@ GROUP BY
     qsws.plan_id
 HAVING
     SUM(qsws.avg_query_wait_time_ms) > 0
-ORDER BY
-    SUM(qsws.avg_query_wait_time_ms) DESC
-OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+OPTION(RECOMPILE);' + @nc10;
     END;
 
     IF @debug = 1
@@ -10774,10 +10776,8 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@top bigint,
-        @start_date datetimeoffset(7),
+      N'@start_date datetimeoffset(7),
         @end_date datetimeoffset(7)',
-        @top,
         @start_date,
         @end_date;
 
