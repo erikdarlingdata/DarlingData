@@ -10433,12 +10433,14 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character */
     IF @escape_brackets = 1
     BEGIN
         SELECT
             @query_text_search =
-                REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search,
+                @escape_character, @escape_character + @escape_character),
                 N'[', @escape_character + N'['),
                 N']', @escape_character + N']'),
                 N'_', @escape_character + N'_');
@@ -10582,12 +10584,14 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character */
     IF @escape_brackets = 1
     BEGIN
         SELECT
             @query_text_search_not =
-                REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search_not,
+                @escape_character, @escape_character + @escape_character),
                 N'[', @escape_character + N'['),
                 N']', @escape_character + N']'),
                 N'_', @escape_character + N'_');
