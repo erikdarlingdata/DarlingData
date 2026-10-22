@@ -3931,6 +3931,8 @@ SELECT
         ISNULL(@only_queries_with_forced_plan_failures, 0),
     @escape_brackets =
         ISNULL(@escape_brackets, 0),
+    @escape_character =
+        ISNULL(@escape_character, N'\'),
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @query_type =
@@ -10432,8 +10434,9 @@ BEGIN
             N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2' +
             CASE
                 WHEN @escape_brackets = 1
+                /* A single quote as the escape character has to be doubled inside the literal */
                 THEN N' ESCAPE ''' +
-                     UPPER(@escape_character COLLATE SQL_Latin1_General_CP1_CI_AS) +
+                     REPLACE(UPPER(@escape_character COLLATE SQL_Latin1_General_CP1_CI_AS), N'''', N'''''') +
                      N''''
                 ELSE N''
             END;
