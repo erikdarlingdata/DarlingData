@@ -5319,15 +5319,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     database_name = @current_database_name,
                     object_name = mf.name,
                     details =
-                        ''Transaction log file is using a growth increment of '' +
-                        CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
-                        ''On SQL Server 2022, Azure SQL DB, or Azure MI, transaction logs can use instant file initialization when set to exactly 64 MB. '' +
-                        ''Consider changing the growth increment to 64 MB for improved performance.'',
+                        CASE
+                            WHEN mf.growth = 0
+                            THEN ''Transaction log file has auto-growth turned off. If the log fills and no other log file can grow, writes fail with error 9002. '' +
+                                 ''If that is not deliberate, use a fixed growth increment of 64 MB.''
+                            ELSE ''Transaction log file is using a growth increment of '' +
+                                 CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
+                                 ''On SQL Server 2022, Azure SQL DB, or Azure MI, log growths of up to 64 MB can use instant file initialization; larger growths are zeroed out first. '' +
+                                 ''Consider changing the growth increment to 64 MB for improved performance.''
+                        END,
                     url = N''https://erikdarling.com/sp_perfcheck/#LogGrowthSize''
                 FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
                 WHERE mf.is_percent_growth = 0
                 AND   mf.type_desc = N''LOG''
-                AND   mf.growth * 8.0 / 1024 <> 64;';
+                AND
+                (
+                     mf.growth = 0 /* auto-growth off */
+                  OR mf.growth * 8.0 / 1024 > 64 /* too large for instant file initialization */
+                );';
 
                 IF @debug = 1
                 BEGIN
