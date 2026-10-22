@@ -3286,8 +3286,8 @@ BEGIN
             /* If we found any conflicts, raise an error */
             IF LEN(@conflict_list) > 0
             BEGIN
-                /* Remove trailing comma and space */
-                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+                /* Remove trailing comma and space. LEN does not count the trailing space, so take off one character */
+                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 1);
 
                 SET @error_msg =
                     N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' +
