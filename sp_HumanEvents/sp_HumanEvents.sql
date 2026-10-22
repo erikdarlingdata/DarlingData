@@ -3657,14 +3657,15 @@ BEGIN
             deqs.total_logical_writes * 8. / 1024.,
         total_logical_reads_mb =
             deqs.total_logical_reads * 8. / 1024.,
+        /* grant columns are already KB, not 8 KB pages */
         min_grant_mb =
-            deqs.min_grant_kb * 8. / 1024.,
+            deqs.min_grant_kb / 1024.,
         max_grant_mb =
-            deqs.max_grant_kb * 8. / 1024.,
+            deqs.max_grant_kb / 1024.,
         min_used_grant_mb =
-            deqs.min_used_grant_kb * 8. / 1024.,
+            deqs.min_used_grant_kb / 1024.,
         max_used_grant_mb =
-            deqs.max_used_grant_kb * 8. / 1024.,
+            deqs.max_used_grant_kb / 1024.,
         deqs.min_reserved_threads,
         deqs.max_reserved_threads,
         deqs.min_used_threads,
