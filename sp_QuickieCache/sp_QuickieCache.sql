@@ -677,6 +677,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         min_elapsed_time bigint NULL,
         max_elapsed_time bigint NULL,
         max_dop bigint NULL,
+        total_grant_kb bigint NULL,
+        total_used_grant_kb bigint NULL,
         max_grant_kb bigint NULL,
         max_used_grant_kb bigint NULL,
         total_spills bigint NULL,
@@ -714,6 +716,8 @@ WITH
     min_elapsed_time,
     max_elapsed_time,
     max_dop,
+    total_grant_kb,
+    total_used_grant_kb,
     max_grant_kb,
     max_used_grant_kb,
     total_spills,
@@ -748,9 +752,13 @@ SELECT
     CASE
         WHEN @has_memory_grants = 1
         THEN N'
+    total_grant_kb = ISNULL(qs.total_grant_kb, 0),
+    total_used_grant_kb = ISNULL(qs.total_used_grant_kb, 0),
     max_grant_kb = ISNULL(qs.max_grant_kb, 0),
     max_used_grant_kb = ISNULL(qs.max_used_grant_kb, 0),'
         ELSE N'
+    total_grant_kb = NULL,
+    total_used_grant_kb = NULL,
     max_grant_kb = NULL,
     max_used_grant_kb = NULL,'
     END +
@@ -1511,17 +1519,22 @@ OPTION(RECOMPILE, MAXDOP 1);';
             SQL Server would warn about it on every run. Feeding them
             zeros keeps them quiet, and the CASE — not the aggregate —
             decides whether the answer is a value or a NULL.
+
+            The totals add up total_grant_kb and total_used_grant_kb.
+            They used to add up max_grant_kb, the largest single grant of
+            each plan, which is not a total of anything: the grant total,
+            the average grant, and the memory share all came out low.
             */
             total_grant_mb =
                 CASE
                     WHEN @has_memory_grants = 1
-                    THEN SUM(ISNULL(s.max_grant_kb, 0)) / 1024.0
+                    THEN SUM(ISNULL(s.total_grant_kb, 0)) / 1024.0
                     ELSE 0
                 END,
             total_used_grant_mb =
                 CASE
                     WHEN @has_memory_grants = 1
-                    THEN SUM(ISNULL(s.max_used_grant_kb, 0)) / 1024.0
+                    THEN SUM(ISNULL(s.total_used_grant_kb, 0)) / 1024.0
                     ELSE 0
                 END,
             total_spills =
