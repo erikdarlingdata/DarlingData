@@ -1031,8 +1031,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'CPU',
             CONVERT(nvarchar(10), osi.cpu_count) +
             N' logical processors, ' +
-            CONVERT(nvarchar(10), osi.hyperthread_ratio) +
-            N' physical cores, ' +
+            /*
+            hyperthread_ratio is logical processors per socket, not a core
+            count. Sockets times cores per socket is the physical core count;
+            if either is not reported, leave the core count out.
+            */
+            ISNULL
+            (
+                CONVERT(nvarchar(10), NULLIF(osi.socket_count * osi.cores_per_socket, 0)) +
+                N' physical cores, ',
+                N''
+            ) +
             CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
             N' NUMA node(s)'
         FROM sys.dm_os_sys_info AS osi;
