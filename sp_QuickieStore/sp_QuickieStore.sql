@@ -12244,13 +12244,17 @@ BEGIN
         ' +
     /*
     Executions and totals add up across intervals, so rank by the sum.
-    The max of one interval misses plans that run steadily.
+    The max of one interval misses plans that run steadily. Averages
+    rank by the average over the window, weighted by executions, which
+    is the number the results show.
     */
     CASE
         WHEN @sort_order = 'executions'
         OR   @sort_order LIKE 'total %'
         THEN N'SUM('
-        ELSE N'MAX('
+        WHEN @sort_order = 'recent'
+        THEN N'MAX('
+        ELSE N'SUM('
     END +
     CASE @sort_order
          WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
@@ -12275,7 +12279,14 @@ BEGIN
          WHEN 'total rows' THEN N'qsrs.avg_rowcount * qsrs.count_executions'
          ELSE N'qsrs.avg_cpu_time'
     END +
-    N') DESC
+    CASE
+        WHEN @sort_order = 'executions'
+        OR   @sort_order LIKE 'total %'
+        OR   @sort_order = 'recent'
+        THEN N')'
+        ELSE N' * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
+    END +
+    N' DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END;
 
