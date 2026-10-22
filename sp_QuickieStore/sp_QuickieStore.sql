@@ -57,8 +57,8 @@ ALTER PROCEDURE
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
     @sort_order varchar(50) = 'cpu', /*the runtime metric you want to prioritize results by; varchar(50) so the documented 'average '/'avg ' prefix forms (e.g. 'average buffer latches waits') aren't truncated before normalization and silently fall back to cpu*/
     @top bigint = 10, /*the number of queries you want to pull back*/
-    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
-    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @timezone sysname = NULL, /*user specified time zone to override dates displayed in results*/
     @execution_count bigint = NULL, /*the minimum number of executions a query must have*/
     @duration_ms bigint = NULL, /*the minimum duration a query must have to show up in results*/
@@ -95,8 +95,8 @@ ALTER PROCEDURE
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
     @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
     @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
-    @regression_baseline_start_date datetimeoffset(7) = NULL, /*the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
-    @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
+    @regression_baseline_start_date datetimeoffset(7) = NULL, /*the begin date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
     @include_query_hash_totals bit = 0, /*will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
@@ -161,8 +161,8 @@ BEGIN
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
                 WHEN N'@sort_order' THEN 'the runtime metric you want to prioritize results by'
                 WHEN N'@top' THEN 'the number of queries you want to pull back'
-                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
-                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
+                WHEN N'@start_date' THEN 'the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@timezone' THEN 'user specified time zone to override dates displayed in results'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN N'@duration_ms' THEN 'the minimum duration a query must have to show up in results'
@@ -199,8 +199,8 @@ BEGIN
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
                 WHEN N'@work_start' THEN 'use this to set a specific start of your work days'
                 WHEN N'@work_end' THEN 'use this to set a specific end of your work days'
-                WHEN N'@regression_baseline_start_date' THEN 'the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
-                WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
+                WHEN N'@regression_baseline_start_date' THEN 'the begin date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
                 WHEN N'@include_query_hash_totals' THEN N'will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
