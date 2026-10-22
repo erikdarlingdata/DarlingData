@@ -788,6 +788,8 @@ BEGIN
         @log_database_name = ISNULL(@log_database_name, DB_NAME()),
         /* Default schema name to dbo if not specified */
         @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+        /* An explicit NULL prefix walks past the length guard and QUOTENAME(NULL) silently no-ops every logging statement */
+        @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'HumanEventsBlockViewer'),
         @log_retention_days =
             CASE
                 WHEN @log_retention_days < 0
