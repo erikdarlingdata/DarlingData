@@ -4906,7 +4906,12 @@ OPTION(RECOMPILE);
 
 /*
 Check for dispatcher plans (parameter sensitive plan optimization)
-If a query is a dispatcher, warn and provide the variant query IDs
+If a plan is a dispatcher, warn and provide the variant query IDs.
+
+The test is on the plan, not on its query. A parent query can have
+regular plans next to its dispatcher, and keying on the parent query
+skipped those runnable plans whenever one of its variants was in the
+results too.
 */
 IF @sql_2022_views = 1
 BEGIN
@@ -4936,7 +4941,7 @@ BEGIN
                         N', ' +
                         RTRIM(qsqv.query_variant_query_id)
                     FROM #query_store_query_variant AS qsqv
-                    WHERE qsqv.parent_query_id = qsq.query_id
+                    WHERE qsqv.dispatcher_plan_id = qsp.plan_id
                     ORDER BY
                         qsqv.query_variant_query_id
                     FOR XML
@@ -4948,14 +4953,12 @@ BEGIN
                 N''
             )
     FROM #query_store_plan AS qsp
-    JOIN #query_store_query AS qsq
-      ON qsp.query_id = qsq.query_id
     WHERE EXISTS
           (
               SELECT
                   1/0
               FROM #query_store_query_variant AS qsqv
-              WHERE qsqv.parent_query_id = qsq.query_id
+              WHERE qsqv.dispatcher_plan_id = qsp.plan_id
           )
     OPTION(RECOMPILE);
 END;
@@ -5416,7 +5419,7 @@ WHERE NOT EXISTS
           SELECT
               1/0
           FROM #query_store_query_variant AS qsqv
-          WHERE qsqv.parent_query_id = qsq.query_id
+          WHERE qsqv.dispatcher_plan_id = qsp.plan_id
       )
 OPTION(RECOMPILE);
 
