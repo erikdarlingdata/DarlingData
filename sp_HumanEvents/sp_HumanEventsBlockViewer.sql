@@ -2069,7 +2069,20 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    /*
+    The name the event recorded comes first: reports can be days old,
+    and by then the database may be dropped (DB_NAME returned NULL) or
+    its id reused by another database (DB_NAME returned the wrong
+    name). DB_NAME(0) returns the current database, so reports with
+    database_id 0 (parallel workers waiting on each other) were
+    attributed to the calling database; NULLIF leaves those NULL.
+    */
+    database_name =
+        COALESCE
+        (
+            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+        ),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -2202,7 +2215,20 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    /*
+    The name the event recorded comes first: reports can be days old,
+    and by then the database may be dropped (DB_NAME returned NULL) or
+    its id reused by another database (DB_NAME returned the wrong
+    name). DB_NAME(0) returns the current database, so reports with
+    database_id 0 (parallel workers waiting on each other) were
+    attributed to the calling database; NULLIF leaves those NULL.
+    */
+    database_name =
+        COALESCE
+        (
+            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+        ),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -4818,7 +4844,7 @@ BEGIN
                   14
               ) +
             N' [dd hh:mm:ss] of lock wait time in database ' +
-            b.database_name,
+            ISNULL(b.database_name, N'unknown'),
        sort_order =
            ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
     FROM b AS b
