@@ -781,6 +781,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         wait_type
     )
     VALUES
+        (N'BROKER_EVENTHANDLER'),
+        (N'BROKER_RECEIVE_WAITFOR'),
         (N'BROKER_TASK_STOP'),
         (N'BROKER_TO_FLUSH'),
         (N'BROKER_TRANSMITTER'),
@@ -799,7 +801,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'LAZYWRITER_SLEEP'),
         (N'LOGMGR_QUEUE'),
         (N'MEMORY_ALLOCATION_EXT'),
+        (N'ONDEMAND_TASK_QUEUE'),
+        (N'PARALLEL_REDO_DRAIN_WORKER'),
+        (N'PARALLEL_REDO_WORKER_WAIT_WORK'),
         (N'PREEMPTIVE_XE_GETTARGETSTATE'),
+        (N'PVS_PREALLOCATE'),
+        (N'PWAIT_DIRECTLOGCONSUMER_GETNEXT'),
+        (N'PWAIT_EXTENSIBILITY_CLEANUP_TASK'),
+        (N'QDS_ASYNC_QUEUE'),
         (N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP'),
         (N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP'),
         (N'REQUEST_FOR_DEADLOCK_SEARCH'),
@@ -814,6 +823,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'SLEEP_SYSTEMTASK'),
         (N'SLEEP_TEMPDBSTARTUP'),
         (N'SNI_HTTP_ACCEPT'),
+        (N'SOS_WORK_DISPATCHER'),
         (N'SP_SERVER_DIAGNOSTICS_SLEEP'),
         (N'SQLTRACE_BUFFER_FLUSH'),
         (N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP'),
@@ -828,7 +838,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'XE_DISPATCHER_JOIN'),
         (N'XE_DISPATCHER_WAIT'),
         (N'XE_LIVE_TARGET_TVF'),
-        (N'XE_TIMER_EVENT');
+        (N'XE_TIMER_EVENT'),
+        (N'XTP_PREEMPTIVE_TASK');
 
     /* Create temp table for database I/O stalls */
     CREATE TABLE
@@ -2420,7 +2431,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM #benign_waits AS bw
             WHERE bw.wait_type = osw.wait_type
-        );
+        )
+        /*
+        SLEEP_TASK is mostly idle background tasks, so it stays out of the
+        ratio. It is not in #benign_waits because the wait stats check above
+        collects it, and its share of a total that left it out can reach
+        1,000% and overflow #wait_stats.percentage, a decimal(5, 2).
+        */
+        AND   osw.wait_type <> N'SLEEP_TASK';
 
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
         IF @total_wait_time_ms > 0
