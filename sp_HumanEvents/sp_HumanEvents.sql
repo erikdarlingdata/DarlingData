@@ -3087,7 +3087,18 @@ BEGIN
                 ),
                 oa.c.value('@timestamp', 'datetime2')
             ),
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+        /*
+        DB_NAME(0) returns the current database, so a report with
+        database_id 0 (parallel workers waiting on each other) was
+        labeled with the caller's database. A dropped database falls
+        back to the name the event carries.
+        */
+        database_name =
+            COALESCE
+            (
+                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0)),
+                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N'')
+            ),
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -3182,7 +3193,18 @@ BEGIN
                 ),
                 oa.c.value('@timestamp', 'datetime2')
             ),
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+        /*
+        DB_NAME(0) returns the current database, so a report with
+        database_id 0 (parallel workers waiting on each other) was
+        labeled with the caller's database. A dropped database falls
+        back to the name the event carries.
+        */
+        database_name =
+            COALESCE
+            (
+                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0)),
+                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N'')
+            ),
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -3361,7 +3383,7 @@ BEGIN
                 kheb.contentious_object,
                 N'Unresolved: ' +
                 N'database: ' +
-                kheb.database_name +
+                ISNULL(kheb.database_name, N'unknown') +
                 N' object_id: ' +
                 RTRIM(kheb.object_id)
             ),
@@ -4691,7 +4713,12 @@ FROM
                     ), oa.c.value(''@timestamp'', ''datetime2'')
                 ),
             activity = ''blocked'',
-            database_name = DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer'')),
+            database_name =
+                COALESCE
+                (
+                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0)),
+                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N'''')
+                ),
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
             transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
@@ -4742,7 +4769,12 @@ FROM
                     oa.c.value(''@timestamp'', ''datetime2'')
                 ),
             activity = ''blocking'',
-            database_name = DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer'')),
+            database_name =
+                COALESCE
+                (
+                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0)),
+                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N'''')
+                ),
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
             transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
