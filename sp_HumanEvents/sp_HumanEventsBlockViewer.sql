@@ -396,7 +396,8 @@ DECLARE
     @mdsql nvarchar(max) = N'',
     @actual_start_date datetime2(7),
     @actual_end_date datetime2(7),
-    @actual_event_count bigint;
+    @actual_event_count bigint,
+    @reports_read bigint;
 
 /*Use some sane defaults for input parameters*/
 IF @debug = 1
@@ -3451,13 +3452,29 @@ BEGIN
 
     BlockingRollup:
 
-    /* Capture actual date range and event count from the data */
+    /*
+    Capture the actual date range and report count from what is shown.
+    Each blocked row in #blocks is one blocked process report. The old
+    count, COUNT_BIG(DISTINCT monitor_loop) over #blocked, counted
+    monitor passes (one pass can raise several reports) and was taken
+    before the @database_name and @object_name filters, so the header
+    counted reports the output did not show. The "limited to most
+    recent" note compares @max_blocking_events with the reports read,
+    before any filter, because that is what the limit applies to.
+    */
     SELECT
-        @actual_start_date = MIN(event_time),
-        @actual_end_date = MAX(event_time),
-        @actual_event_count = COUNT_BIG(DISTINCT monitor_loop)
-    FROM #blocked
-    WHERE event_time IS NOT NULL;
+        @actual_start_date = MIN(b.event_time),
+        @actual_end_date = MAX(b.event_time),
+        @actual_event_count = COUNT_BIG(*)
+    FROM #blocks AS b
+    WHERE b.activity = 'blocked'
+    AND   b.event_time IS NOT NULL
+    AND  (b.contentious_object = @object_name
+          OR @object_name IS NULL);
+
+    SELECT
+        @reports_read = COUNT_BIG(*)
+    FROM #blocked AS b;
 
     /*
     Use original dates if no data found. The originals are NULL when
@@ -3522,7 +3539,7 @@ BEGIN
             N' total events' +
             CASE
                 WHEN @max_blocking_events > 0
-                AND  @actual_event_count >= @max_blocking_events
+                AND  @reports_read >= @max_blocking_events
                 THEN N', limited to most recent ' +
                      CONVERT(nvarchar(30), @max_blocking_events) +
                      N')'
