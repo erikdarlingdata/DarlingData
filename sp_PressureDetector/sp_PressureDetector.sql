@@ -2288,7 +2288,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
             p.cntr_value,
             p.cntr_type
         FROM p
-        WHERE p.cntr_value > 0
+        /*
+        Sample mode keeps zeros: a counter that is 0 in one snapshot and
+        not in the other (Processes blocked 0 -> 1) needs both rows for
+        the comparison below to see the change.
+        */
+        WHERE
+        (
+             p.cntr_value > 0
+          OR @sample_seconds > 0
+        )
         AND   p.object_name LIKE @prefix
         AND   p.instance_name NOT IN
         (
@@ -2419,7 +2428,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       AND dopc.counter_name = dopc2.counter_name
                       AND dopc.instance_name = dopc2.instance_name
                       AND dopc.sample_time < dopc2.sample_time
-                    WHERE (dopc2.cntr_value - dopc.cntr_value) <> 0
+                    /*
+                    Counters that moved, plus point-in-time gauges
+                    (cntr_type 65792) that are not zero. A gauge such as
+                    Memory Grants Pending that sits at the same non-zero
+                    value for the whole sample is pressure, not "no change".
+                    */
+                    WHERE
+                    (
+                         (dopc2.cntr_value - dopc.cntr_value) <> 0
+                      OR
+                      (
+                           dopc2.cntr_type = 65792
+                       AND dopc2.cntr_value > 0
+                      )
+                    )
                 )
                 SELECT
                     p.object_name,
