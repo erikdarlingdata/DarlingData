@@ -532,6 +532,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
+        /* sys.indexes.type, so a script can tell a table whose base is a clustered columnstore index (5) */
+        index_type tinyint NOT NULL,
         can_compress bit NOT NULL
     );
 
@@ -2004,6 +2006,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = o.name,
             index_id = i.index_id,
             index_name = ISNULL(i.name, o.name + N''.Heap''),
+            index_type = i.type,
             can_compress =
                 CASE
                     WHEN p.index_id > 0
@@ -2164,6 +2167,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_id,
         index_name,
+        index_type,
         can_compress
     )
     EXECUTE sys.sp_executesql
@@ -6366,8 +6370,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N''
             END +
             N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            SQL Server refuses CREATE INDEX ... WITH (DROP_EXISTING = ON, ONLINE = ON)
+            on a table whose base is a clustered columnstore index: measured on 2022
+            CU27, Msg 35352. The paired DISABLE still runs, so the loser's columns
+            would be covered by nothing. ALTER INDEX ... REBUILD WITH (ONLINE = ON) is
+            accepted on the same table, and a nonclustered columnstore index does not
+            cause the error, so only this case is written offline.
+            */
             CASE
                 WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
                 THEN N'ON'
                 ELSE N'OFF'
             END +
@@ -9133,8 +9154,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ELSE N''
                 END +
                 N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+                /* Offline on a clustered columnstore table, for the reason given at the MERGE SCRIPT (Msg 35352) */
                 CASE
                     WHEN @online = 1
+                    AND  NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #filtered_objects AS fo_cci
+                        WHERE fo_cci.database_id = ia.database_id
+                        AND   fo_cci.object_id = ia.object_id
+                        AND   fo_cci.index_type = 5
+                    )
                     THEN N'ON'
                     ELSE N'OFF'
                 END +

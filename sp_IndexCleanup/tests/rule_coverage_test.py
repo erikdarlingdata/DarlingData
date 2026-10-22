@@ -1096,6 +1096,8 @@ GO
 #                  index that replaces it (MAKE UNIQUE).
 #   ic_sg_filt     Group I: a filtered unique index whose filter column is not in it
 #                  (SQL Server refuses IGNORE_DUP_KEY on a filtered index).
+#   ic_sg_cci      Group I: two rowstore key duplicates on a clustered columnstore
+#                  table, where a DROP_EXISTING rebuild cannot run ONLINE.
 #   ic_sg_sup      Group J: a superset that already has every column of its subset.
 #   ic_sg_uqnoop   Group J: a unique index that already replaces a constraint.
 #   ic_sg_real     Group J: a superset that really does absorb a column (control).
@@ -1120,7 +1122,7 @@ L_TABLES = tuple(
 
 SCRIPTGEN_TABLES = (
     "ic_sg_c3", "ic_sg_c4", "ic_sg_c5a", "ic_sg_c5b", "ic_sg_p3", "ic_sg_p4",
-    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_sup",
+    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_cci", "ic_sg_sup",
     "ic_sg_uqnoop", "ic_sg_real",
 ) + L_TABLES
 
@@ -1200,6 +1202,13 @@ CREATE TABLE dbo.ic_sg_filt (id integer NOT NULL CONSTRAINT pk_ic_sg_filt PRIMAR
 CREATE UNIQUE INDEX ux_sg_filt ON dbo.ic_sg_filt (k) WHERE f = 1 WITH (STATISTICS_NORECOMPUTE = ON);
 GO
 
+CREATE TABLE dbo.ic_sg_cci (id integer NOT NULL, k integer NOT NULL, x integer NULL, y integer NULL);
+""" + _sg_rows("ic_sg_cci", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
+CREATE CLUSTERED COLUMNSTORE INDEX cci_sg_cci ON dbo.ic_sg_cci;
+CREATE INDEX ix_a_sg_cci ON dbo.ic_sg_cci (k) INCLUDE (x);
+CREATE INDEX ix_b_sg_cci ON dbo.ic_sg_cci (k) INCLUDE (y);
+GO
+
 CREATE TABLE dbo.ic_sg_sup (id integer NOT NULL CONSTRAINT pk_ic_sg_sup PRIMARY KEY, a integer NULL, b integer NULL, c integer NULL);
 """ + _sg_rows("ic_sg_sup", "id, a, b, c", ["RN", "RN", "1", "2"]) + """
 CREATE INDEX ix_sg_sup_ab ON dbo.ic_sg_sup (a, b) INCLUDE (c);
@@ -1265,6 +1274,37 @@ END TRY
 BEGIN CATCH
     SELECT marker = N'DUP', outcome = N'error', n = ERROR_NUMBER();
 END CATCH;
+"""
+
+# Reads back the included columns of one index, for a merge whose effect is the
+# include list rather than an option.
+INCLUDES_PROBE_SQL = """
+SELECT
+    marker = N'INCL',
+    includes =
+        STUFF
+        (
+            (
+                SELECT
+                    N',' + c.name
+                FROM sys.index_columns AS ic
+                JOIN sys.columns AS c
+                  ON  c.object_id = ic.object_id
+                  AND c.column_id = ic.column_id
+                WHERE ic.object_id = i.object_id
+                AND   ic.index_id = i.index_id
+                AND   ic.is_included_column = 1
+                ORDER BY
+                    c.name
+                FOR XML PATH(N'')
+            ),
+            1,
+            1,
+            N''
+        )
+FROM sys.indexes AS i
+WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
+AND   i.name = N'%(i)s';
 """
 
 # Group L's duplicate insert, one per table, each with its own marker. Same key
@@ -2208,6 +2248,29 @@ def run_tests(server, password, uptime_days):
     assert_test("I-IndexOptions",
                 "filtered-index include script carries STATISTICS_NORECOMPUTE = ON",
                 "STATISTICS_NORECOMPUTE = ON" in text, text)
+
+    # A clustered columnstore table. SQL Server refuses CREATE INDEX ... WITH
+    # (DROP_EXISTING = ON, ONLINE = ON) there with Msg 35352, while the paired
+    # DISABLE runs fine, so ix_b_sg_cci's include would be covered by nothing.
+    rows, _ = run_proc(server, password, "ic_sg_cci", extra=sg)
+    merge = find_rows(rows, index_name="ix_a_sg_cci", script_type="MERGE SCRIPT")
+    loser = find_rows(rows, index_name="ix_b_sg_cci", script_type="DISABLE SCRIPT")
+    script = merge[0]["script"] if merge else ""
+    assert_test("I-IndexOptions",
+                "positive control: ix_a_sg_cci gets a MERGE SCRIPT and ix_b_sg_cci a DISABLE",
+                len(merge) == 1 and len(loser) == 1 and "INCLUDE ([x], [y])" in script,
+                "merge=%d disable=%d" % (len(merge), len(loser)))
+    assert_test("I-IndexOptions",
+                "MERGE SCRIPT on a clustered columnstore table is not ONLINE = ON",
+                "ONLINE = ON" not in script, script)
+
+    out, errs = exec_in_rolled_back_transaction(
+        server, password, [script, loser[0]["script"] if loser else ""],
+        INCLUDES_PROBE_SQL % {"t": "ic_sg_cci", "i": "ix_a_sg_cci"})
+    incl = probe_fields(out, "INCL")
+    assert_test("I-IndexOptions",
+                "executed on the columnstore table: the merge runs and ix_a_sg_cci includes x and y",
+                incl == ["x,y"] and not errs, "includes=%s errors=%s" % (incl, errs))
 
     # ---- Group J: no MERGE SCRIPT when the merge changes nothing ----
     #
