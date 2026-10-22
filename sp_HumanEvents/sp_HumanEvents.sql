@@ -2244,17 +2244,25 @@ BEGIN
             q.query_plan_hash_signed,
             q.query_hash_signed,
             q.plan_handle,
+            /*
+            #totals is one row per hash pair. With @skip_plans = 1 the
+            join lets every plan handle of that pair through, so the
+            plan handle stays out of the partition there; otherwise each
+            plan handle came back as its own row carrying the whole
+            pair's totals.
+            */
             n =
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
                         q.query_plan_hash_signed,
                         q.query_hash_signed,
-                        q.plan_handle
+                        CASE
+                            WHEN @skip_plans = 0
+                            THEN q.plan_handle
+                        END
                     ORDER BY
-                        q.query_plan_hash_signed,
-                        q.query_hash_signed,
-                        q.plan_handle
+                        q.event_time DESC
                 )
         FROM #queries AS q
         JOIN #totals AS t
