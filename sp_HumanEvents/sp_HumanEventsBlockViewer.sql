@@ -575,11 +575,20 @@ SELECT
     @is_system_health_msg =
         CONVERT(nchar(1), @is_system_health);
 
-/*Change this here in case someone leave it NULL*/
+/*
+Change this here in case someone leave it NULL.
+Either table parameter promotes to table mode, so a call that names only
+one of them fails the table validation below. Requiring both here meant
+a lone @target_table or @target_column was ignored without a word and
+the XE session was read instead.
+*/
 IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL
 AND ISNULL(@target_schema, N'dbo') IS NOT NULL
-AND @target_table IS NOT NULL
-AND @target_column IS NOT NULL
+AND
+(
+     @target_table IS NOT NULL
+  OR @target_column IS NOT NULL
+)
 AND @is_system_health = 0
 BEGIN
     SET @target_type = N'table';
