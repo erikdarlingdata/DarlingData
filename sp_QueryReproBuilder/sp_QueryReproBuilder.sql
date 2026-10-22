@@ -546,6 +546,13 @@ SELECT
 
 /*
 Convert dates to UTC for filtering
+
+A value without a time zone offset arrives as +00:00 and is taken as
+local server time, so it is moved by the server's UTC difference. A value
+with an offset other than +00:00 is already an exact point in time, and
+moving it again shifted the window by the server's UTC difference a
+second time. Those are only switched to +00:00. An explicit +00:00 cannot
+be told apart from no offset, so it is still taken as local time.
 */
 SELECT
     @start_date =
@@ -563,6 +570,9 @@ SELECT
                         SYSUTCDATETIME()
                     )
                 )
+            WHEN @start_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @start_date) <> 0
+            THEN SWITCHOFFSET(@start_date_original, N'+00:00')
             WHEN @start_date IS NOT NULL
             THEN
                 DATEADD
@@ -592,6 +602,9 @@ SELECT
                         )
                     )
                 )
+            WHEN @end_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @end_date) <> 0
+            THEN SWITCHOFFSET(@end_date_original, N'+00:00')
             WHEN @end_date IS NOT NULL
             THEN
                 DATEADD
