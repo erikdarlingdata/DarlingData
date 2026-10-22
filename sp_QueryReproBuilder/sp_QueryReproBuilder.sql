@@ -3926,7 +3926,14 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
-Update things to get the context settings for each query
+Update things to get the context settings for each query.
+
+Every option is written out as ON or OFF. Writing only the options that
+were ON left the others to whatever the session running the repro had:
+a query captured with ANSI_NULLS OFF ran under ANSI_NULLS ON and returned
+different rows, and a query captured with ARITHABORT OFF (the default for
+most drivers) compiled a plan of its own when run from SSMS, which sets
+ARITHABORT ON.
 */
 SELECT
     @current_table = N'updating context_settings in #query_store_runtime_stats';
@@ -3944,8 +3951,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 1 = 1
-                THEN ', ANSI_PADDING'
-                ELSE ''
+                THEN ', ANSI_PADDING ON'
+                ELSE ', ANSI_PADDING OFF'
             END +
             CASE
                 WHEN
@@ -3954,8 +3961,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 8 = 8
-                THEN ', CONCAT_NULL_YIELDS_NULL'
-                ELSE ''
+                THEN ', CONCAT_NULL_YIELDS_NULL ON'
+                ELSE ', CONCAT_NULL_YIELDS_NULL OFF'
             END +
             CASE
                 WHEN
@@ -3964,8 +3971,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 16 = 16
-                THEN ', ANSI_WARNINGS'
-                ELSE ''
+                THEN ', ANSI_WARNINGS ON'
+                ELSE ', ANSI_WARNINGS OFF'
             END +
             CASE
                 WHEN
@@ -3974,8 +3981,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 32 = 32
-                THEN ', ANSI_NULLS'
-                ELSE ''
+                THEN ', ANSI_NULLS ON'
+                ELSE ', ANSI_NULLS OFF'
             END +
             CASE
                 WHEN
@@ -3984,8 +3991,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 64 = 64
-                THEN ', QUOTED_IDENTIFIER'
-                ELSE ''
+                THEN ', QUOTED_IDENTIFIER ON'
+                ELSE ', QUOTED_IDENTIFIER OFF'
             END +
             CASE
                 WHEN
@@ -3994,8 +4001,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 4096 = 4096
-                THEN ', ARITHABORT'
-                ELSE ''
+                THEN ', ARITHABORT ON'
+                ELSE ', ARITHABORT OFF'
             END +
             CASE
                 WHEN
@@ -4004,8 +4011,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 8192 = 8192
-                THEN ', NUMERIC_ROUNDABORT'
-                ELSE ''
+                THEN ', NUMERIC_ROUNDABORT ON'
+                ELSE ', NUMERIC_ROUNDABORT OFF'
             END,
             2,
             256
@@ -4020,6 +4027,7 @@ JOIN #query_store_query AS qsq
 JOIN #query_context_settings AS qcs
   ON  qsq.context_settings_id = qcs.context_settings_id
   AND qsq.database_id = qcs.database_id
+WHERE qcs.set_options IS NOT NULL
 OPTION(RECOMPILE);
 
 /*
@@ -4933,8 +4941,8 @@ SELECT
                     THEN N''
                     ELSE
                         N'SET' +
-                        REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
-                        N' ON;' +
+                        REPLACE(qsrs.context_settings, N', ', N';' + NCHAR(10) + N'SET ') +
+                        N';' +
                         NCHAR(10)
                 END +
                 ISNULL
