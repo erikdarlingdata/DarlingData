@@ -4149,6 +4149,26 @@ BEGIN
 
     IF @get_all_databases = 1
     BEGIN
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Database does not exist'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -4268,6 +4288,26 @@ BEGIN
 
     IF @get_all_databases = 1
     BEGIN
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Query Store not enabled'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -4630,6 +4670,26 @@ OPTION(RECOMPILE);' + @nc10;
 Check that you spelled everything correctly and you''re in the right database
 We will skip this database and continue',
                        10, 1, @procedure_name, @database_name) WITH NOWAIT;
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Procedure not in Query Store'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -4939,6 +4999,26 @@ BEGIN
     IF @get_all_databases = 1
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s, but you have requested them. We are skipping this database and continuing with any that remain.', 10, 1, @database_name_quoted) WITH NOWAIT;
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Query Store wait stats not enabled'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -16906,6 +16986,13 @@ BEGIN
                                         N', ' +
                                         d.database_name
                                     FROM #databases AS d
+                                    WHERE NOT EXISTS
+                                    (
+                                        SELECT
+                                            1/0
+                                        FROM #requested_but_skipped_databases AS rbs
+                                        WHERE rbs.database_name = d.database_name
+                                    )
                                     ORDER BY
                                         d.database_name
                                     FOR
