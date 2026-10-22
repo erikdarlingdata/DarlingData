@@ -1934,6 +1934,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 5003,
                 priority =
                     CASE
+                        WHEN dbcc_cmd.dbcc_pattern = N'DBCC FREEPROCCACHE (plan handle)'
+                        THEN 50 /* Informational: evicts one plan, not the cache */
                         WHEN dbcc_cmd.dbcc_pattern LIKE N'%FREEPROCCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%FREESYSTEMCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%DROPCLEANBUFFERS%'
@@ -1947,15 +1949,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Found ' +
                 CONVERT(nvarchar(20), COUNT_BIG(*)) +
                 N' instances of "' +
-                CASE
-                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
-                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
-                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case */
-                END +
+                dbcc_cmd.dbcc_pattern +
                 N'" between ' +
                 CONVERT(nvarchar(30), MIN(te.event_time), 120) +
                 N' and ' +
@@ -1968,6 +1962,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SELECT dbcc_pattern =
                     CASE
+                        /*
+                        A plan_handle or sql_handle argument (or a variable,
+                        which in practice holds one) evicts a single plan.
+                        A quoted argument names a resource pool and flushes
+                        that pool's whole cache, so it stays with the rest.
+                        */
+                        WHEN te.text_data LIKE N'%FREEPROCCACHE%(%0x%'
+                        OR   te.text_data LIKE N'%FREEPROCCACHE%(%@%'
+                        THEN N'DBCC FREEPROCCACHE (plan handle)'
                         WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
                         WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
                         WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
@@ -1980,16 +1983,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE te.event_class = 116 /* DBCC events */
             AND   te.text_data IS NOT NULL
             GROUP BY
-                dbcc_cmd.dbcc_pattern,
-                CASE
-                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
-                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
-                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just i case*/
-                END
+                dbcc_cmd.dbcc_pattern
             ORDER BY
                 COUNT_BIG(*) DESC;
 
