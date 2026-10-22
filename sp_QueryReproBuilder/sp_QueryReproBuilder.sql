@@ -5185,6 +5185,44 @@ WHERE qsqt.has_control_characters = 1
 OPTION(RECOMPILE);
 
 /*
+Warn on internal queries that only SQL Server itself can run: the StatMan
+queries of a statistics update fail with Msg 195 ('StatMan' is not a
+recognized built-in function name), and full-text population queries
+fail with Msg 156 near 'fulltextkey'.
+*/
+SELECT
+    @current_table = N'checking for internal queries';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'internal query',
+    warning_message =
+        CASE
+            WHEN qsqt.query_sql_text LIKE N'%StatMan(%[_]MS[_]UPDSTATS[_]TBL%'
+            THEN N'Query is an internal statistics update (StatMan). Only UPDATE STATISTICS or an automatic statistics update can run it, ' +
+                 N'so the repro fails with Msg 195. To reproduce it, update the statistics on the table.'
+            ELSE N'Query is an internal full-text index population query. Only the full-text engine can run it, ' +
+                 N'so the repro fails with Msg 156.'
+        END
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text LIKE N'%StatMan(%[_]MS[_]UPDSTATS[_]TBL%'
+OR    qsqt.query_sql_text LIKE N'%column fulltextkey%'
+OPTION(RECOMPILE);
+
+/*
 Check for temp tables and table variables in query text
 */
 SELECT
