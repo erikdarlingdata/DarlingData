@@ -1626,10 +1626,17 @@ SET @session_filter_waits +=
         ISNULL(@username_filter, N'')
     );
 
-/* For query plans, which can also filter on memory required */
+/*
+For query plans, which can also filter on memory required.
+The app and host filters belong here too: without them, actual plans
+were collected for every application, and their grants were added to
+the totals of the queries the filters did keep.
+*/
 SET @session_filter_query_plans +=
     (
         ISNULL(@query_duration_filter, N'') +
+        ISNULL(@client_app_name_filter, N'') +
+        ISNULL(@client_hostname_filter, N'') +
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
         ISNULL(@username_filter, N'') +
