@@ -3463,11 +3463,31 @@ BEGIN
     Use original dates if no data found. The originals are NULL when
     the caller relied on the default window, and a NULL here
     concatenated the entire header finding away on an empty capture —
-    so fall through to the always-populated defaulted dates.
+    so fall through to the always-populated defaulted dates. Those are
+    shifted to UTC for the XML filter, so shift them back to local time
+    to match the event times and the caller's own dates.
     */
     SELECT
-        @actual_start_date = ISNULL(@actual_start_date, ISNULL(@start_date_original, @start_date)),
-        @actual_end_date = ISNULL(@actual_end_date, ISNULL(@end_date_original, @end_date)),
+        @actual_start_date =
+            ISNULL
+            (
+                @actual_start_date,
+                ISNULL
+                (
+                    @start_date_original,
+                    DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), @start_date)
+                )
+            ),
+        @actual_end_date =
+            ISNULL
+            (
+                @actual_end_date,
+                ISNULL
+                (
+                    @end_date_original,
+                    DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), @end_date)
+                )
+            ),
         @actual_event_count = ISNULL(@actual_event_count, 0);
 
     IF @debug = 1
