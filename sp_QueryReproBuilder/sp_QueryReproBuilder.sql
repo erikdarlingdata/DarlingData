@@ -932,7 +932,7 @@ CREATE TABLE
     executions_per_second AS
         ISNULL
         (
-            count_executions /
+            count_executions * 1. /
                 NULLIF
                 (
                     DATEDIFF
@@ -946,48 +946,48 @@ CREATE TABLE
             0
         ),
     avg_duration_ms float NULL,
-    last_duration_ms bigint NOT NULL,
-    min_duration_ms bigint NOT NULL,
-    max_duration_ms bigint NOT NULL,
+    last_duration_ms float NOT NULL,
+    min_duration_ms float NOT NULL,
+    max_duration_ms float NOT NULL,
     total_duration_ms AS
         (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
-    last_cpu_time_ms bigint NOT NULL,
-    min_cpu_time_ms bigint NOT NULL,
-    max_cpu_time_ms bigint NOT NULL,
+    last_cpu_time_ms float NOT NULL,
+    min_cpu_time_ms float NOT NULL,
+    max_cpu_time_ms float NOT NULL,
     total_cpu_time_ms AS
         (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
-    last_logical_io_reads_mb bigint NOT NULL,
-    min_logical_io_reads_mb bigint NOT NULL,
-    max_logical_io_reads_mb bigint NOT NULL,
+    last_logical_io_reads_mb float NOT NULL,
+    min_logical_io_reads_mb float NOT NULL,
+    max_logical_io_reads_mb float NOT NULL,
     total_logical_io_reads_mb AS
         (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
-    last_logical_io_writes_mb bigint NOT NULL,
-    min_logical_io_writes_mb bigint NOT NULL,
-    max_logical_io_writes_mb bigint NOT NULL,
+    last_logical_io_writes_mb float NOT NULL,
+    min_logical_io_writes_mb float NOT NULL,
+    max_logical_io_writes_mb float NOT NULL,
     total_logical_io_writes_mb AS
         (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
-    last_physical_io_reads_mb bigint NOT NULL,
-    min_physical_io_reads_mb bigint NOT NULL,
-    max_physical_io_reads_mb bigint NOT NULL,
+    last_physical_io_reads_mb float NOT NULL,
+    min_physical_io_reads_mb float NOT NULL,
+    max_physical_io_reads_mb float NOT NULL,
     total_physical_io_reads_mb AS
         (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
-    last_clr_time_ms bigint NOT NULL,
-    min_clr_time_ms bigint NOT NULL,
-    max_clr_time_ms bigint NOT NULL,
+    last_clr_time_ms float NOT NULL,
+    min_clr_time_ms float NOT NULL,
+    max_clr_time_ms float NOT NULL,
     total_clr_time_ms AS
         (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
     avg_query_max_used_memory_mb float NULL,
-    last_query_max_used_memory_mb bigint NOT NULL,
-    min_query_max_used_memory_mb bigint NOT NULL,
-    max_query_max_used_memory_mb bigint NOT NULL,
+    last_query_max_used_memory_mb float NOT NULL,
+    min_query_max_used_memory_mb float NOT NULL,
+    max_query_max_used_memory_mb float NOT NULL,
     total_query_max_used_memory_mb AS
         (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
@@ -997,21 +997,21 @@ CREATE TABLE
     total_rowcount AS
         (avg_rowcount * count_executions),
     avg_num_physical_io_reads_mb float NULL,
-    last_num_physical_io_reads_mb bigint NULL,
-    min_num_physical_io_reads_mb bigint NULL,
-    max_num_physical_io_reads_mb bigint NULL,
+    last_num_physical_io_reads_mb float NULL,
+    min_num_physical_io_reads_mb float NULL,
+    max_num_physical_io_reads_mb float NULL,
     total_num_physical_io_reads_mb AS
         (avg_num_physical_io_reads_mb * count_executions),
     avg_log_bytes_used_mb float NULL,
-    last_log_bytes_used_mb bigint NULL,
-    min_log_bytes_used_mb bigint NULL,
-    max_log_bytes_used_mb bigint NULL,
+    last_log_bytes_used_mb float NULL,
+    min_log_bytes_used_mb float NULL,
+    max_log_bytes_used_mb float NULL,
     total_log_bytes_used_mb AS
         (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
-    last_tempdb_space_used_mb bigint NULL,
-    min_tempdb_space_used_mb bigint NULL,
-    max_tempdb_space_used_mb bigint NULL,
+    last_tempdb_space_used_mb float NULL,
+    min_tempdb_space_used_mb float NULL,
+    max_tempdb_space_used_mb float NULL,
     total_tempdb_space_used_mb AS
         (avg_tempdb_space_used_mb * count_executions),
     context_settings nvarchar(256) NULL
@@ -2991,6 +2991,14 @@ END;
 /*
 Populate #query_store_runtime_stats from sys.query_store_runtime_stats
 This aggregates runtime stats for all filtered plan IDs
+
+The averages are weighted by executions: the sum of avg x count_executions
+over the intervals, divided by the sum of count_executions. AVG() of the
+interval averages gave a quiet interval the same weight as a busy one, and
+the total_ columns, which are avg x count_executions, came out wrong with
+it. The last_, min_, and max_ columns are float because the values are
+converted from microseconds and pages to ms and MB, and bigint cut them
+to whole numbers (a 0.8 ms query showed 0).
 */
 SELECT
     @sql = @isolation_level;
@@ -3068,38 +3076,38 @@ SELECT
     MIN(qsrs_with_lasts.first_execution_time),
     MAX(qsrs_with_lasts.partitioned_last_execution_time),
     SUM(qsrs_with_lasts.count_executions),
-    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    SUM(qsrs_with_lasts.avg_duration * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
     MIN((qsrs_with_lasts.min_duration / 1000.)),
     MAX((qsrs_with_lasts.max_duration / 1000.)),
-    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    SUM(qsrs_with_lasts.avg_cpu_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
     MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
     MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
-    AVG((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_logical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_logical_io_writes * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    SUM(qsrs_with_lasts.avg_clr_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
     MIN((qsrs_with_lasts.min_clr_time / 1000.)),
     MAX((qsrs_with_lasts.max_clr_time / 1000.)),
     MAX(qsrs_with_lasts.partitioned_last_dop),
     MIN(qsrs_with_lasts.min_dop),
     MAX(qsrs_with_lasts.max_dop),
-    AVG((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_query_max_used_memory * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.),
-    AVG(qsrs_with_lasts.avg_rowcount * 1.),
+    SUM(qsrs_with_lasts.avg_rowcount * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0),
     MAX(qsrs_with_lasts.partitioned_last_rowcount),
     MIN(qsrs_with_lasts.min_rowcount),
     MAX(qsrs_with_lasts.max_rowcount),';
@@ -3108,15 +3116,15 @@ SELECT
 IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
-    AVG((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.),
-    AVG(qsrs_with_lasts.avg_log_bytes_used / 1000000.),
+    SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000000.,
     MAX(qsrs_with_lasts.partitioned_last_log_bytes_used / 1000000.),
     MIN(qsrs_with_lasts.min_log_bytes_used / 1000000.),
     MAX(qsrs_with_lasts.max_log_bytes_used / 1000000.),
-    AVG((qsrs_with_lasts.avg_tempdb_space_used * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_tempdb_space_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_tempdb_space_used * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_tempdb_space_used * 8.) / 1024.),';
@@ -4060,8 +4068,18 @@ SELECT
     qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
+    /*
+    Weighted by executions like the runtime stats averages. Query Store
+    computes avg_query_wait_time_ms as total / executions for the interval,
+    so total / avg gives back the executions of each interval.
+    */
     avg_query_wait_time_ms =
-        AVG(qsws_with_lasts.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms) /
+        NULLIF
+        (
+            SUM(qsws_with_lasts.total_query_wait_time_ms / NULLIF(qsws_with_lasts.avg_query_wait_time_ms, 0)),
+            0
+        ),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
