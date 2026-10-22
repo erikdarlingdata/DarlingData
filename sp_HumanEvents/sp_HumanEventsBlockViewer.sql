@@ -3163,7 +3163,14 @@ BEGIN
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE
+        /*
+        Every #blocks row holds the whole report, so each branch reads
+        only the frames of the process the row describes. Without this,
+        the blocked row's text was paired with the blocker's frames and
+        the blocking row's text with the victim's frames.
+        */
+        WHERE b.activity = 'blocking'
+        AND
         (
             (b.database_name = @database_name
                 OR @database_name IS NULL)
@@ -3193,7 +3200,8 @@ BEGIN
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE
+        WHERE b.activity = 'blocked'
+        AND
         (
             (b.database_name = @database_name
                 OR @database_name IS NULL)
