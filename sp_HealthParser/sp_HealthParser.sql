@@ -105,8 +105,8 @@ BEGIN
                 CASE
                     ap.name
                     WHEN N'@what_to_check' THEN N'areas of system health to check'
-                    WHEN N'@start_date' THEN N'earliest date to show data for, will be internally converted to UTC'
-                    WHEN N'@end_date' THEN N'latest date to show data for, will be internally converted to UTC'
+                    WHEN N'@start_date' THEN N'earliest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
+                    WHEN N'@end_date' THEN N'latest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
                     WHEN N'@warnings_only' THEN N'only show rows where a warning was reported'
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
@@ -310,10 +310,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
-    Normalize dates to UTC offset for comparison with system_health events
-    When dates are NULL, use SYSUTCDATETIME() which is already UTC
-    When dates are provided, SWITCHOFFSET converts from any timezone to UTC
-    This matches sp_QuickieStore pattern for handling date conversions
+    Normalize dates to UTC offset for comparison with system_health events.
+    When dates are NULL, use SYSUTCDATETIME(), which is already UTC.
+
+    The results show event times in server local time, so a date passed
+    without an offset is read as server local time too, the same way
+    sp_QuickieStore and sp_HumanEventsBlockViewer read plain dates.
+    It used to be read as UTC, so a window copied from the output missed
+    its own events by the UTC offset. A plain value converts to
+    datetimeoffset with an offset of +00:00, so an explicit +00:00 also
+    reads as local; pass any other offset to give an exact instant.
+    SWITCHOFFSET then converts to UTC.
     */
     SELECT
         @start_date =
@@ -321,7 +328,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @start_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @start_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @start_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @start_date
+                    END,
                     '+00:00'
                 ),
                 DATEADD
@@ -336,7 +352,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @end_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @end_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @end_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @end_date
+                    END,
                     '+00:00'
                 ),
                 SYSUTCDATETIME()
