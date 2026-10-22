@@ -1100,6 +1100,8 @@ GO
 #                  table, where a DROP_EXISTING rebuild cannot run ONLINE.
 #   ic_sg_locks    Group I: a merge target with ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS OFF.
 #   ic_sg_part     Group I: a partitioned merge target with STATISTICS_INCREMENTAL = ON.
+#                  Group N: its clustered primary key has three uncompressed
+#                  partitions, each of which gets a per-partition compression script.
 #   ic_sg_sup      Group J: a superset that already has every column of its subset.
 #   ic_sg_uqnoop   Group J: a unique index that already replaces a constraint.
 #   ic_sg_real     Group J: a superset that really does absorb a column (control).
@@ -1342,6 +1344,32 @@ FROM sys.indexes AS i
 JOIN sys.stats AS s
   ON  s.object_id = i.object_id
   AND s.stats_id = i.index_id
+WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
+AND   i.name = N'%(i)s';
+"""
+
+# Reads back the compression of every partition of one index.
+PARTITION_PROBE_SQL = """
+SELECT
+    marker = N'PARTS',
+    compression =
+        STUFF
+        (
+            (
+                SELECT
+                    N',' + p.data_compression_desc
+                FROM sys.partitions AS p
+                WHERE p.object_id = i.object_id
+                AND   p.index_id = i.index_id
+                ORDER BY
+                    p.partition_number
+                FOR XML PATH(N'')
+            ),
+            1,
+            1,
+            N''
+        )
+FROM sys.indexes AS i
 WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
 AND   i.name = N'%(i)s';
 """
@@ -2331,6 +2359,33 @@ def run_tests(server, password, uptime_days):
                     "executed: %s keeps allow_page_locks, allow_row_locks, is_incremental = %s"
                     % (index, ", ".join(probe_want)),
                     opts == probe_want and not errs, "options=%s errors=%s" % (opts, errs))
+
+    # ---- Group N: one runnable compression script per partition ----
+    #
+    # ALTER INDEX ... REBUILD PARTITION = n accepts a short list of options, and
+    # FILLFACTOR and OPTIMIZE_FOR_SEQUENTIAL_KEY are not on it (Msg 155). The final
+    # result set also kept one row per index and script type, so only one
+    # partition's script ever reached the output.
+    rows, _ = run_proc(server, password, "ic_sg_part", extra=sg)
+    parts = find_rows(rows, index_name="pk_ic_sg_part",
+                      script_type="COMPRESSION SCRIPT - PARTITION")
+    numbers = sorted(re.findall(r"REBUILD PARTITION = (\d+) ", " ".join(r["script"] for r in parts)))
+    assert_test("N-PartitionCompression",
+                "pk_ic_sg_part gets one per-partition compression script for each of its 3 partitions",
+                numbers == ["1", "2", "3"], "partitions scripted: %s" % numbers)
+    assert_test("N-PartitionCompression",
+                "no per-partition script names FILLFACTOR or OPTIMIZE_FOR_SEQUENTIAL_KEY",
+                len(parts) >= 1 and not any("FILLFACTOR" in r["script"]
+                                            or "OPTIMIZE_FOR_SEQUENTIAL_KEY" in r["script"]
+                                            for r in parts),
+                "; ".join(r["script"] for r in parts) or "no per-partition script")
+    out, errs = exec_in_rolled_back_transaction(
+        server, password, [r["script"] for r in parts],
+        PARTITION_PROBE_SQL % {"t": "ic_sg_part", "i": "pk_ic_sg_part"})
+    comp = probe_fields(out, "PARTS")
+    assert_test("N-PartitionCompression",
+                "executed: every partition of pk_ic_sg_part ends up PAGE compressed",
+                comp == ["PAGE,PAGE,PAGE"] and not errs, "compression=%s errors=%s" % (comp, errs))
 
     # ---- Group J: no MERGE SCRIPT when the merge changes nothing ----
     #

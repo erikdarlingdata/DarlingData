@@ -1015,6 +1015,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_rows bigint NULL, /* Number of rows in the index */
         index_reads bigint NULL, /* Total reads (seeks + scans + lookups) */
         index_writes bigint NULL, /* Total writes */
+        partition_number integer NULL, /* Set only on per-partition compression rows, which share everything else */
         script nvarchar(max) NULL /* Script to execute the action */
     );
 
@@ -7479,7 +7480,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_size_gb,
         index_rows,
         index_reads,
-        index_writes
+        index_writes,
+        partition_number
     )
     SELECT DISTINCT
         result_type = 'COMPRESS_PARTITION',
@@ -7504,30 +7506,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 nvarchar(20),
                 ps.partition_number
             ) +
-            N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            A single-partition rebuild accepts only SORT_IN_TEMPDB, MAXDOP, ONLINE,
+            the compression options, RESUMABLE and WAIT_AT_LOW_PRIORITY. FILLFACTOR
+            and OPTIMIZE_FOR_SEQUENTIAL_KEY are refused with Msg 155 (measured on
+            2022 CU27), and the rebuild keeps the index's own values for both.
+            */
+            N' WITH (SORT_IN_TEMPDB = ON, ONLINE = ' +
             CASE
                 WHEN @online = 1
                 THEN N'ON'
                 ELSE N'OFF'
             END +
-                        CASE
+            CASE
                 WHEN ce.can_compress = 1
                 THEN ', DATA_COMPRESSION = PAGE'
                 ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
+            END +
             N');',
             N'Compression type: Per Partition | Partition: ' +
             CONVERT
@@ -7559,7 +7554,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.total_rows,
         index_reads =
             (id.user_seeks + id.user_scans + id.user_lookups),
-        id.user_updates
+        id.user_updates,
+        ps.partition_number
     FROM #index_analysis AS ia
     JOIN #partition_stats AS ps
       ON ia.index_hash = ps.index_hash
@@ -7572,6 +7568,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE
         /* Only partitioned indexes */
         ps.partition_function_name IS NOT NULL
+        /* Only partitions still uncompressed, the same test #filtered_objects makes for a whole index */
+    AND  ps.data_compression_desc = N'NONE'
         /* Indexes that are not being disabled or merged */
     AND  (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
@@ -8491,7 +8489,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     irs.schema_name,
                     irs.table_name,
                     irs.index_name,
-                    irs.script_type
+                    irs.script_type,
+                    /* NULL on every row but the per-partition ones, which would otherwise collapse to one partition */
+                    irs.partition_number
                 ORDER BY
                     irs.result_type DESC
             ) AS rn
@@ -8583,7 +8583,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Then by database, schema, table, index name for consistent ordering */
         ir.schema_name,
         ir.table_name,
-        ir.index_name
+        ir.index_name,
+        ir.partition_number
     OPTION(RECOMPILE);
 
     /*
