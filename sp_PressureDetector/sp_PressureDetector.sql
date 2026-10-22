@@ -2014,7 +2014,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
                 SELECT
                     drive = N'Nothing to see here',
-                    database_name = N'By default, only >100 ms latency is reported',
+                    database_name = N'Only >' + CONVERT(nvarchar(11), @minimum_disk_latency_ms) + N' ms latency is reported',
                     database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
                     server_hours_uptime = 0,
                     file_size_gb = 0,
@@ -2171,8 +2171,50 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      f.total_read_count  > 0
                   OR f.total_write_count > 0
                 )
+                /*
+                Same latency floor as the non-sample panel
+                */
+                AND
+                (
+                     f.avg_read_stall_ms  > @minimum_disk_latency_ms
+                  OR f.avg_write_stall_ms > @minimum_disk_latency_ms
+                )
+
+                UNION ALL
+
+                SELECT
+                    drive = N'Nothing to see here',
+                    database_name = N'Only >' + CONVERT(nvarchar(11), @minimum_disk_latency_ms) + N' ms latency is reported',
+                    database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
+                    file_size_gb = 0,
+                    avg_read_stall_ms = 0,
+                    avg_write_stall_ms = 0,
+                    total_avg_stall = 0,
+                    avg_read_kb = 0,
+                    avg_write_kb = 0,
+                    total_mb_read = N'0',
+                    total_mb_written = N'0',
+                    total_read_count = N'0',
+                    total_write_count = N'0',
+                    sample_seconds = @sample_seconds
+                WHERE NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM f
+                    WHERE
+                    (
+                         f.total_read_count  > 0
+                      OR f.total_write_count > 0
+                    )
+                    AND
+                    (
+                         f.avg_read_stall_ms  > @minimum_disk_latency_ms
+                      OR f.avg_write_stall_ms > @minimum_disk_latency_ms
+                    )
+                )
                 ORDER BY
-                    f.total_avg_stall DESC
+                    total_avg_stall DESC
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
         END;
