@@ -4398,7 +4398,13 @@ OPTION(RECOMPILE);' + @nc10;
             @procedure_schema,
             @procedure_name;
 
-        IF ROWCOUNT_BIG() = 0
+        /*
+        With @get_all_databases = 1, a database without a match is
+        skipped by the procedure existence check below, the same as
+        an exact name, rather than ending the whole run
+        */
+        IF  ROWCOUNT_BIG() = 0
+        AND @get_all_databases = 0
         BEGIN
             RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_name, @procedure_schema) WITH NOWAIT;
             RETURN;
