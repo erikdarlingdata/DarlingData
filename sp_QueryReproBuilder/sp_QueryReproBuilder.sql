@@ -5202,10 +5202,14 @@ SELECT
                         N';' +
                         NCHAR(10)
                 END +
+                /*
+                Quoted, because some language names have spaces and
+                parentheses in them: Português (Brasil), norsk (bokmål).
+                */
                 ISNULL
                 (
                     N'SET LANGUAGE ' +
-                    lang.name +
+                    QUOTENAME(lang.name) +
                     N';' +
                     NCHAR(10),
                     N''
