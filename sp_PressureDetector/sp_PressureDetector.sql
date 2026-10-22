@@ -3517,7 +3517,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             deqmg.session_id,
             database_name =
-                DB_NAME(deqp.dbid),
+                DB_NAME(ISNULL(der.database_id, deqp.dbid)),
             [dd hh:mm:ss.mss] =
                 CASE
                     WHEN e.elapsed_time_ms < 0
