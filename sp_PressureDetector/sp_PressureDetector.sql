@@ -4601,7 +4601,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         /*
         Find lead blockers: sessions that are blocking others
-        but not blocked themselves (includes idle sessions with open transactions)
+        but not blocked themselves (includes idle sessions with open transactions).
+        A parallel query whose main thread (blocked = 0) waits on its workers,
+        while a worker waits on another session, is blocked, so it is checked
+        against the edge list rather than its own sysprocesses rows.
         */
         INSERT
             @lead_blockers
@@ -4625,8 +4628,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
               (
                   SELECT
                       1/0
-                  FROM sys.sysprocesses AS sp2
-                  WHERE sp2.blocked = sp.spid
+                  FROM @blocking_edges AS be
+                  WHERE be.blocking_session_id = sp.spid
+              )
+        AND   NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM @blocking_edges AS be
+                  WHERE be.session_id = sp.spid
               );
 
         /*
