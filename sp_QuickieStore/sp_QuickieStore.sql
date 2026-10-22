@@ -1387,7 +1387,9 @@ CREATE TABLE
     plan_forcing_type_desc nvarchar(60) NULL,
     has_compile_replay_script bit NULL,
     is_optimized_plan_forcing_disabled bit NULL,
-    plan_type_desc nvarchar(120) NULL
+    plan_type_desc nvarchar(120) NULL,
+    /* Later steps join on these keys once per plan or query, so they need an index */
+    PRIMARY KEY CLUSTERED (database_id, plan_id)
 );
 
 /*
@@ -1476,7 +1478,8 @@ CREATE TABLE
         (count_compiles * avg_compile_memory_mb),
     last_compile_memory_mb bigint NULL,
     max_compile_memory_mb bigint NULL,
-    is_clouddb_internal_query bit NULL
+    is_clouddb_internal_query bit NULL,
+    PRIMARY KEY CLUSTERED (database_id, query_id)
 );
 
 /*
@@ -1510,7 +1513,8 @@ CREATE TABLE
     total_used_threads bigint NULL,
     last_used_threads bigint NULL,
     min_used_threads bigint NULL,
-    max_used_threads bigint NULL
+    max_used_threads bigint NULL,
+    PRIMARY KEY CLUSTERED (database_id, query_text_id)
 );
 
 /*
