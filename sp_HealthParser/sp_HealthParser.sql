@@ -291,6 +291,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @insert_sql nvarchar(max) = N'',
         @log_database_schema nvarchar(1024),
         @max_event_time datetime2(7),
+        @fallback_date datetime2(7),
         @dsql nvarchar(max) = N'',
         @mdsql_template nvarchar(max) = N'',
         @mdsql_execute nvarchar(max) = N'',
@@ -417,6 +418,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         placeholder gets the quote-doubled value at every substitution
         site, and they cannot share a placeholder.
         */
+        /*
+        @fallback_date covers the first logging run against empty
+        tables. It used to be UTC now minus one day, which ignored
+        @start_date and was compared with event_time columns stored in
+        server local time, so a first run west of UTC logged only the
+        last 19 hours or so. It is now the start of the requested
+        window, in server local time (set below).
+        */
         @mdsql_template = N'
     IF OBJECT_ID(''{table_check_literal}'', ''U'') IS NOT NULL
     BEGIN
@@ -425,22 +434,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     MAX({date_column}),
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        DATEADD
-                        (
-                            DAY,
-                            -1,
-                            SYSDATETIME()
-                        )
-                    )
+                    @fallback_date
                 )
         FROM {table_check};
     END;
@@ -448,7 +442,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         @start_date_debug = @start_date,
-        @end_date_debug = @end_date;
+        @end_date_debug = @end_date,
+        @fallback_date =
+            CONVERT
+            (
+                datetime2(7),
+                SWITCHOFFSET
+                (
+                    @start_date,
+                    DATENAME(TZOFFSET, SYSDATETIMEOFFSET())
+                )
+            );
 
     IF @timestamp_utc_mode = 0
     BEGIN
@@ -2204,8 +2208,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE wq.event_time > @max_event_time';
@@ -2484,8 +2490,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2745,8 +2753,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2962,8 +2972,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE i.event_time > @max_event_time';
@@ -3166,8 +3178,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE sd.event_time > @max_event_time';
@@ -3397,8 +3411,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE ptd.event_time > @max_event_time';
@@ -3627,8 +3643,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE m.event_time > @max_event_time';
@@ -3932,8 +3950,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mbi.event_time > @max_event_time';
@@ -4332,8 +4352,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mnoi.event_time > @max_event_time';
@@ -4552,8 +4574,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE h.event_time > @max_event_time';
@@ -4794,8 +4818,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE si.event_time > @max_event_time';
@@ -4999,8 +5025,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE ei.event_time > @max_event_time';
@@ -5620,8 +5648,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE b.event_time > @max_event_time';
@@ -6112,8 +6142,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE dp.event_date > @max_event_time';
