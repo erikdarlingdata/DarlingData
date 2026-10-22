@@ -4571,6 +4571,35 @@ OPTION(MAXDOP 1, RECOMPILE);',
         );
 
         /*
+        Table variable to hold who blocks whom, one row per session pair.
+        sys.sysprocesses has one row per execution context, so a parallel
+        query with two threads waiting on the same blocker shows up twice;
+        walking sysprocesses directly repeated the session once per thread
+        and counted it more than once in blocked_session_count.
+        */
+        DECLARE
+            @blocking_edges table
+        (
+            session_id smallint NOT NULL,
+            blocking_session_id smallint NOT NULL,
+            PRIMARY KEY
+                (blocking_session_id, session_id)
+        );
+
+        INSERT
+            @blocking_edges
+        (
+            session_id,
+            blocking_session_id
+        )
+        SELECT DISTINCT
+            session_id = sp.spid,
+            blocking_session_id = sp.blocked
+        FROM sys.sysprocesses AS sp
+        WHERE sp.blocked <> 0
+        AND   sp.blocked <> sp.spid;
+
+        /*
         Find lead blockers: sessions that are blocking others
         but not blocked themselves (includes idle sessions with open transactions)
         */
@@ -4639,8 +4668,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             Recursive: Walk down the blocking chain
             */
             SELECT
-                session_id = sp.spid,
-                blocking_session_id = sp.blocked,
+                session_id = be.session_id,
+                blocking_session_id = be.blocking_session_id,
                 blocking_level = b.blocking_level + 1,
                 top_level_blocker = b.top_level_blocker,
                 blocking_chain =
@@ -4648,21 +4677,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     (
                         nvarchar(4000),
                         REPLICATE(N' > ', b.blocking_level + 1) +
-                        CONVERT(nvarchar(20), sp.blocked) +
+                        CONVERT(nvarchar(20), be.blocking_session_id) +
                         N' blocking ' +
-                        CONVERT(nvarchar(20), sp.spid)
+                        CONVERT(nvarchar(20), be.session_id)
                     ),
                 visited_path =
                     CONVERT
                     (
                         nvarchar(4000),
-                        b.visited_path + CONVERT(nvarchar(20), sp.spid) + N'.'
+                        b.visited_path + CONVERT(nvarchar(20), be.session_id) + N'.'
                     )
             FROM blockers AS b
-            JOIN sys.sysprocesses AS sp
-              ON sp.blocked = b.session_id
+            JOIN @blocking_edges AS be
+              ON be.blocking_session_id = b.session_id
             WHERE b.visited_path NOT LIKE
-                  N'%.' + CONVERT(nvarchar(20), sp.spid) + N'.%'
+                  N'%.' + CONVERT(nvarchar(20), be.session_id) + N'.%'
         ),
             blocking_info
         (
@@ -4705,7 +4734,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 blocked_session_count =
                 (
                     SELECT
-                        COUNT_BIG(*)
+                        COUNT_BIG(DISTINCT b2.session_id)
                     FROM blockers AS b2
                     WHERE b2.visited_path LIKE
                           N'%.' + CONVERT(nvarchar(20), b.session_id) + N'.%'
@@ -4713,9 +4742,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),
                 sp.last_batch,
                 sp.status,
-                wait_type = sp.lastwaittype,
-                wait_time = sp.waittime,
-                wait_resource = sp.waitresource,
+                wait_type = ISNULL(w.lastwaittype, sp.lastwaittype),
+                wait_time = ISNULL(w.waittime, sp.waittime),
+                wait_resource = ISNULL(w.waitresource, sp.waitresource),
                 cpu_time = sp.cpu,
                 physical_io = sp.physical_io,
                 sp.memusage,
@@ -4730,8 +4759,27 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 program_name = sp.program_name,
                 sp.login_time
             FROM blockers AS b
+            /*
+            Session details come from the main thread (ecid 0), which is the
+            only one with the sql_handle and statement offsets. The wait
+            details come from the thread that is blocked by blocking_session_id,
+            which for a parallel query is a worker thread, not ecid 0.
+            */
             JOIN sys.sysprocesses AS sp
-              ON sp.spid = b.session_id
+              ON  sp.spid = b.session_id
+              AND sp.ecid = 0
+            OUTER APPLY
+            (
+                SELECT TOP (1)
+                    spw.lastwaittype,
+                    spw.waittime,
+                    spw.waitresource
+                FROM sys.sysprocesses AS spw
+                WHERE spw.spid = b.session_id
+                AND   spw.blocked = b.blocking_session_id
+                ORDER BY
+                    spw.ecid
+            ) AS w
         )
         /*
         Final SELECT: retrieve SQL text and query plans last for performance
