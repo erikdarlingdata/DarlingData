@@ -3658,130 +3658,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
 
-        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
-    END;
-
-    /*
-    Analyze filtered indexes to identify columns used in filters that should be included.
-
-    A column is referenced by the filter when its bracketed name is in the
-    filter text, because filter_definition always stores column names in
-    brackets: ([SiteID]=(1)). Matching the bare name as a substring found [ID]
-    inside [SiteID] and recommended a column the filter never mentions. CHARINDEX
-    and not LIKE, since in a LIKE pattern the brackets are a character class.
-    */
-    SELECT
-        @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.filter_definition,
-        missing_included_columns =
-            (
-                SELECT
-                    STUFF
-                    (
-                        (
-                            /* Find column names mentioned in filter_definition that aren''t already key or included columns */
-                            SELECT
-                                N'', '' +
-                                QUOTENAME(c.name)
-                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                            WHERE c.object_id = ia.object_id
-                            AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
-                            AND   NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM #index_details AS id
-                                WHERE id.object_id = ia.object_id
-                                AND   id.index_id = ia.index_id
-                                AND   id.column_id = c.column_id
-                            )
-                            GROUP BY
-                                c.name
-                            FOR
-                                XML
-                                PATH(''''),
-                                TYPE
-                        ).value(''text()[1]'',''nvarchar(max)''),
-                        1,
-                        2,
-                        N''''
-                    )
-            ),
-        should_include_filter_columns =
-            CASE
-                WHEN EXISTS
-                (
-                    /* Check if any columns mentioned in filter_definition aren''t already in the index */
-                    SELECT
-                        1/0
-                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                    WHERE c.object_id = ia.object_id
-                    AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
-                    AND   NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id
-                        WHERE id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
-                        AND   id.column_id = c.column_id
-                    )
-                )
-                THEN 1
-                ELSE 0
-            END
-    FROM #index_analysis AS ia
-    WHERE ia.filter_definition IS NOT NULL
-    AND   ia.database_id = @current_database_id
-    OPTION(RECOMPILE);';
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
-        PRINT @sql;
-    END;
-
-    INSERT INTO
-        #filtered_index_columns_analysis
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        object_id,
-        table_name,
-        index_id,
-        index_name,
-        filter_definition,
-        missing_included_columns,
-        should_include_filter_columns
-    )
-    EXECUTE sys.sp_executesql
-        @sql,
-      N'@current_database_id integer',
-        @current_database_id;
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#filtered_index_columns_analysis',
-            fica.*
-        FROM #filtered_index_columns_analysis AS fica
-        OPTION(RECOMPILE);
-
         RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
     END;
 
@@ -7989,6 +7865,184 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
+    END;
+
+    /*
+    Analyze filtered indexes to identify columns used in filters that should be included.
+
+    A column is referenced by the filter when its bracketed name is in the
+    filter text, because filter_definition always stores column names in
+    brackets: ([SiteID]=(1)). Matching the bare name as a substring found [ID]
+    inside [SiteID] and recommended a column the filter never mentions. CHARINDEX
+    and not LIKE, since in a LIKE pattern the brackets are a character class.
+
+    This runs after every rule and every script, because the finding has to
+    describe the index the scripts leave behind. Run ahead of the rules, it
+    named a filter column that a merge was about to add, so its script listed
+    the column twice (Msg 1909), and it scripted indexes the same run disables:
+    CREATE INDEX ... WITH (DROP_EXISTING = ON) rebuilds a disabled index, so the
+    script undid the DISABLE. Now a column counts as present when the index
+    has it or takes it over from a loser it absorbs - the same losers the
+    include merges read - and an index the run disables gets no finding.
+
+    CONVERT to nvarchar(max) first, so the concatenation below cannot be cut
+    off at 4,000 characters.
+    */
+    SELECT
+        @sql = CONVERT(nvarchar(max), N'') + N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    SELECT DISTINCT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Column names in filter_definition that the index will not carry */
+                            SELECT
+                                N'', '' +
+                                QUOTENAME(c.name)
+                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_analysis AS ia_loser
+                                JOIN #index_details AS id_loser
+                                  ON id_loser.index_hash = ia_loser.index_hash
+                                WHERE ia_loser.scope_hash = ia.scope_hash
+                                AND   ia_loser.target_index_name = ia.index_name
+                                AND   ia_loser.action = N''DISABLE''
+                                AND   ia_loser.consolidation_rule IN
+                                      (
+                                          N''Key Subset'',
+                                          N''Key Duplicate''
+                                      )
+                                AND   id_loser.is_included_column = 1
+                                AND   id_loser.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR
+                                XML
+                                PATH(''''),
+                                TYPE
+                        ).value(''text()[1]'',''nvarchar(max)''),
+                        1,
+                        2,
+                        N''''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* The same test: a filter column the index will not carry */
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_analysis AS ia_loser
+                        JOIN #index_details AS id_loser
+                          ON id_loser.index_hash = ia_loser.index_hash
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.target_index_name = ia.index_name
+                        AND   ia_loser.action = N''DISABLE''
+                        AND   ia_loser.consolidation_rule IN
+                              (
+                                  N''Key Subset'',
+                                  N''Key Duplicate''
+                              )
+                        AND   id_loser.is_included_column = 1
+                        AND   id_loser.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    AND   ia.database_id = @current_database_id
+    /* An index this run disables gets no finding */
+    AND   ISNULL(ia.action, N'''') <> N''DISABLE''
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
+        PRINT SUBSTRING(@sql,    1, 4000);
+        PRINT SUBSTRING(@sql, 4001, 4000);
+    END;
+
+    INSERT INTO
+        #filtered_index_columns_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        index_id,
+        index_name,
+        filter_definition,
+        missing_included_columns,
+        should_include_filter_columns
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@current_database_id integer',
+        @current_database_id;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#filtered_index_columns_analysis',
+            fica.*
+        FROM #filtered_index_columns_analysis AS fica
+        OPTION(RECOMPILE);
+    END;
 
     /*
     Script the filtered-index findings for this database, now, while its

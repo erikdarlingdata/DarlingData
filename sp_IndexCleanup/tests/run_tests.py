@@ -648,6 +648,29 @@ def run_tests(rows, findings=()):
                 len(matches) == 1 and missing == "[status_code]",
                 f"found {len(matches)} findings, missing_included_columns={missing}")
 
+    # 15e: a filtered key duplicate pair. The finder ran before the rules, so it
+    # saw fx_fm_a without the status column fx_fm_b's merge gives it, reported
+    # [flag], [status] missing, and scripted INCLUDE (..., [status], [flag],
+    # [status]) -- Msg 1909 when run. It reads the index the scripts leave now.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_merge",
+                        index_name="fx_fm_a")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    script = matches[0].get("create_index_script", "") if matches else ""
+    include = script.split(" INCLUDE (", 1)[1].split(") WHERE ", 1)[0] if " INCLUDE (" in script else ""
+    assert_test("15-Filter-Cols", "15e: a merged winner reports only what the merge does not add",
+                len(matches) == 1 and missing == "[flag]" and include == "[status], [wide_col], [flag]",
+                f"found {len(matches)} findings, missing_included_columns={missing}, INCLUDE ({include})")
+
+    # 15f: and the index the same run disables gets no finding at all. Its
+    # DROP_EXISTING script rebuilt it, and a rebuild re-enables a disabled index.
+    disabled = find_rows(rows, table_name="test_ic_filt_merge", index_name="fx_fm_b",
+                         script_type="DISABLE SCRIPT")
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_merge",
+                        index_name="fx_fm_b")
+    assert_test("15-Filter-Cols", "15f: an index the run disables gets no filtered-index finding",
+                len(disabled) == 1 and len(matches) == 0,
+                f"DISABLE rows {len(disabled)} (expected 1), findings {len(matches)} (expected 0)")
+
     # ---- Group 16: Same Keys Different Order, Rule 8 (issue #908) ----
 
     label = "Same Keys Different Order"
