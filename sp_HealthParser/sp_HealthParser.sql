@@ -6261,10 +6261,15 @@ AND   ca.utc_timestamp < @end_date';
             dp.query_text,
             sql_handle =
                 CONVERT(varbinary(64), e.x.value('@sqlhandle', 'varchar(130)'), 1),
+            /*
+            The plan lookup joins on these offsets, so hard-coded zeros
+            never matched a cached statement. Read them from the frame,
+            with the same defaults as the blocking branch.
+            */
             stmtstart =
-                0,
+                ISNULL(e.x.value('@stmtstart', 'integer'), 0),
             stmtend =
-                0
+                ISNULL(e.x.value('@stmtend', 'integer'), -1)
         FROM #deadlocks_parsed AS dp
         CROSS APPLY dp.process_xml.nodes('//executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS e(x)
         OPTION(RECOMPILE);
