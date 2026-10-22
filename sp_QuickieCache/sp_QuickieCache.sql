@@ -383,35 +383,154 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @find_single_use_plans = 1
     BEGIN
+        /*
+        One row per single-use plan.
+
+        This used to read sys.dm_exec_query_stats and keep the rows with
+        execution_count = 1. Those rows are statements, not plans: an ad
+        hoc batch of 24 statements that ran once came back as 24 rows with
+        the same plan_handle, size, and text, so @top = 50 could show two
+        plans. A plan is single-use when sys.dm_exec_cached_plans has
+        usecounts = 1 for it, which is also what the single-use health
+        check counts, so the plans come from there. Each DMV is read once:
+        the statements of those plans only supply the compile and
+        execution times and the hashes of the first statement.
+        */
+        CREATE TABLE
+            #single_use_plans
+        (
+            plan_handle varbinary(64) NOT NULL PRIMARY KEY,
+            database_id integer NULL,
+            size_in_bytes integer NOT NULL
+        );
+
+        CREATE TABLE
+            #single_use_statements
+        (
+            plan_handle varbinary(64) NOT NULL PRIMARY KEY,
+            sql_handle varbinary(64) NULL,
+            query_hash binary(8) NULL,
+            query_plan_hash binary(8) NULL,
+            creation_time datetime NULL,
+            last_execution_time datetime NULL
+        );
+
+        INSERT
+            #single_use_plans
+        WITH
+            (TABLOCK)
+        (
+            plan_handle,
+            database_id,
+            size_in_bytes
+        )
+        SELECT
+            cp.plan_handle,
+            database_id =
+                CONVERT(integer, pa.value),
+            cp.size_in_bytes
+        FROM sys.dm_exec_cached_plans AS cp
+        CROSS APPLY
+        (
+            SELECT TOP (1)
+                value = pa.value
+            FROM sys.dm_exec_plan_attributes(cp.plan_handle) AS pa
+            WHERE pa.attribute = N'dbid'
+        ) AS pa
+        WHERE cp.cacheobjtype = N'Compiled Plan'
+        AND   cp.usecounts = 1
+        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
+        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
+        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        INSERT
+            #single_use_statements
+        WITH
+            (TABLOCK)
+        (
+            plan_handle,
+            sql_handle,
+            query_hash,
+            query_plan_hash,
+            creation_time,
+            last_execution_time
+        )
+        SELECT
+            x.plan_handle,
+            x.sql_handle,
+            x.query_hash,
+            x.query_plan_hash,
+            x.creation_time,
+            x.last_execution_time
+        FROM
+        (
+            SELECT
+                qs.plan_handle,
+                qs.sql_handle,
+                qs.query_hash,
+                qs.query_plan_hash,
+                creation_time =
+                    MIN(qs.creation_time) OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                    ),
+                last_execution_time =
+                    MAX(qs.last_execution_time) OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                    ),
+                n =
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                        ORDER BY
+                            qs.statement_start_offset
+                    )
+            FROM sys.dm_exec_query_stats AS qs
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #single_use_plans AS sup
+                WHERE sup.plan_handle = qs.plan_handle
+            )
+        ) AS x
+        WHERE x.n = 1
+        OPTION(RECOMPILE, MAXDOP 1);
+
         SELECT TOP (@top)
             database_name =
-                DB_NAME(CONVERT(integer, pa.value)),
-            qs.creation_time,
-            qs.last_execution_time,
+                DB_NAME(sup.database_id),
+            sus.creation_time,
+            sus.last_execution_time,
             plan_age =
                 CASE
-                    WHEN DATEDIFF(DAY, qs.creation_time, GETDATE()) > 0
-                    THEN CONVERT(varchar(10), DATEDIFF(DAY, qs.creation_time, GETDATE())) + 'd '
+                    WHEN DATEDIFF(DAY, sus.creation_time, GETDATE()) > 0
+                    THEN CONVERT(varchar(10), DATEDIFF(DAY, sus.creation_time, GETDATE())) + 'd '
                     ELSE N''
                 END +
-                CONVERT(varchar(10), DATEDIFF(HOUR, qs.creation_time, GETDATE()) % 24) + 'h ' +
-                CONVERT(varchar(10), DATEDIFF(MINUTE, qs.creation_time, GETDATE()) % 60) + 'm',
+                CONVERT(varchar(10), DATEDIFF(HOUR, sus.creation_time, GETDATE()) % 24) + 'h ' +
+                CONVERT(varchar(10), DATEDIFF(MINUTE, sus.creation_time, GETDATE()) % 60) + 'm',
             time_since_last_execution =
                 CASE
-                    WHEN DATEDIFF(DAY, qs.last_execution_time, GETDATE()) > 0
-                    THEN CONVERT(varchar(10), DATEDIFF(DAY, qs.last_execution_time, GETDATE())) + 'd '
+                    WHEN DATEDIFF(DAY, sus.last_execution_time, GETDATE()) > 0
+                    THEN CONVERT(varchar(10), DATEDIFF(DAY, sus.last_execution_time, GETDATE())) + 'd '
                     ELSE N''
                 END +
-                CONVERT(varchar(10), DATEDIFF(HOUR, qs.last_execution_time, GETDATE()) % 24) + 'h ' +
-                CONVERT(varchar(10), DATEDIFF(MINUTE, qs.last_execution_time, GETDATE()) % 60) + 'm',
+                CONVERT(varchar(10), DATEDIFF(HOUR, sus.last_execution_time, GETDATE()) % 24) + 'h ' +
+                CONVERT(varchar(10), DATEDIFF(MINUTE, sus.last_execution_time, GETDATE()) % 60) + 'm',
             cached_plan_size_kb =
-                cp.size_in_bytes / 1024,
+                sup.size_in_bytes / 1024,
             clear_plan_command =
                 N'DBCC FREEPROCCACHE (' +
                 CONVERT
                 (
                     nvarchar(max),
-                    qs.plan_handle,
+                    sup.plan_handle,
                     1
                 ) + N');',
             query_text =
@@ -451,39 +570,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             TYPE
                     )
                 END,
-            qs.query_hash,
-            qs.query_plan_hash,
-            qs.sql_handle,
-            qs.plan_handle
-        FROM sys.dm_exec_query_stats AS qs
-        JOIN sys.dm_exec_cached_plans AS cp
-          ON cp.plan_handle = qs.plan_handle
-        CROSS APPLY
-        (
-            SELECT TOP (1)
-                value = pa.value
-            FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
-            WHERE pa.attribute = N'dbid'
-        ) AS pa
-        CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+            sus.query_hash,
+            sus.query_plan_hash,
+            sus.sql_handle,
+            sup.plan_handle
+        FROM #single_use_plans AS sup
+        JOIN #single_use_statements AS sus
+          ON sus.plan_handle = sup.plan_handle
+        CROSS APPLY sys.dm_exec_sql_text(sus.sql_handle) AS st
         OUTER APPLY sys.dm_exec_text_query_plan
         (
-            qs.plan_handle,
-            qs.statement_start_offset,
-            qs.statement_end_offset
+            sup.plan_handle,
+            0,
+            -1
         ) AS qp
-        WHERE qs.execution_count = 1
-        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
-        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
-        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
         /* Honor @start_date / @end_date the same as the statement /
            procedure / function / trigger paths below — the filters
            were documented as applying to all modes, but this
            @find_single_use_plans branch silently ignored them before. */
-        AND   (@start_date IS NULL OR qs.creation_time >= @start_date)
-        AND   (@end_date   IS NULL OR qs.creation_time <  @end_date)
+        WHERE (@start_date IS NULL OR sus.creation_time >= @start_date)
+        AND   (@end_date   IS NULL OR sus.creation_time <  @end_date)
         ORDER BY
-            cp.size_in_bytes DESC
+            sup.size_in_bytes DESC
         OPTION(RECOMPILE, MAXDOP 1);
 
         RETURN;
