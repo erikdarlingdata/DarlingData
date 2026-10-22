@@ -4725,6 +4725,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_query_store_on = 0
+        /* Query Store cannot be enabled in master or tempdb */
+        AND   d.database_id NOT IN (1, 2)
         /* Skip this check for Azure SQL DB since Query Store is typically always enabled
            and Azure might be reporting is_query_store_on incorrectly */
         AND   @azure_sql_db = 0;
