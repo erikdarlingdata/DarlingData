@@ -2004,19 +2004,48 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @total_grant_mb decimal(38, 2) = 0,
         @total_spills bigint = 0,
         @total_executions bigint = 0,
-        @total_entries bigint = 0;
+        @total_entries bigint = 0,
+        @statement_entries bigint = 0;
 
+    /*
+    The workload totals come from the statement rows only.
+
+    The statements of a procedure, function, or trigger are cached as
+    statement rows too, so an object row and its statement rows hold
+    the same work. Adding up every row counted that work twice, so the
+    totals were too big and every share too small: in one test, a
+    procedure that used 59% of the CPU showed 37% on its own row and
+    37% again on the row for its one statement.
+
+    When there are no statement rows at all, the totals fall back to
+    every row, so the object rows still get shares that mean something.
+    */
     SELECT
-        @total_cpu_ms = SUM(qs.total_cpu_ms),
-        @total_duration_ms = SUM(qs.total_duration_ms),
-        @total_physical_reads = SUM(qs.total_physical_reads),
-        @total_logical_writes = SUM(qs.total_logical_writes),
-        @total_grant_mb = SUM(qs.total_grant_mb),
-        @total_spills = SUM(qs.total_spills),
-        @total_executions = SUM(qs.total_executions),
-        @total_entries = COUNT_BIG(*)
+        @total_cpu_ms = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_cpu_ms ELSE 0 END),
+        @total_duration_ms = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_duration_ms ELSE 0 END),
+        @total_physical_reads = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_physical_reads ELSE 0 END),
+        @total_logical_writes = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_logical_writes ELSE 0 END),
+        @total_grant_mb = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_grant_mb ELSE 0 END),
+        @total_spills = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_spills ELSE 0 END),
+        @total_executions = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_executions ELSE 0 END),
+        @total_entries = COUNT_BIG(*),
+        @statement_entries = SUM(CASE WHEN qs.query_type = 'Statement' THEN 1 ELSE 0 END)
     FROM #query_stats AS qs
     OPTION(RECOMPILE);
+
+    IF @statement_entries = 0
+    BEGIN
+        SELECT
+            @total_cpu_ms = SUM(qs.total_cpu_ms),
+            @total_duration_ms = SUM(qs.total_duration_ms),
+            @total_physical_reads = SUM(qs.total_physical_reads),
+            @total_logical_writes = SUM(qs.total_logical_writes),
+            @total_grant_mb = SUM(qs.total_grant_mb),
+            @total_spills = SUM(qs.total_spills),
+            @total_executions = SUM(qs.total_executions)
+        FROM #query_stats AS qs
+        OPTION(RECOMPILE);
+    END;
 
     IF @debug = 1
     BEGIN
@@ -2373,9 +2402,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         min_duration_ms = r.min_duration_ms,
         max_duration_ms = r.max_duration_ms,
 
-        /* resource shares (% of total workload) */
+        /*
+        Resource shares, as a % of the statement-level workload totals.
+        An object row is measured against those totals too, and an
+        object can call into a database the filters left out, so a
+        share is held at 100 rather than overflowing decimal(5, 2).
+        */
         cpu_share =
             CASE
+                WHEN @total_cpu_ms > 0
+                AND  r.total_cpu_ms >= @total_cpu_ms
+                THEN 100.00
                 WHEN @total_cpu_ms > 0
                 THEN CONVERT(decimal(5, 2), r.total_cpu_ms * 100.0 / @total_cpu_ms)
                 ELSE 0
@@ -2383,11 +2420,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         duration_share =
             CASE
                 WHEN @total_duration_ms > 0
+                AND  r.total_duration_ms >= @total_duration_ms
+                THEN 100.00
+                WHEN @total_duration_ms > 0
                 THEN CONVERT(decimal(5, 2), r.total_duration_ms * 100.0 / @total_duration_ms)
                 ELSE 0
             END,
         reads_share =
             CASE
+                WHEN @total_physical_reads > 0
+                AND  r.total_physical_reads >= @total_physical_reads
+                THEN 100.00
                 WHEN @total_physical_reads > 0
                 THEN CONVERT(decimal(5, 2), r.total_physical_reads * 100.0 / @total_physical_reads)
                 ELSE 0
@@ -2395,11 +2438,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         writes_share =
             CASE
                 WHEN @total_logical_writes > 0
+                AND  r.total_logical_writes >= @total_logical_writes
+                THEN 100.00
+                WHEN @total_logical_writes > 0
                 THEN CONVERT(decimal(5, 2), r.total_logical_writes * 100.0 / @total_logical_writes)
                 ELSE 0
             END,
         grant_share =
             CASE
+                WHEN @total_grant_mb > 0
+                AND  r.total_grant_mb >= @total_grant_mb
+                THEN 100.00
                 WHEN @total_grant_mb > 0
                 THEN CONVERT(decimal(5, 2), r.total_grant_mb * 100.0 / @total_grant_mb)
                 ELSE 0
@@ -2407,11 +2456,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         spills_share =
             CASE
                 WHEN @total_spills > 0
+                AND  r.total_spills >= @total_spills
+                THEN 100.00
+                WHEN @total_spills > 0
                 THEN CONVERT(decimal(5, 2), r.total_spills * 100.0 / @total_spills)
                 ELSE 0
             END,
         executions_share =
             CASE
+                WHEN @total_executions > 0
+                AND  r.total_executions >= @total_executions
+                THEN 100.00
                 WHEN @total_executions > 0
                 THEN CONVERT(decimal(5, 2), r.total_executions * 100.0 / @total_executions)
                 ELSE 0
@@ -2750,14 +2805,69 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @surfaced_duration_pct decimal(5, 2) = 0,
         @surfaced_grant_pct decimal(5, 2) = 0;
 
+    /*
+    A surfaced statement that belongs to a surfaced procedure is the
+    same work as the procedure row, so only the procedure row is added
+    in. Function and trigger statements carry no link to their object,
+    so the sums are held at 100.
+    */
     SELECT
-        @surfaced_count = COUNT_BIG(*),
-        @surfaced_cpu_pct = ISNULL(SUM(s.cpu_share), 0),
-        @surfaced_reads_pct = ISNULL(SUM(s.reads_share), 0),
-        @surfaced_duration_pct = ISNULL(SUM(s.duration_share), 0),
-        @surfaced_grant_pct = ISNULL(SUM(s.grant_share), 0)
-    FROM #scored AS s
-    WHERE s.impact_score >= @impact_threshold
+        @surfaced_count = x.surfaced_count,
+        @surfaced_cpu_pct =
+            CASE
+                WHEN x.cpu_pct > 100
+                THEN 100
+                ELSE x.cpu_pct
+            END,
+        @surfaced_reads_pct =
+            CASE
+                WHEN x.reads_pct > 100
+                THEN 100
+                ELSE x.reads_pct
+            END,
+        @surfaced_duration_pct =
+            CASE
+                WHEN x.duration_pct > 100
+                THEN 100
+                ELSE x.duration_pct
+            END,
+        @surfaced_grant_pct =
+            CASE
+                WHEN x.grant_pct > 100
+                THEN 100
+                ELSE x.grant_pct
+            END
+    FROM
+    (
+        SELECT
+            surfaced_count = COUNT_BIG(*),
+            cpu_pct = ISNULL(SUM(c.counted * s.cpu_share), 0),
+            reads_pct = ISNULL(SUM(c.counted * s.reads_share), 0),
+            duration_pct = ISNULL(SUM(c.counted * s.duration_share), 0),
+            grant_pct = ISNULL(SUM(c.counted * s.grant_share), 0)
+        FROM #scored AS s
+        CROSS APPLY
+        (
+            SELECT
+                counted =
+                    CASE
+                        WHEN s.query_type = 'Statement'
+                        AND  EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #scored AS p
+                                 WHERE p.query_type = 'Procedure'
+                                 AND   p.database_name = s.database_name
+                                 AND   p.object_name = s.object_name
+                                 AND   p.impact_score >= @impact_threshold
+                             )
+                        THEN 0
+                        ELSE 1
+                    END
+        ) AS c
+        WHERE s.impact_score >= @impact_threshold
+    ) AS x
     OPTION(RECOMPILE);
 
     SELECT
