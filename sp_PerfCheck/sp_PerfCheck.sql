@@ -3268,15 +3268,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nvarchar(10), COUNT_BIG(*)) +
             N' database files with slow I/O. ' +
             N'Average overall latency: ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) +
+            /* Total stall over total I/O for the location, not an average of per-file averages */
+            CONVERT(nvarchar(10), CONVERT(decimal(10, 2), SUM(i.io_stall_ms) * 1.0 / NULLIF(SUM(i.total_io), 0))) +
             N' ms. ' +
             N'This may indicate an overloaded drive or underlying storage issue.',
         url = N'https://erikdarling.com/sp_perfcheck/#StoragePerformance'
     FROM #io_stats AS i
+    /* The same files 3001 and 3002 report: slow, and over 1000 reads or writes */
     WHERE
     (
-         i.avg_read_latency_ms > @slow_read_ms
-      OR i.avg_write_latency_ms > @slow_write_ms
+         (
+              i.avg_read_latency_ms > @slow_read_ms
+          AND i.num_of_reads > 1000
+         )
+      OR (
+              i.avg_write_latency_ms > @slow_write_ms
+          AND i.num_of_writes > 1000
+         )
     )
     AND  i.drive_location IS NOT NULL
     GROUP BY
