@@ -265,7 +265,8 @@ DECLARE
     @new bit = 0,
     @current_table nvarchar(100),
     @include_plans_seeded bit = 0,
-    @match nvarchar(max) = N'';
+    @match nvarchar(max) = N'',
+    @psp_message nvarchar(max) = N'';
 
 /*
 Attempt at overloading procedure name so it can accept a schema.procedure or
@@ -4287,6 +4288,121 @@ OPTION(RECOMPILE);' + @nc10;
         @database_id;
 
     /*
+    A parameter sensitive plan (PSP) parent query has one plan, the
+    dispatcher, and the dispatcher never runs: Query Store keeps no runtime
+    stats for it, so asking for the parent query or its dispatcher plan came
+    back empty with no reason given. When an include filter picked up a
+    dispatcher plan, say so and name the variant queries to ask for instead.
+    */
+    IF @include_plans_seeded = 1
+    BEGIN
+        CREATE TABLE
+            #psp_parents
+        (
+            parent_query_id bigint NOT NULL,
+            dispatcher_plan_id bigint NOT NULL,
+            query_variant_query_id bigint NOT NULL
+        );
+
+        SELECT
+            @sql = @isolation_level,
+            @current_table = N'checking for parameter sensitive plan parent queries';
+
+        SELECT
+            @sql += N'
+SELECT
+    qsqv.parent_query_id,
+    qsqv.dispatcher_plan_id,
+    qsqv.query_variant_query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #include_plan_ids AS ipi
+          WHERE ipi.plan_id = qsqv.dispatcher_plan_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #psp_parents
+        WITH
+            (TABLOCK)
+        (
+            parent_query_id,
+            dispatcher_plan_id,
+            query_variant_query_id
+        )
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        IF EXISTS
+        (
+            SELECT
+                1/0
+            FROM #psp_parents AS pp
+        )
+        BEGIN
+            SELECT
+                @psp_message =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                NCHAR(10) +
+                                N'Query ' +
+                                RTRIM(pp.parent_query_id) +
+                                N' is a parameter sensitive plan parent. Its dispatcher plan ' +
+                                RTRIM(pp.dispatcher_plan_id) +
+                                N' does not run, so Query Store has no runtime stats and no repro for it. Use its variant queries: @include_query_ids = N''' +
+                                STUFF
+                                (
+                                    (
+                                        SELECT
+                                            N',' +
+                                            RTRIM(pv.query_variant_query_id)
+                                        FROM #psp_parents AS pv
+                                        WHERE pv.parent_query_id = pp.parent_query_id
+                                        ORDER BY
+                                            pv.query_variant_query_id
+                                        FOR XML
+                                            PATH(N''),
+                                            TYPE
+                                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                                    1,
+                                    1,
+                                    N''
+                                ) +
+                                N''''
+                            FROM
+                            (
+                                SELECT DISTINCT
+                                    p.parent_query_id,
+                                    p.dispatcher_plan_id
+                                FROM #psp_parents AS p
+                            ) AS pp
+                            ORDER BY
+                                pp.parent_query_id
+                            FOR XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        1,
+                        N''
+                    );
+
+            RAISERROR('%s', 10, 1, @psp_message) WITH NOWAIT;
+        END;
+    END;
+
+    /*
     Populate the #query_store_query_hints table
     */
     SELECT
@@ -4802,6 +4918,41 @@ BEGIN
 END;
 
 /*
+A parameter sensitive plan variant query carries the hint that ties it to
+its dispatcher in its text, as OPTION (PLAN PER VALUE(...)). That hint can't
+be run (Msg 102), so the repro is built without it; see psp below.
+*/
+SELECT
+    @current_table = N'checking for parameter sensitive plan variants';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'PSP variant',
+    warning_message =
+        N'Query is a parameter sensitive plan variant' +
+        ISNULL(N' of parent query ' + RTRIM(qsqv.parent_query_id), N'') +
+        N'. The PLAN PER VALUE hint Query Store keeps in its text cannot be run, so it was removed from the repro. ' +
+        N'SQL Server picks the variant again when the repro runs.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+LEFT JOIN #query_store_query_variant AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id
+WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
+OPTION(RECOMPILE);
+
+/*
 Check for temp tables and table variables in query text
 */
 SELECT
@@ -5084,7 +5235,7 @@ SELECT
                                 NCHAR(10)
                         END
                     ELSE
-                        qsqt.query_sql_text +
+                        psp.query_sql_text +
                         NCHAR(10)
                 END
         )
@@ -5093,33 +5244,93 @@ JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
+/*
+Find the PLAN PER VALUE(...) hint of a parameter sensitive plan variant.
+It is the last one in the text and ends at the first )) after it, where
+its last predicate_range closes. Query Store writes it either as its own
+clause, " option (PLAN PER VALUE(...))", or first in the query's own
+OPTION clause, "OPTION ( PLAN PER VALUE(...), LOOP JOIN)".
+*/
+CROSS APPLY
+(
+    SELECT
+        hint_start =
+            CASE
+                WHEN CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
+                THEN DATALENGTH(qsqt.query_sql_text) / 2 -
+                     CHARINDEX(REVERSE(N'PLAN PER VALUE('), REVERSE(qsqt.query_sql_text)) -
+                     LEN(N'PLAN PER VALUE(') + 2
+                ELSE 0
+            END
+) AS psp_start
+CROSS APPLY
+(
+    SELECT
+        hint =
+            CASE
+                WHEN psp_start.hint_start > 0
+                AND  CHARINDEX(N'))', qsqt.query_sql_text, psp_start.hint_start) > 0
+                THEN SUBSTRING
+                     (
+                         qsqt.query_sql_text,
+                         psp_start.hint_start,
+                         CHARINDEX(N'))', qsqt.query_sql_text, psp_start.hint_start) + 2 - psp_start.hint_start
+                     )
+            END
+) AS psp_hint
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            CASE
+                WHEN psp_hint.hint IS NULL
+                THEN qsqt.query_sql_text
+                ELSE
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                qsqt.query_sql_text,
+                                N' option (' + psp_hint.hint + N')',
+                                N''
+                            ),
+                            psp_hint.hint + N', ',
+                            N''
+                        ),
+                        N', ' + psp_hint.hint,
+                        N''
+                    )
+            END
+) AS psp
 CROSS APPLY
 (
     SELECT
         query_text_cleaned =
             CASE
-                WHEN qsqt.query_sql_text LIKE N'(@%'
+                WHEN psp.query_sql_text LIKE N'(@%'
                 THEN
                     LTRIM
                     (
                         SUBSTRING
                         (
-                            qsqt.query_sql_text,
-                            PATINDEX(N'%)[^,]%', qsqt.query_sql_text) +
+                            psp.query_sql_text,
+                            PATINDEX(N'%)[^,]%', psp.query_sql_text) +
                                 CASE
                                     WHEN SUBSTRING
                                          (
-                                             qsqt.query_sql_text,
-                                             PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
+                                             psp.query_sql_text,
+                                             PATINDEX(N'%)[^,]%', psp.query_sql_text),
                                              2
                                          ) = N'))'
                                     THEN 2
                                     ELSE 1
                                 END,
-                            LEN(qsqt.query_sql_text)
+                            LEN(psp.query_sql_text)
                         )
                     )
-                ELSE qsqt.query_sql_text
+                ELSE psp.query_sql_text
             END
 ) AS clean_query
 JOIN #query_store_runtime_stats AS qsrs
