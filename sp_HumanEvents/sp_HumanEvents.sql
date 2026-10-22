@@ -1147,6 +1147,20 @@ BEGIN
     RAISERROR(N'@session_id and @username do not apply to blocking, because a background task raises the blocked process report. sp_HumanEvents collects blocking from every session and user.', 0, 1) WITH NOWAIT;
 END;
 
+/*
+The blocking session filters @object_name on the report's object_id.
+SQL Server fills that in with the table's object_id only for OBJECT
+(table-level) lock waits. KEY waits carry an internal allocation id and
+PAGE and RID waits carry 0, so row and page blocking on the table is
+filtered out before it is collected. Say so instead of returning an
+empty result that looks like no blocking happened.
+*/
+IF  @event_type LIKE N'%lock%'
+AND @object_name <> N''
+BEGIN
+    RAISERROR(N'Warning: with @object_name, blocking is only captured for table-level (OBJECT) lock waits on %s. Reports for key, page and row lock waits do not carry the table''s object_id, so they are not collected. To see that blocking, leave @object_name empty and look at wait_resource.', 10, 1, @fully_formed_babby) WITH NOWAIT;
+END;
+
 /* validatabase name */
 IF @debug = 1 BEGIN RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT; END;
 IF @database_name <> N''
