@@ -1255,6 +1255,12 @@ OPTION(RECOMPILE, MAXDOP 1);';
     statement, so a batch of 120 statements counted 120 times. Against
     the distinct-plan denominator that went past 999.99%, and the
     decimal(5, 2) assignment failed with Msg 8115.
+
+    A hash qualifies when it has more than 5 plans in one database, the
+    same (database, query_hash) grain as @find_duplicate_plans. The same
+    statement hashes the same in every database, so counting its plans
+    across databases let a hash with one plan in each of six databases
+    qualify, and every database was then reported with its single plan.
     */
     DECLARE
         @duplicate_hashes bigint = 0,
@@ -1262,21 +1268,40 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @pct_duplicate decimal(5, 2) = 0;
 
     SELECT
-        @duplicate_hashes = COUNT_BIG(DISTINCT x.query_hash),
-        @duplicate_plans = COUNT_BIG(DISTINCT s.plan_handle)
+        @duplicate_hashes = COUNT_BIG(*)
     FROM
     (
         SELECT
+            s.database_id,
             s.query_hash
         FROM #dm_exec_query_stats AS s
         WHERE s.query_hash <> 0x0000000000000000
         GROUP BY
+            s.database_id,
+            s.query_hash
+        HAVING
+            COUNT_BIG(DISTINCT s.plan_handle) > 5
+    ) AS x
+    OPTION(RECOMPILE);
+
+    SELECT
+        @duplicate_plans = COUNT_BIG(DISTINCT s.plan_handle)
+    FROM
+    (
+        SELECT
+            s.database_id,
+            s.query_hash
+        FROM #dm_exec_query_stats AS s
+        WHERE s.query_hash <> 0x0000000000000000
+        GROUP BY
+            s.database_id,
             s.query_hash
         HAVING
             COUNT_BIG(DISTINCT s.plan_handle) > 5
     ) AS x
     JOIN #dm_exec_query_stats AS s
-      ON s.query_hash = x.query_hash
+      ON  s.database_id = x.database_id
+      AND s.query_hash = x.query_hash
     OPTION(RECOMPILE);
 
     IF @total_plans > 0
@@ -1319,7 +1344,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
                 END,
             details =
                 FORMAT(COUNT_BIG(DISTINCT s2.query_hash), N'N0') +
-                N' query hashes with 5+ plans, totaling ' +
+                N' query hashes with more than 5 plans, totaling ' +
                 FORMAT(COUNT_BIG(DISTINCT s2.plan_handle), N'N0') + N' plans. ' +
                 N'Most likely unparameterized queries. SET option differences between sessions can also cause this. Consider Forced Parameterization.'
         /*
@@ -1333,16 +1358,19 @@ OPTION(RECOMPILE, MAXDOP 1);';
         FROM
         (
             SELECT
+                s.database_id,
                 s.query_hash
             FROM #dm_exec_query_stats AS s
             WHERE s.query_hash <> 0x0000000000000000
             GROUP BY
+                s.database_id,
                 s.query_hash
             HAVING
                 COUNT_BIG(DISTINCT s.plan_handle) > 5
         ) AS x
         JOIN #dm_exec_query_stats AS s2
-          ON s2.query_hash = x.query_hash
+          ON  s2.database_id = x.database_id
+          AND s2.query_hash = x.query_hash
         WHERE s2.database_id IS NOT NULL
         GROUP BY
             s2.database_id
