@@ -4429,6 +4429,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     @sql,
                   N'@has_tables bit OUTPUT',
                     @has_tables OUTPUT;
+
+                /*
+                A database that AUTO_CLOSE has shut reports settings stored
+                in the database itself wrongly in sys.databases: collation,
+                delayed durability and ledger come back NULL, and ADR comes
+                back 0 even when it is on. #databases was filled from that.
+                Reading sys.databases through the database's own name opens
+                it for the statement, so re-read those columns here.
+                */
+                IF EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #databases AS d
+                    WHERE d.database_id = @current_database_id
+                    AND   d.is_auto_close_on = 1
+                )
+                BEGIN
+                    SET @sql = N'
+                    UPDATE
+                        d
+                    SET
+                        d.collation_name = sd.collation_name,
+                        d.snapshot_isolation_state_desc = ISNULL(sd.snapshot_isolation_state_desc, d.snapshot_isolation_state_desc),
+                        d.is_read_committed_snapshot_on = ISNULL(sd.is_read_committed_snapshot_on, d.is_read_committed_snapshot_on),
+                        d.delayed_durability_desc = sd.delayed_durability_desc' +
+                    CASE
+                        WHEN @has_is_accelerated_database_recovery = 1
+                        THEN N',
+                        d.is_accelerated_database_recovery_on = sd.is_accelerated_database_recovery_on'
+                        ELSE N''
+                    END +
+                    CASE
+                        WHEN @has_is_ledger = 1
+                        THEN N',
+                        d.is_ledger_on = sd.is_ledger_on'
+                        ELSE N''
+                    END + N'
+                    FROM #databases AS d
+                    JOIN ' +
+                    QUOTENAME(@current_database_name) +
+                    N'.sys.databases AS sd
+                      ON sd.database_id = d.database_id
+                    WHERE d.database_id = @current_database_id;';
+
+                    IF @debug = 1
+                    BEGIN
+                        PRINT @sql;
+                    END;
+
+                    EXECUTE sys.sp_executesql
+                        @sql,
+                      N'@current_database_id integer',
+                        @current_database_id;
+                END;
             END TRY
             BEGIN CATCH
                 /* If we can't access it, mark it */
