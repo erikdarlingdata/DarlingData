@@ -528,6 +528,17 @@ BEGIN
     RETURN;
 END;
 
+/*
+A misspelled @database_name used to return an empty report with no hint
+why. It is a warning, not an error: reports keep the name of a database
+that has since been dropped, and filtering on that name is legitimate.
+*/
+IF  @database_name IS NOT NULL
+AND DB_ID(@database_name) IS NULL
+BEGIN
+    RAISERROR(N'Warning: there is no database named %s on this server. Only blocked process reports recorded under that name (for example, from a database that was dropped) will match.', 10, 1, @database_name) WITH NOWAIT;
+END;
+
 IF @debug = 1
 AND @is_system_health = 0
 BEGIN
