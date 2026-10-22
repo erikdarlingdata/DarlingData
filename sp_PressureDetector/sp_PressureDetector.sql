@@ -2366,26 +2366,36 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         dopc.cntr_value,
                         total =
                             FORMAT(dopc.cntr_value, 'N0'),
+                        /*
+                        A per-second rate only means something for cumulative
+                        counters (cntr_type 272696576). Point-in-time gauges
+                        (65792) such as Total Server Memory (KB) or Processes
+                        blocked get NULL instead of value / uptime.
+                        */
                         total_per_second =
-                            FORMAT
-                            (
-                                dopc.cntr_value /
-                                ISNULL
-                                (
-                                    NULLIF
+                            CASE
+                                WHEN dopc.cntr_type = 272696576
+                                THEN
+                                    FORMAT
                                     (
-                                        DATEDIFF
+                                        dopc.cntr_value /
+                                        ISNULL
                                         (
-                                            SECOND,
-                                            dopc.sample_time,
-                                            SYSDATETIME()
+                                            NULLIF
+                                            (
+                                                DATEDIFF
+                                                (
+                                                    SECOND,
+                                                    dopc.sample_time,
+                                                    SYSDATETIME()
+                                                ),
+                                                0
+                                            ),
+                                            1
                                         ),
-                                        0
-                                    ),
-                                    1
-                                ),
-                                'N0'
-                            )
+                                        'N0'
+                                    )
+                            END
                     FROM @dm_os_performance_counters AS dopc
                 )
                 SELECT
@@ -2434,8 +2444,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         total_difference =
                             FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
                         total_difference_per_second =
-                            FORMAT((dopc2.cntr_value - dopc.cntr_value) /
-                            ISNULL(DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 1), 'N0'),
+                            CASE
+                                WHEN dopc.cntr_type = 272696576
+                                THEN
+                                    FORMAT((dopc2.cntr_value - dopc.cntr_value) /
+                                    ISNULL(DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 1), 'N0')
+                            END,
                         sample_seconds =
                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
                         first_sample_time =
