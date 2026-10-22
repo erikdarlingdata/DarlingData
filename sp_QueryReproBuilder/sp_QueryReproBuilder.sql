@@ -5287,6 +5287,56 @@ AND   ppc.plan_param_count = 0
 OPTION(RECOMPILE);
 
 /*
+Note the plans whose declarations come from the plan, not the query text
+(see has_plan_parameters in the repro builder below)
+*/
+SELECT
+    @current_table = N'checking for parameters without declarations in the query text';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'declarations from plan',
+    warning_message =
+        N'Query text has no parameter declarations (a statement from a procedure, function, trigger, or batch). ' +
+        N'The repro declares the parameters in the plan ParameterList. Local variables are not in it and must be declared by hand.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text NOT LIKE N'(@%'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_parameters AS qp
+          WHERE qp.plan_id = qsp.plan_id
+      )
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_parameters AS qp
+          WHERE qp.plan_id = qsp.plan_id
+          AND
+          (
+               qp.parameter_name NOT LIKE N'@%'
+            OR qp.parameter_data_type IS NULL
+            OR qp.parameter_compiled_value IS NULL
+          )
+      )
+OPTION(RECOMPILE);
+
+/*
 Build reproduction queries with sp_executesql
 */
 SELECT
@@ -5396,8 +5446,17 @@ SELECT
                     N''
                 ) +
                 NCHAR(10) +
+                /*
+                A statement from a procedure, function, trigger, or batch has
+                no (@...) declaration list in its text, but its plan still
+                lists the parameters it compiled for. Run it raw and it fails
+                with Msg 137, so it goes through sp_executesql with the
+                declarations rebuilt from the plan, when every entry there
+                is a typed @parameter.
+                */
                 CASE
                     WHEN qsqt.query_sql_text LIKE N'(@%'
+                    OR   pd.has_plan_parameters = 1
                     THEN
                         N'EXECUTE sys.sp_executesql' +
                         NCHAR(10) +
@@ -5569,6 +5628,35 @@ CROSS APPLY
                 ELSE psp.query_sql_text
             END
 ) AS clean_query
+CROSS APPLY
+(
+    SELECT
+        has_plan_parameters =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_parameters AS qp
+                         WHERE qp.plan_id = qsp.plan_id
+                     )
+                AND  NOT EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_parameters AS qp
+                         WHERE qp.plan_id = qsp.plan_id
+                         AND
+                         (
+                              qp.parameter_name NOT LIKE N'@%'
+                           OR qp.parameter_data_type IS NULL
+                           OR qp.parameter_compiled_value IS NULL
+                         )
+                     )
+                THEN 1
+                ELSE 0
+            END
+) AS pd
 JOIN #query_store_runtime_stats AS qsrs
   ON qsp.plan_id = qsrs.plan_id
 JOIN #query_context_settings AS qcs
