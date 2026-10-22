@@ -12184,7 +12184,16 @@ SELECT
     MAX(qsrs_with_lasts.runtime_stats_id),
     qsrs_with_lasts.plan_id,
     MAX(qsrs_with_lasts.runtime_stats_interval_id),
-    MAX(qsrs_with_lasts.execution_type_desc),
+    /* A plan can have regular, aborted, and exception rows, so list each type it has */
+    STUFF
+    (
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 0 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 3 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 4 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END),
+        1,
+        2,
+        N''''
+    ),
     MIN(qsrs_with_lasts.first_execution_time),
     MAX(qsrs_with_lasts.partitioned_last_execution_time),
     SUM(qsrs_with_lasts.count_executions),
