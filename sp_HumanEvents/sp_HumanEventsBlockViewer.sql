@@ -63,7 +63,7 @@ ALTER PROCEDURE
     dbo.sp_HumanEventsBlockViewer
 (
     @session_name sysname = N'keeper_HumanEvents_blocking', /*Event session name*/
-    @target_type sysname = NULL, /*ring buffer, file, or table*/
+    @target_type sysname = NULL, /*ring_buffer, event_file, or table*/
     @start_date datetime2 = NULL, /*when to start looking for blocking*/
     @end_date datetime2 = NULL, /*when to stop looking for blocking*/
     @database_name sysname = NULL, /*target a specific database*/
@@ -118,7 +118,7 @@ BEGIN
         description =
             CASE ap.name
                  WHEN N'@session_name' THEN 'name of the extended event session to pull from'
-                 WHEN N'@target_type' THEN 'target type of the extended event session (ring buffer, file) or ''table'' to read from a table'
+                 WHEN N'@target_type' THEN 'target type of the extended event session (ring_buffer, event_file) or ''table'' to read from a table; NULL detects it from the session'
                  WHEN N'@start_date' THEN 'filter by date'
                  WHEN N'@end_date' THEN 'filter by date'
                  WHEN N'@database_name' THEN 'filter by database name'
@@ -499,6 +499,34 @@ BEGIN
             )
     FROM {table_check};
 END;';
+
+/*
+Normalize @target_type. The parameter comment and help used to spell
+these "ring buffer" and "file", and those values matched no branch
+below, so the run read nothing and reported 0 total events without an
+error. Accept those spellings and reject anything else. NULL stays NULL
+and is auto-detected further down.
+*/
+SELECT
+    @target_type =
+        CASE LOWER(LTRIM(RTRIM(REPLACE(@target_type, N' ', N'_'))))
+            WHEN N'file'
+            THEN N'event_file'
+            WHEN N'ringbuffer'
+            THEN N'ring_buffer'
+            ELSE LOWER(LTRIM(RTRIM(REPLACE(@target_type, N' ', N'_'))))
+        END;
+
+IF @target_type NOT IN
+   (
+       N'event_file',
+       N'ring_buffer',
+       N'table'
+   )
+BEGIN
+    RAISERROR(N'@target_type must be event_file, ring_buffer, or table (or NULL to detect it from the session). You passed: %s', 11, 1, @target_type) WITH NOWAIT;
+    RETURN;
+END;
 
 IF @debug = 1
 AND @is_system_health = 0
