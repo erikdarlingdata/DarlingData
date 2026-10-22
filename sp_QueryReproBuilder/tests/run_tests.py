@@ -537,25 +537,28 @@ def build_cases():
                   "WHERE ac.column_id = @b", params=None),
         {"expect_qmark": True, "decls_contain": ["numeric(10,2)", "@b int", "?, ?"]})
 
-    # ---------- First-ParameterList-wins hazard ----------------------------
-    # E6-style control: real ParameterList first, decoy second -> binds 555.
+    # ---------- Decoy ParameterList ----------------------------------------
+    # An operator's own ParameterList (as XML-reader / UDF operators emit) holds
+    # no parameters. The procedure reads the LAST <ParameterList>, which in a
+    # real plan is the statement's own, and falls back to the first one only
+    # when the last holds no parameters, so the real @id binds either way.
+    # E6-style control: real ParameterList first, decoy second -> binds 555
+    # through the fallback.
     add("decoy:real_first_control",
         make_plan("(@id int)SELECT col_a = @id, col_s = N'q', col_b = @id",
                   params=[("@id", "int", "(555)")],
                   body_extra=DECOY_PLIST),
         {"echo_expect": {"a": "555", "s": "q", "b": "555"}}, echo=True)
 
-    # E5-style probe: a decoy ParameterList (as XML-reader / UDF operators emit)
-    # precedes the query's own. The procedure substring-extracts the FIRST
-    # <ParameterList>, so the real @id is lost -> the fill-in path warns and
-    # emits ? -> the repro fails LOUD. This documents that the hazard degrades
-    # safely (loud failure with a warning), not into a silent wrong result.
-    add("decoy:decoy_first_degrades_loud",
+    # E5-style probe: the decoy precedes the query's own ParameterList, the
+    # order a real plan has. Reading the first one used to lose the real @id
+    # and fall back to ?; reading the last one binds 555.
+    add("decoy:decoy_first_binds_last",
         make_plan("(@id int)SELECT col_a = @id, col_s = N'q', col_b = @id",
                   params=[("@id", "int", "(555)")],
                   body_pre=DECOY_PLIST),
-        {"expect_qmark": True,
-         "note": "decoy ParameterList precedes query's -> real @id skipped, ? fill-in"})
+        {"echo_expect": {"a": "555", "s": "q", "b": "555"}}, echo=True,
+        note="decoy ParameterList precedes query's -> last ParameterList read, 555 binds")
 
     # ---------- Echo cases: assert the ACTUAL bound values -----------------
     # These execute the repro and read back what was really bound, catching
