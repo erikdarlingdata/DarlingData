@@ -406,7 +406,7 @@ BEGIN
     SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits Total (2017+, expert mode only): total wait stats for the chosen date range only' UNION ALL
+    SELECT 'Query Store Waits Total (2017+, expert mode only): wait stats totals for the queries in the results above, in the chosen date range' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
