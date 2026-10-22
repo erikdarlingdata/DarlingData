@@ -10990,29 +10990,37 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
+/*
+This matches the maintenance patterns directly, under a binary
+collation on upper-cased text, the same way the text search does.
+Nine NOT LIKEs on every query text under the column's linguistic
+collation took most of the run time of a default run on a big
+Query Store.
+*/
 SELECT
     @sql += N'
 SELECT DISTINCT
    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE NOT EXISTS
-      (
-          SELECT
-             1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-            ON qsqt.query_text_id = qsq.query_text_id
-          WHERE qsq.query_id = qsp.query_id
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER TABLE%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''%SELECT StatMan%''
-          AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
-          AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
-          AND   qsqt.query_sql_text NOT LIKE N''WAITFOR%''
-      )
+FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text_upper =
+            UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2
+) AS u
+WHERE u.query_sql_text_upper LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_upper LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_upper LIKE N''CREATE%INDEX%''
+OR    u.query_sql_text_upper LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_upper LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_upper LIKE N''%SELECT STATMAN%''
+OR    u.query_sql_text_upper LIKE N''DBCC%''
+OR    u.query_sql_text_upper LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_upper LIKE N''WAITFOR%''
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
