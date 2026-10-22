@@ -1964,9 +1964,31 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             FORMAT(fm.total_read_count, 'N0'),
                         total_write_count =
                             FORMAT(fm.total_write_count, 'N0'),
+                        /*
+                        Total stall over total I/O, the same as the sample
+                        branch. Adding the two averages weighted a handful of
+                        slow writes the same as a million fast reads.
+                        */
                         total_avg_stall_ms =
-                            fm.avg_read_stall_ms +
-                            fm.avg_write_stall_ms
+                            CONVERT
+                            (
+                                decimal(38, 2),
+                                ISNULL
+                                (
+                                    1.0 *
+                                    (
+                                        fm.io_stall_read_ms +
+                                        fm.io_stall_write_ms
+                                    ) /
+                                    NULLIF
+                                    (
+                                        fm.total_read_count +
+                                        fm.total_write_count,
+                                        0
+                                    ),
+                                    0.
+                                )
+                            )
                     FROM @file_metrics AS fm
                     WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
                     OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
