@@ -1321,8 +1321,8 @@ OPTION(RECOMPILE, MAXDOP 1);';
     ╚══════════════════════════════════════════════════╝
 
     All four stat DMVs feed into this single table.
-    Statements group by query_hash; procedures, functions,
-    and triggers group by database_id + object_id.
+    Statements group by database_id + query_hash; procedures,
+    functions, and triggers group by database_id + object_id.
 
     object_name holds [schema].[object], which can be longer
     than a sysname: each QUOTENAME can return 258 characters.
@@ -1372,6 +1372,13 @@ OPTION(RECOMPILE, MAXDOP 1);';
     ║  Step 1a: Collect statement-level stats          ║
     ║  (#dm_exec_query_stats, grouped by hash)         ║
     ╚══════════════════════════════════════════════════╝
+
+    A group is one query_hash in one database. The same statement text
+    hashes the same in every database it runs in, so grouping on
+    query_hash alone added up, say, the same query in three regional
+    databases into one row, labeled with whichever database had the
+    most executed plan, and reported one plan per database as plan
+    instability. @find_duplicate_plans groups the same way.
 
     Two things happen here, and they are deliberately kept apart.
 
@@ -1447,7 +1454,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
     )
     SELECT
         query_type = 'Statement',
-        database_name = DB_NAME(winner.database_id),
+        database_name = DB_NAME(totals.database_id),
         query_hash = totals.query_hash,
         plan_count = totals.plan_count,
         total_executions = totals.total_executions,
@@ -1482,6 +1489,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
     FROM
     (
         SELECT
+            s.database_id,
             s.query_hash,
             plan_count = COUNT_BIG(DISTINCT s.plan_handle),
             total_executions = SUM(s.execution_count),
@@ -1563,6 +1571,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
         AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
         AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
         GROUP BY
+            s.database_id,
             s.query_hash
         HAVING
             SUM(s.execution_count) >= @minimum_execution_count
@@ -1587,6 +1596,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
+                        s.database_id,
                         s.query_hash
                     ORDER BY
                         s.execution_count DESC
@@ -1596,7 +1606,8 @@ OPTION(RECOMPILE, MAXDOP 1);';
         AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
         AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
     ) AS winner
-      ON  winner.query_hash = totals.query_hash
+      ON  winner.database_id = totals.database_id
+      AND winner.query_hash = totals.query_hash
       AND winner.n = 1
     OPTION(RECOMPILE, MAXDOP 1);
 
