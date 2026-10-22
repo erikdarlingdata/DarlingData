@@ -1098,6 +1098,8 @@ GO
 #                  (SQL Server refuses IGNORE_DUP_KEY on a filtered index).
 #   ic_sg_cci      Group I: two rowstore key duplicates on a clustered columnstore
 #                  table, where a DROP_EXISTING rebuild cannot run ONLINE.
+#   ic_sg_locks    Group I: a merge target with ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS OFF.
+#   ic_sg_part     Group I: a partitioned merge target with STATISTICS_INCREMENTAL = ON.
 #   ic_sg_sup      Group J: a superset that already has every column of its subset.
 #   ic_sg_uqnoop   Group J: a unique index that already replaces a constraint.
 #   ic_sg_real     Group J: a superset that really does absorb a column (control).
@@ -1122,12 +1124,17 @@ L_TABLES = tuple(
 
 SCRIPTGEN_TABLES = (
     "ic_sg_c3", "ic_sg_c4", "ic_sg_c5a", "ic_sg_c5b", "ic_sg_p3", "ic_sg_p4",
-    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_cci", "ic_sg_sup",
+    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_cci", "ic_sg_locks", "ic_sg_part", "ic_sg_sup",
     "ic_sg_uqnoop", "ic_sg_real",
 ) + L_TABLES
 
 SCRIPTGEN_CLEANUP_SQL = "SET NOCOUNT ON;\n" + "".join(
-    "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES)
+    "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES) + """
+IF EXISTS (SELECT 1/0 FROM sys.partition_schemes AS ps WHERE ps.name = N'ps_ic_sg')
+    DROP PARTITION SCHEME ps_ic_sg;
+IF EXISTS (SELECT 1/0 FROM sys.partition_functions AS pf WHERE pf.name = N'pf_ic_sg')
+    DROP PARTITION FUNCTION pf_ic_sg;
+"""
 
 
 def _sg_rows(table, columns, values):
@@ -1207,6 +1214,23 @@ CREATE TABLE dbo.ic_sg_cci (id integer NOT NULL, k integer NOT NULL, x integer N
 CREATE CLUSTERED COLUMNSTORE INDEX cci_sg_cci ON dbo.ic_sg_cci;
 CREATE INDEX ix_a_sg_cci ON dbo.ic_sg_cci (k) INCLUDE (x);
 CREATE INDEX ix_b_sg_cci ON dbo.ic_sg_cci (k) INCLUDE (y);
+GO
+
+CREATE TABLE dbo.ic_sg_locks (id integer NOT NULL CONSTRAINT pk_ic_sg_locks PRIMARY KEY, k integer NOT NULL, x integer NULL, y integer NULL);
+""" + _sg_rows("ic_sg_locks", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
+CREATE INDEX ix_a_sg_locks ON dbo.ic_sg_locks (k) INCLUDE (x) WITH (ALLOW_PAGE_LOCKS = OFF, ALLOW_ROW_LOCKS = OFF);
+CREATE INDEX ix_b_sg_locks ON dbo.ic_sg_locks (k) INCLUDE (y);
+GO
+
+CREATE PARTITION FUNCTION pf_ic_sg (integer) AS RANGE RIGHT FOR VALUES (100, 200);
+GO
+CREATE PARTITION SCHEME ps_ic_sg AS PARTITION pf_ic_sg ALL TO ([PRIMARY]);
+GO
+
+CREATE TABLE dbo.ic_sg_part (id integer NOT NULL, k integer NOT NULL, x integer NULL, y integer NULL, CONSTRAINT pk_ic_sg_part PRIMARY KEY (id) ON ps_ic_sg (id)) ON ps_ic_sg (id);
+""" + _sg_rows("ic_sg_part", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
+CREATE INDEX ix_a_sg_part ON dbo.ic_sg_part (k) INCLUDE (x) WITH (STATISTICS_INCREMENTAL = ON) ON ps_ic_sg (id);
+CREATE INDEX ix_b_sg_part ON dbo.ic_sg_part (k) INCLUDE (y) ON ps_ic_sg (id);
 GO
 
 CREATE TABLE dbo.ic_sg_sup (id integer NOT NULL CONSTRAINT pk_ic_sg_sup PRIMARY KEY, a integer NULL, b integer NULL, c integer NULL);
@@ -1303,6 +1327,21 @@ SELECT
             N''
         )
 FROM sys.indexes AS i
+WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
+AND   i.name = N'%(i)s';
+"""
+
+# Reads back the lock and incremental-statistics options of one index.
+LOCKS_PROBE_SQL = """
+SELECT
+    marker = N'LOCKS',
+    allow_page_locks = i.allow_page_locks,
+    allow_row_locks = i.allow_row_locks,
+    is_incremental = s.is_incremental
+FROM sys.indexes AS i
+JOIN sys.stats AS s
+  ON  s.object_id = i.object_id
+  AND s.stats_id = i.index_id
 WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
 AND   i.name = N'%(i)s';
 """
@@ -2271,6 +2310,27 @@ def run_tests(server, password, uptime_days):
     assert_test("I-IndexOptions",
                 "executed on the columnstore table: the merge runs and ix_a_sg_cci includes x and y",
                 incl == ["x,y"] and not errs, "includes=%s errors=%s" % (incl, errs))
+
+    # DROP_EXISTING also puts ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS back to ON and
+    # STATISTICS_INCREMENTAL back to OFF unless the WITH list names them.
+    for table, index, want, probe_want in (
+            ("ic_sg_locks", "ix_a_sg_locks",
+             ("ALLOW_PAGE_LOCKS = OFF", "ALLOW_ROW_LOCKS = OFF"), ["0", "0", "0"]),
+            ("ic_sg_part", "ix_a_sg_part",
+             ("STATISTICS_INCREMENTAL = ON",), ["1", "1", "1"])):
+        rows, _ = run_proc(server, password, table, extra=sg)
+        merge = find_rows(rows, index_name=index, script_type="MERGE SCRIPT")
+        script = merge[0]["script"] if merge else ""
+        assert_test("I-IndexOptions",
+                    "%s MERGE SCRIPT carries %s" % (index, " and ".join(want)),
+                    len(merge) == 1 and all(w in script for w in want), script or "no MERGE SCRIPT")
+        out, errs = exec_in_rolled_back_transaction(
+            server, password, [script], LOCKS_PROBE_SQL % {"t": table, "i": index})
+        opts = probe_fields(out, "LOCKS")
+        assert_test("I-IndexOptions",
+                    "executed: %s keeps allow_page_locks, allow_row_locks, is_incremental = %s"
+                    % (index, ", ".join(probe_want)),
+                    opts == probe_want and not errs, "options=%s errors=%s" % (opts, errs))
 
     # ---- Group J: no MERGE SCRIPT when the merge changes nothing ----
     #

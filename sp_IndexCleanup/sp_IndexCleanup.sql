@@ -382,6 +382,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* sys.stats.is_incremental (SQL 2014+, Azure SQL DB, and Managed Instance) */
+        @supports_incremental_statistics bit =
+            CASE
+                /* Azure SQL DB or Managed Instance */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
+                THEN 1
+                /* SQL Server 2014+ */
+                WHEN CONVERT
+                     (
+                         integer,
+                         SUBSTRING
+                         (
+                             CONVERT
+                             (
+                                 varchar(20),
+                                 SERVERPROPERTY('ProductVersion')
+                             ),
+                             1,
+                             2
+                         )
+                     ) >= 12
+                THEN 1
+                ELSE 0
+            END,
         @is_azure_sql_db bit =
             CASE
                 WHEN CONVERT
@@ -685,6 +709,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         */
         ignore_dup_key bit NOT NULL,
         no_recompute bit NOT NULL,
+        /*
+        Three more that DROP_EXISTING resets: ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS
+        go back to ON, and STATISTICS_INCREMENTAL (sys.stats.is_incremental) goes
+        back to OFF.
+        */
+        allow_page_locks bit NOT NULL,
+        allow_row_locks bit NOT NULL,
+        is_incremental bit NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
         user_lookups bigint NOT NULL,
@@ -2938,6 +2970,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        allow_page_locks = ISNULL(i.allow_page_locks, 1),
+        allow_row_locks = ISNULL(i.allow_row_locks, 1),' +
+        CASE
+            WHEN @supports_incremental_statistics = 1
+            THEN N'
+        is_incremental =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.stats AS st
+                         WHERE st.object_id = i.object_id
+                         AND   st.stats_id = i.index_id
+                         AND   st.is_incremental = 1
+                     )
+                THEN 1
+                ELSE 0
+            END,'
+            ELSE N'
+        is_incremental = 0,'
+        END + N'
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
         user_lookups = ISNULL(us.user_lookups, 0),
@@ -3073,6 +3127,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         optimize_for_sequential_key,
         ignore_dup_key,
         no_recompute,
+        allow_page_locks,
+        allow_row_locks,
+        is_incremental,
         user_seeks,
         user_scans,
         user_lookups,
@@ -6456,6 +6513,47 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N', STATISTICS_NORECOMPUTE = ON'
                 ELSE N''
             END +
+            /*
+            DROP_EXISTING resets these three as well: row and page locks back to
+            allowed, and incremental statistics back to OFF. Only a value that
+            differs from the default needs naming.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
+                ELSE N''
+            END +
             N')' +
             CASE
                 WHEN ps.partition_function_name IS NOT NULL
@@ -9209,6 +9307,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         AND   id_nrc.no_recompute = 1
                     )
                     THEN N', STATISTICS_NORECOMPUTE = ON'
+                    ELSE N''
+                END +
+                /* The other three DROP_EXISTING resets, as in the MERGE SCRIPT */
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_apl
+                        WHERE id_apl.index_hash = ia.index_hash
+                        AND   id_apl.allow_page_locks = 0
+                    )
+                    THEN N', ALLOW_PAGE_LOCKS = OFF'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_arl
+                        WHERE id_arl.index_hash = ia.index_hash
+                        AND   id_arl.allow_row_locks = 0
+                    )
+                    THEN N', ALLOW_ROW_LOCKS = OFF'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_inc
+                        WHERE id_inc.index_hash = ia.index_hash
+                        AND   id_inc.is_incremental = 1
+                    )
+                    THEN N', STATISTICS_INCREMENTAL = ON'
                     ELSE N''
                 END +
                 N')' +
