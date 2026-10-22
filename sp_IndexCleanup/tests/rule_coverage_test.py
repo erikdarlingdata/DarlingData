@@ -198,6 +198,8 @@ MDB_MERGE_SUBSET = "ix_merge_sub"    # the subset it absorbs and disables
 MDB_UC_TABLE = "icg_uc"              # unique constraint + same-key index (bug 2)
 MDB_UC_CONSTRAINT = "uq_icg"         # the constraint that must not get ALTER..DISABLE
 MDB_UC_PLAIN = "ix_uc_plain"         # the index promoted to replace it
+MDB_FILT_TABLE = "icg_filt"          # a filtered index missing its filter column, in both (bug 3)
+MDB_FILT_INDEX = "fx_icg_filt"       # the index each database's finding has to name
 
 # Rows that represent a dedupe action. A COMPRESSION SCRIPT row is not one.
 DEDUPE_SCRIPT_TYPES = ("DISABLE SCRIPT", "MERGE SCRIPT", "DISABLE CONSTRAINT SCRIPT")
@@ -1027,6 +1029,34 @@ ALTER TABLE dbo.icg_uc ADD CONSTRAINT uq_icg UNIQUE (col_a, id);
 CREATE INDEX ix_uc_plain ON dbo.icg_uc (col_a, id) INCLUDE (col_c);
 GO
 
+/* Bug 3: a filtered index whose filter column it does not carry. */
+CREATE TABLE
+    dbo.icg_filt
+(
+    id integer NOT NULL,
+    k integer NOT NULL,
+    status integer NOT NULL,
+    CONSTRAINT pk_icg_filt PRIMARY KEY CLUSTERED (id)
+);
+
+INSERT INTO
+    dbo.icg_filt
+(
+    id,
+    k,
+    status
+)
+SELECT TOP (1000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    k = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    status = 1
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+CREATE INDEX fx_icg_filt ON dbo.icg_filt (k) WHERE status = 1;
+GO
+
 USE %(second)s;
 GO
 
@@ -1081,6 +1111,34 @@ CROSS JOIN sys.all_columns AS ac2
 OPTION(MAXDOP 1);
 
 CREATE INDEX ix_uc_b ON dbo.icg_uc (col_a);
+GO
+
+/* The same table, so each database has a finding of its own. */
+CREATE TABLE
+    dbo.icg_filt
+(
+    id integer NOT NULL,
+    k integer NOT NULL,
+    status integer NOT NULL,
+    CONSTRAINT pk_icg_filt PRIMARY KEY CLUSTERED (id)
+);
+
+INSERT INTO
+    dbo.icg_filt
+(
+    id,
+    k,
+    status
+)
+SELECT TOP (1000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    k = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    status = 1
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+CREATE INDEX fx_icg_filt ON dbo.icg_filt (k) WHERE status = 1;
 GO
 """ % {"first": MDB_DATABASE_FIRST, "second": MDB_DATABASE_SECOND}
 
@@ -1573,6 +1631,32 @@ def parse_output(stdout):
         if len(cols) >= len(headers):
             rows.append(dict(zip(headers, cols)))
             started = True
+
+    return rows
+
+
+def parse_findings(stdout):
+    """
+    Parse the advisory findings result sets (FILTERED INDEXES NEEDING INCLUDED
+    COLUMNS and the others) into rows. They come after the script result set
+    parse_output stops at, each with a header that starts with finding_type, and
+    each set ends at the blank line sqlcmd prints after it.
+    """
+    rows = []
+    headers = None
+
+    for line in stdout.split("\n"):
+        if not line.strip():
+            headers = None
+            continue
+        cols = [c.strip() for c in line.split("\t")]
+        if cols[0] == "finding_type" and "index_name" in cols:
+            headers = cols
+            continue
+        if headers is None or line.startswith("---"):
+            continue
+        if len(cols) >= len(headers):
+            rows.append(dict(zip(headers, cols)))
 
     return rows
 
@@ -2164,6 +2248,31 @@ def run_tests(server, password, uptime_days):
                 "found %d (ALTER INDEX DISABLE on a UC silently disables inbound FKs) %s"
                 % (len(uc_disable),
                    [(r["database_name"], r["script"]) for r in uc_disable]))
+
+    # --- Bug 3: every database keeps its advisory findings ---
+    # The findings tables were reset at the top of each pass, while the findings
+    # are returned after the loop, so only the last database's survived, and none
+    # once a later database without the table was reached. The filtered-index
+    # script was also built after the loop, from per-database tables that by then
+    # held only the last database.
+    _, filt_out = run_proc_all_databases(server, password, MDB_FILT_TABLE,
+                                         extra=", @dedupe_only = 1")
+    findings = [f for f in parse_findings(filt_out)
+                if f.get("finding_type") == "FILTERED INDEXES NEEDING INCLUDED COLUMNS"
+                and f.get("index_name") == MDB_FILT_INDEX]
+    found_in = sorted(f.get("database_name") for f in findings)
+    assert_test("G-MultiDatabase",
+                "the filtered-index finding is reported for both databases",
+                found_in == sorted([MDB_DATABASE_FIRST, MDB_DATABASE_SECOND]),
+                "found for %s" % found_in)
+    wrong = [f.get("create_index_script") for f in findings
+             if "[%s].[dbo].[%s]" % (f.get("database_name"), MDB_FILT_TABLE)
+             not in (f.get("create_index_script") or "")
+             or "INCLUDE ([status])" not in (f.get("create_index_script") or "")
+             or "ON [PRIMARY]" not in (f.get("create_index_script") or "")]
+    assert_test("G-MultiDatabase",
+                "each database's script names its own table, the missing column and its filegroup",
+                len(findings) == 2 and len(wrong) == 0, "scripts: %s" % wrong)
 
     # ---- Group H: the usage floor gates every dedupe path, not just some ----
     #

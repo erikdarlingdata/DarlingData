@@ -1221,7 +1221,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
-        should_include_filter_columns bit NOT NULL
+        should_include_filter_columns bit NOT NULL,
+        /* Built inside the database loop, while that database's #index_details and the rest are loaded */
+        create_index_script nvarchar(max) NULL
     );
 
     CREATE CLUSTERED INDEX
@@ -1970,13 +1972,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         TRUNCATE TABLE
             #include_subset_dedupe;
         TRUNCATE TABLE
-            #computed_columns_analysis;
-        TRUNCATE TABLE
-            #check_constraints_analysis;
-        TRUNCATE TABLE
-            #filtered_index_columns_analysis;
-        TRUNCATE TABLE
             #merged_includes;
+
+        /*
+        #computed_columns_analysis, #check_constraints_analysis and
+        #filtered_index_columns_analysis are NOT reset here. They are the advisory
+        findings, returned after the loop like #index_analysis, and keyed by
+        database_id. Resetting them each pass left only the last database's
+        findings when @get_all_databases = 1, and none at all once a later
+        database without the @table_name object was reached.
+        */
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
@@ -7986,6 +7991,192 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /*
+    Script the filtered-index findings for this database, now, while its
+    #index_details, #partition_stats, #compression_eligibility and #filtered_objects
+    are loaded. The findings are returned after the loop, and a script built there
+    read those tables when they held only the last database's rows, so with
+    @get_all_databases = 1 every other database's script lost its compression, its
+    index options and its filegroup or partition scheme.
+    */
+    UPDATE
+        fica
+    SET
+        /*
+        Rebuild the index with the filter columns appended to the INCLUDE
+        list, using DROP_EXISTING so the existing index is replaced in a
+        single statement. Pieces are reused from #index_analysis, so the
+        key columns, existing includes, and filter all match the original.
+        The WITH options and partition ON clause mirror the merge/create
+        scripts so this advice stays consistent with the rest of the tool.
+        */
+        fica.create_index_script =
+            N'CREATE ' +
+            CASE
+                WHEN ia.is_unique = 1
+                THEN N'UNIQUE '
+                ELSE N''
+            END +
+            N'NONCLUSTERED INDEX ' +
+            QUOTENAME(fica.index_name) +
+            N' ON ' +
+            QUOTENAME(fica.database_name) +
+            N'.' +
+            QUOTENAME(fica.schema_name) +
+            N'.' +
+            QUOTENAME(fica.table_name) +
+            N' (' +
+            ia.key_columns +
+            N') INCLUDE (' +
+            CASE
+                WHEN ia.included_columns IS NOT NULL
+                AND  LEN(ia.included_columns) > 0
+                THEN ia.included_columns + N', ' + fica.missing_included_columns
+                ELSE fica.missing_included_columns
+            END +
+            N')' +
+            CASE
+                WHEN fica.filter_definition IS NOT NULL
+                THEN N' WHERE ' + fica.filter_definition
+                ELSE N''
+            END +
+            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /* Offline on a clustered columnstore table, for the reason given at the MERGE SCRIPT (Msg 35352) */
+            CASE
+                WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
+                THEN N'ON'
+                ELSE N'OFF'
+            END +
+            CASE
+                WHEN ce.can_compress = 1
+                THEN N', DATA_COMPRESSION = PAGE'
+                ELSE N''
+            END +
+            CASE
+                WHEN @supports_optimize_for_sequential_key = 1
+                AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_ofsk
+                    WHERE id_ofsk.index_hash = ia.index_hash
+                    AND   id_ofsk.optimize_for_sequential_key = 1
+                )
+                THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = ia.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                )
+                THEN N', IGNORE_DUP_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_nrc
+                    WHERE id_nrc.index_hash = ia.index_hash
+                    AND   id_nrc.no_recompute = 1
+                )
+                THEN N', STATISTICS_NORECOMPUTE = ON'
+                ELSE N''
+            END +
+            /* The other three DROP_EXISTING resets, as in the MERGE SCRIPT */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
+                ELSE N''
+            END +
+            N')' +
+            CASE
+                WHEN ps.partition_function_name IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on) +
+                     N'(' +
+                     ISNULL(ps.partition_columns, N'') +
+                     N')'
+                WHEN ps.built_on IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on)
+                ELSE N''
+            END +
+            N';'
+    FROM #filtered_index_columns_analysis AS fica
+    JOIN #index_analysis AS ia
+      ON  ia.database_id = fica.database_id
+      AND ia.schema_id = fica.schema_id
+      AND ia.object_id = fica.object_id
+      AND ia.index_id = fica.index_id
+    LEFT JOIN
+    (
+        /* One row per index carrying its storage/partition layout */
+        SELECT
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats AS ps
+        GROUP BY
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) AS ps
+      ON ps.index_hash = ia.index_hash
+    LEFT JOIN #compression_eligibility AS ce
+      ON ce.index_hash = ia.index_hash
+    WHERE fica.should_include_filter_columns = 1
+    AND   fica.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    /*
     Table-level reporting statistics.
 
     All three reporting levels (TABLE, DATABASE, SUMMARY) are built bottom-up
@@ -9248,153 +9439,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.filter_definition,
             ia.original_index_definition,
             fica.missing_included_columns,
-            /*
-            Rebuild the index with the filter columns appended to the INCLUDE
-            list, using DROP_EXISTING so the existing index is replaced in a
-            single statement. Pieces are reused from #index_analysis, so the
-            key columns, existing includes, and filter all match the original.
-            The WITH options and partition ON clause mirror the merge/create
-            scripts so this advice stays consistent with the rest of the tool.
-            */
-            create_index_script =
-                N'CREATE ' +
-                CASE
-                    WHEN ia.is_unique = 1
-                    THEN N'UNIQUE '
-                    ELSE N''
-                END +
-                N'NONCLUSTERED INDEX ' +
-                QUOTENAME(fica.index_name) +
-                N' ON ' +
-                QUOTENAME(fica.database_name) +
-                N'.' +
-                QUOTENAME(fica.schema_name) +
-                N'.' +
-                QUOTENAME(fica.table_name) +
-                N' (' +
-                ia.key_columns +
-                N') INCLUDE (' +
-                CASE
-                    WHEN ia.included_columns IS NOT NULL
-                    AND  LEN(ia.included_columns) > 0
-                    THEN ia.included_columns + N', ' + fica.missing_included_columns
-                    ELSE fica.missing_included_columns
-                END +
-                N')' +
-                CASE
-                    WHEN fica.filter_definition IS NOT NULL
-                    THEN N' WHERE ' + fica.filter_definition
-                    ELSE N''
-                END +
-                N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-                /* Offline on a clustered columnstore table, for the reason given at the MERGE SCRIPT (Msg 35352) */
-                CASE
-                    WHEN @online = 1
-                    AND  NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #filtered_objects AS fo_cci
-                        WHERE fo_cci.database_id = ia.database_id
-                        AND   fo_cci.object_id = ia.object_id
-                        AND   fo_cci.index_type = 5
-                    )
-                    THEN N'ON'
-                    ELSE N'OFF'
-                END +
-                CASE
-                    WHEN ce.can_compress = 1
-                    THEN N', DATA_COMPRESSION = PAGE'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_idk
-                        WHERE id_idk.index_hash = ia.index_hash
-                        AND   id_idk.ignore_dup_key = 1
-                    )
-                    THEN N', IGNORE_DUP_KEY = ON'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_nrc
-                        WHERE id_nrc.index_hash = ia.index_hash
-                        AND   id_nrc.no_recompute = 1
-                    )
-                    THEN N', STATISTICS_NORECOMPUTE = ON'
-                    ELSE N''
-                END +
-                /* The other three DROP_EXISTING resets, as in the MERGE SCRIPT */
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_apl
-                        WHERE id_apl.index_hash = ia.index_hash
-                        AND   id_apl.allow_page_locks = 0
-                    )
-                    THEN N', ALLOW_PAGE_LOCKS = OFF'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_arl
-                        WHERE id_arl.index_hash = ia.index_hash
-                        AND   id_arl.allow_row_locks = 0
-                    )
-                    THEN N', ALLOW_ROW_LOCKS = OFF'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_inc
-                        WHERE id_inc.index_hash = ia.index_hash
-                        AND   id_inc.is_incremental = 1
-                    )
-                    THEN N', STATISTICS_INCREMENTAL = ON'
-                    ELSE N''
-                END +
-                N')' +
-                CASE
-                    WHEN ps.partition_function_name IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on) +
-                         N'(' +
-                         ISNULL(ps.partition_columns, N'') +
-                         N')'
-                    WHEN ps.built_on IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on)
-                    ELSE N''
-                END +
-                N';',
+            /* Built inside the database loop, for the reason given there */
+            fica.create_index_script,
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
         JOIN #index_analysis AS ia
@@ -9402,24 +9448,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.schema_id = fica.schema_id
           AND ia.object_id = fica.object_id
           AND ia.index_id = fica.index_id
-        LEFT JOIN
-        (
-            /* One row per index carrying its storage/partition layout */
-            SELECT
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-            FROM #partition_stats AS ps
-            GROUP BY
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-        ) AS ps
-          ON ps.index_hash = ia.index_hash
-        LEFT JOIN #compression_eligibility AS ce
-          ON ce.index_hash = ia.index_hash
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,
