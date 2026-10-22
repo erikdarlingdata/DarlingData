@@ -592,6 +592,13 @@ keeper_HumanEvents_ sessions are deliberately left out: they exist to
 survive between runs when @keep_alive = 1, and the logging loop polls
 them. Dropping those is only correct under @cleanup = 1, which the
 cleanup label handles separately.
+
+A running one-shot session can belong to someone else's run that is
+still sampling. @seconds_sample is a tinyint, so a run lasts up to
+255 seconds plus the time to shred the results. The old one-minute
+cutoff dropped those live sessions, and the other run came back empty
+with Msg 15151. Stopped sessions are always orphans; running ones are
+only treated as orphans after 10 minutes.
 */
 IF @azure = 0
 BEGIN
@@ -608,7 +615,7 @@ BEGIN
     LEFT JOIN sys.dm_xe_sessions AS dxe
       ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents[_]%'
-    AND  (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+    AND  (dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME())
     OR    dxe.create_time IS NULL);
 END;
 
@@ -627,7 +634,7 @@ BEGIN
     LEFT JOIN sys.dm_xe_database_sessions AS dxe
       ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents[_]%'
-    AND  (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+    AND  (dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME())
     OR    dxe.create_time IS NULL);
 END;
 
