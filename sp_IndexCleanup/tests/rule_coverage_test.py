@@ -1117,11 +1117,26 @@ GO
 #                  INCLUDE (y) and ix_s_chN INCLUDE (z), one table per creation
 #                  order. A seek gives ix_s_chN the usage term, so Rule 5
 #                  disables ix_m_chN in its favor whenever it pairs the two.
+#   icm.ic_sg_mfN  Group M: a unique index a foreign key is backed by (no
+#                  includes), a plain unique index with the widest includes and
+#                  a non-unique one, under every assignment of the names a_, m_
+#                  and z_. ic_sg_mfNc is the child table of the key.
+#   icm.ic_sg_miN  Group M: the same three shapes with IGNORE_DUP_KEY on the
+#                  narrow unique index instead of the foreign key. All twelve sit
+#                  in schema icm and are analyzed in ONE run: scoped to a single
+#                  table, Rule 5 happened to pair them so that one candidate was
+#                  left, and the defect never showed.
 L_UK_ORDERS = list(itertools.permutations("uab"))
 L_CH_ORDERS = list(itertools.permutations("ums"))
 L_TABLES = tuple(
     ["ic_sg_uk%d" % n for n in range(1, len(L_UK_ORDERS) + 2)]
     + ["ic_sg_ch%d" % n for n in range(1, len(L_CH_ORDERS) + 1)]
+)
+M_NAMES = list(itertools.permutations("amz"))
+M_TABLES = tuple(
+    ["ic_sg_mf%dc" % n for n in range(1, len(M_NAMES) + 1)]
+    + ["ic_sg_mf%d" % n for n in range(1, len(M_NAMES) + 1)]
+    + ["ic_sg_mi%d" % n for n in range(1, len(M_NAMES) + 1)]
 )
 
 SCRIPTGEN_TABLES = (
@@ -1131,7 +1146,10 @@ SCRIPTGEN_TABLES = (
 ) + L_TABLES
 
 SCRIPTGEN_CLEANUP_SQL = "SET NOCOUNT ON;\n" + "".join(
-    "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES) + """
+    "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES) + "".join(
+    "DROP TABLE IF EXISTS icm.%s;\n" % t for t in M_TABLES) + """
+IF SCHEMA_ID(N'icm') IS NOT NULL
+    EXECUTE (N'DROP SCHEMA icm;');
 IF EXISTS (SELECT 1/0 FROM sys.partition_schemes AS ps WHERE ps.name = N'ps_ic_sg')
     DROP PARTITION SCHEME ps_ic_sg;
 IF EXISTS (SELECT 1/0 FROM sys.partition_functions AS pf WHERE pf.name = N'pf_ic_sg')
@@ -1191,6 +1209,39 @@ def _group_l_setup_sql():
         % (n, n)
         for n in range(1, len(L_CH_ORDERS) + 1)
     ) + "GO\n"
+    return sql
+
+
+def _group_m_setup_sql():
+    """Group M's tables. In table N the three roles get the names in M_NAMES[N - 1]:
+    the first letter goes to the foreign key (or IGNORE_DUP_KEY) index, the second
+    to the wide plain unique index, the third to the non-unique one."""
+    sql = "CREATE SCHEMA icm;\nGO\n"
+    for n, (key, wide, mid) in enumerate(M_NAMES, start=1):
+        f = "ic_sg_mf%d" % n
+        sql += (
+            "CREATE TABLE icm.%(f)s (id integer NOT NULL CONSTRAINT pk_%(f)s PRIMARY KEY, "
+            "k integer NOT NULL, x integer NULL, y integer NULL, z integer NULL);\n"
+            % {"f": f}
+        ) + _sg_rows(f, "id, k, x, y, z", ["RN", "RN", "1", "2", "3"]).replace("INSERT dbo.", "INSERT icm.") + (
+            "CREATE UNIQUE INDEX %(key)s_fk ON icm.%(f)s (k);\n"
+            "CREATE TABLE icm.%(f)sc (id integer NOT NULL CONSTRAINT pk_%(f)sc PRIMARY KEY, "
+            "k integer NOT NULL CONSTRAINT fk_%(f)sc REFERENCES icm.%(f)s (k));\n"
+            "CREATE UNIQUE INDEX %(wide)s_wide ON icm.%(f)s (k) INCLUDE (x, y, z);\n"
+            "CREATE INDEX %(mid)s_mid ON icm.%(f)s (k) INCLUDE (y);\nGO\n"
+            % {"f": f, "key": key, "wide": wide, "mid": mid}
+        )
+        i = "ic_sg_mi%d" % n
+        sql += (
+            "CREATE TABLE icm.%(i)s (id integer NOT NULL CONSTRAINT pk_%(i)s PRIMARY KEY, "
+            "k integer NOT NULL, x integer NULL, y integer NULL, z integer NULL);\n"
+            % {"i": i}
+        ) + _sg_rows(i, "id, k, x, y, z", ["RN", "RN", "1", "2", "3"]).replace("INSERT dbo.", "INSERT icm.") + (
+            "CREATE UNIQUE INDEX %(key)s_skip ON icm.%(i)s (k) INCLUDE (x) WITH (IGNORE_DUP_KEY = ON);\n"
+            "CREATE UNIQUE INDEX %(wide)s_wide ON icm.%(i)s (k) INCLUDE (x, y, z);\n"
+            "CREATE INDEX %(mid)s_mid ON icm.%(i)s (k) INCLUDE (y);\nGO\n"
+            % {"i": i, "key": key, "wide": wide, "mid": mid}
+        )
     return sql
 
 
@@ -1281,7 +1332,7 @@ CREATE TABLE dbo.ic_sg_c5b (cid integer NOT NULL CONSTRAINT pk_ic_sg_c5b PRIMARY
 ALTER INDEX ux_z5_code ON dbo.ic_sg_p5 REBUILD;
 ALTER TABLE dbo.ic_sg_c5a WITH CHECK CHECK CONSTRAINT fk_ic_sg_c5a;
 GO
-""" + _group_l_setup_sql()
+""" + _group_l_setup_sql() + _group_m_setup_sql()
 
 # Reads back what a rebuilt index kept, then inserts a duplicate key. The 1000000
 # range is above the fixture's rows, so only the two new rows can collide.
@@ -1372,6 +1423,28 @@ SELECT
 FROM sys.indexes AS i
 WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
 AND   i.name = N'%(i)s';
+"""
+
+# Group M's probes: an orphan child row has to fail with 547, and a duplicate key
+# has to be skipped, after the scripts have run.
+M_FK_PROBE_SQL = """
+BEGIN TRY
+    INSERT icm.%(t)sc (id, k) VALUES (1000001, 1000000);
+    SELECT marker = N'%(m)s', outcome = N'inserted', n = 0;
+END TRY
+BEGIN CATCH
+    SELECT marker = N'%(m)s', outcome = N'error', n = ERROR_NUMBER();
+END CATCH;
+"""
+
+M_IDK_PROBE_SQL = """
+BEGIN TRY
+    INSERT icm.%(t)s (id, k) VALUES (1000001, 1000000), (1000002, 1000000);
+    SELECT marker = N'%(m)s', outcome = N'inserted', n = COUNT_BIG(*) FROM icm.%(t)s WHERE k = 1000000;
+END TRY
+BEGIN CATCH
+    SELECT marker = N'%(m)s', outcome = N'error', n = ERROR_NUMBER();
+END CATCH;
 """
 
 # Group L's duplicate insert, one per table, each with its own marker. Same key
@@ -1577,6 +1650,17 @@ def run_proc(server, password, table_name, extra="", debug=False):
         "EXECUTE master.dbo.sp_IndexCleanup "
         "@database_name = '%s', @schema_name = 'dbo', @table_name = '%s'%s%s;"
         % (TEST_DATABASE, table_name, extra, ", @debug = 1" if debug else "")
+    )
+    stdout, _ = run_sqlcmd(server, password, database="master", query=query)
+    return parse_output(stdout), stdout
+
+
+def run_proc_schema(server, password, schema_name, extra=""):
+    """Run sp_IndexCleanup over every table of one schema and return (rows, stdout)."""
+    query = (
+        "EXECUTE master.dbo.sp_IndexCleanup "
+        "@database_name = '%s', @schema_name = '%s'%s;"
+        % (TEST_DATABASE, schema_name, extra)
     )
     stdout, _ = run_sqlcmd(server, password, database="master", query=query)
     return parse_output(stdout), stdout
@@ -2605,6 +2689,59 @@ def run_tests(server, password, uptime_days):
     assert_test("L-KeyDuplicateWinner",
                 "L4: each winner's Supersedes text names exactly the indexes that point at it",
                 len(texts) == 0, "; ".join(texts))
+
+    # ---- Group M: three same-key indexes, one backs a foreign key or skips duplicates ----
+    #
+    # Rule 5 can leave two MERGE INCLUDES rows in such a group, and the step that
+    # picks one winner from them sorted by is_unique, include length and name. It
+    # did not read the foreign key or IGNORE_DUP_KEY terms index_priority gained in
+    # #917 and #916, so the plain wide unique index could beat the index the key is
+    # backed by, or the one that skips duplicates. The guard and the carried option
+    # kept the behaviour, but the wrong index won. Every name order must give the
+    # same winner. Measured on 2022 CU27: run over the whole schema, dev got the
+    # winner wrong in all twelve tables.
+    m_rows, _ = run_proc_schema(server, password, "icm", extra=sg)
+
+    def m_outcome(table):
+        rows = find_rows(m_rows, table_name=table)
+        return {
+            "disabled": {r["index_name"]: r.get("target_index_name")
+                         for r in find_rows(rows, script_type="DISABLE SCRIPT")},
+            "merges": sorted(r["index_name"] for r in find_rows(rows, script_type="MERGE SCRIPT")),
+            "kept_fk": sorted(r["index_name"] for r in find_rows(rows, script_type="KEPT - FOREIGN KEY")),
+            "scripts": [r["script"] for r in find_rows(rows, script_type="MERGE SCRIPT")
+                        + find_rows(rows, script_type="IGNORE_DUP_KEY SCRIPT")
+                        + find_rows(rows, script_type="DISABLE SCRIPT")],
+        }
+
+    for shape, role, label in (("mf", "fk", "M1: the index the foreign key is backed by"),
+                               ("mi", "skip", "M2: the IGNORE_DUP_KEY index")):
+        wrong, scripts, probes = [], [], ""
+        for n, (key, wide, mid) in enumerate(M_NAMES, start=1):
+            table = "ic_sg_%s%d" % (shape, n)
+            result = m_outcome(table)
+            winner = "%s_%s" % (key, role)
+            want = {"%s_wide" % wide: winner, "%s_mid" % mid: winner}
+            if result["disabled"] != want or result["merges"] != [winner] or result["kept_fk"]:
+                wrong.append("names %s: disabled %s, merged %s, kept by the guard %s"
+                             % ("".join((key, wide, mid)), result["disabled"],
+                                result["merges"], result["kept_fk"]))
+            scripts += result["scripts"]
+            probes += (M_FK_PROBE_SQL if shape == "mf" else M_IDK_PROBE_SQL) % {
+                "t": table, "m": "M%s%d" % (shape, n)}
+        assert_test("M-ThreeKeyDuplicates",
+                    "%s wins in all six name orders and both others point at it" % label,
+                    len(wrong) == 0, "; ".join(wrong))
+
+        out, errs = exec_in_rolled_back_transaction(server, password, scripts, probes)
+        outcomes = {n: probe_fields(out, "M%s%d" % (shape, n)) for n in range(1, len(M_NAMES) + 1)}
+        expect = ["error", "547"] if shape == "mf" else ["inserted", "1"]
+        bad = ["names %s: %s" % ("".join(M_NAMES[n - 1]), o) for n, o in outcomes.items() if o != expect]
+        assert_test("M-ThreeKeyDuplicates",
+                    "%s: run, the scripts keep the behaviour (%s) in all six tables"
+                    % (label.split(":")[0], "an orphan child fails with 547" if shape == "mf"
+                       else "a duplicate key is skipped"),
+                    len(bad) == 0 and not errs, "%s errors=%s" % ("; ".join(bad), errs))
 
     return results
 

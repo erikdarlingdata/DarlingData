@@ -5473,7 +5473,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name = MAX(ia.table_name),
         base_key_columns = ia.key_columns,
         filter_definition = ISNULL(ia.filter_definition, N''),
-        /* Choose a unique index first, then the one with the most included columns, then the first alphabetically */
+        /* Choose a unique index first, then one a foreign key or IGNORE_DUP_KEY depends on, then the most included columns, then the first alphabetically */
         winning_index_name =
             (
                 SELECT TOP (1)
@@ -5491,6 +5491,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     the uniqueness with nothing in the output to say so (#918)
                     */
                     candidate.is_unique DESC,
+                    /*
+                    Then the index a foreign key is backed by, then the one that
+                    skips duplicate keys: the two terms index_priority gained in
+                    #917 and #916, in the same order. Rule 5 leaves this step more
+                    than one candidate when three or more indexes share a key, and
+                    without them a plain unique index with more includes won here.
+                    The guard then kept the foreign key's index and the keeper took
+                    over IGNORE_DUP_KEY, so nothing broke, but the wrong index was
+                    rebuilt and the right one was reported as a duplicate.
+                    */
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_fkb
+                            WHERE id_fkb.index_hash = candidate.index_hash
+                            AND   id_fkb.is_foreign_key_backing = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_idk
+                            WHERE id_idk.index_hash = candidate.index_hash
+                            AND   id_idk.ignore_dup_key = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
                     /* Then prefer indexes with more included columns (by length as a proxy) */
                     LEN(ISNULL(candidate.included_columns, '')) DESC,
                     /* Then alphabetically for stability */
