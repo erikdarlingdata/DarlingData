@@ -4916,9 +4916,11 @@ AND   ca.utc_timestamp < @end_date';
             data element — reading the data axis returns NULL for every
             event, which blanked these two columns for all severe
             errors. session_id further up reads the action axis the
-            same way.
+            same way. DB_NAME(0) returns the current database, so
+            errors raised outside any database (database_id 0) were
+            labeled with the caller's database; NULLIF leaves them NULL.
             */
-            database_name = DB_NAME(w.x.value('(action[@name="database_id"]/value)[1]', 'integer')),
+            database_name = DB_NAME(NULLIF(w.x.value('(action[@name="database_id"]/value)[1]', 'integer'), 0)),
             database_id = w.x.value('(action[@name="database_id"]/value)[1]', 'integer'),
             xml = w.x.query('.')
         INTO #error_info
