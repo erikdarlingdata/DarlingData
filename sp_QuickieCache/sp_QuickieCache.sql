@@ -1141,6 +1141,12 @@ OPTION(RECOMPILE, MAXDOP 1);';
     Duplicate plan hashes:
     Same query_hash compiled into multiple plans suggests
     SET option differences or parameterization issues.
+
+    @duplicate_plans counts each plan once. It used to add up the plan
+    count of every qualifying hash, and a plan holds one hash per
+    statement, so a batch of 120 statements counted 120 times. Against
+    the distinct-plan denominator that went past 999.99%, and the
+    decimal(5, 2) assignment failed with Msg 8115.
     */
     DECLARE
         @duplicate_hashes bigint = 0,
@@ -1148,12 +1154,12 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @pct_duplicate decimal(5, 2) = 0;
 
     SELECT
-        @duplicate_hashes = COUNT_BIG(*),
-        @duplicate_plans = SUM(x.plan_count)
+        @duplicate_hashes = COUNT_BIG(DISTINCT x.query_hash),
+        @duplicate_plans = COUNT_BIG(DISTINCT s.plan_handle)
     FROM
     (
         SELECT
-            plan_count = COUNT_BIG(DISTINCT s.plan_handle)
+            s.query_hash
         FROM #dm_exec_query_stats AS s
         WHERE s.query_hash <> 0x0000000000000000
         GROUP BY
@@ -1161,6 +1167,8 @@ OPTION(RECOMPILE, MAXDOP 1);';
         HAVING
             COUNT_BIG(DISTINCT s.plan_handle) > 5
     ) AS x
+    JOIN #dm_exec_query_stats AS s
+      ON s.query_hash = x.query_hash
     OPTION(RECOMPILE);
 
     IF @total_plans > 0
