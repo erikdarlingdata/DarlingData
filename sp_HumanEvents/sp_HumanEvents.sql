@@ -1291,6 +1291,21 @@ BEGIN
         END;
 END;
 
+/*
+Cleanup has to know where the tables and views are. Without an output
+database the run used to skip the cleanup label and start a capture.
+*/
+IF  @cleanup = 1
+AND
+(
+     @output_database_name = N''
+  OR @output_schema_name = N''
+)
+BEGIN
+    RAISERROR(N'@cleanup = 1 needs @output_database_name and @output_schema_name to find the tables and views to drop. Nothing was cleaned up.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
 
 /* no goofballing in custom names */
 IF @debug = 1 BEGIN RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT; END;
