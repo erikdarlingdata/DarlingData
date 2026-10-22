@@ -1602,12 +1602,12 @@ CREATE TABLE
     max_rowcount bigint NOT NULL,
     total_rowcount AS
         (avg_rowcount * count_executions),
-    avg_num_physical_io_reads_mb float NULL,
-    last_num_physical_io_reads_mb bigint NULL,
-    min_num_physical_io_reads_mb bigint NULL,
-    max_num_physical_io_reads_mb bigint NULL,
-    total_num_physical_io_reads_mb AS
-        (avg_num_physical_io_reads_mb * count_executions),
+    avg_num_physical_io_reads float NULL,
+    last_num_physical_io_reads bigint NULL,
+    min_num_physical_io_reads bigint NULL,
+    max_num_physical_io_reads bigint NULL,
+    total_num_physical_io_reads AS
+        (avg_num_physical_io_reads * count_executions),
     avg_log_bytes_used_mb float NULL,
     last_log_bytes_used_mb bigint NULL,
     min_log_bytes_used_mb bigint NULL,
@@ -1958,14 +1958,14 @@ VALUES
     /* Hash totals for row counts */
     (1115, 'rowcount', 'total_hash', 'total_rowcount_by_query_hash', 'qht.total_rowcount', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* New metrics for newer versions */
-    /* Physical IO Reads (for newer versions) */
-    (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads_mb', 'qsrs.avg_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1210, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads_mb', 'qsrs.last_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1220, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1230, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1240, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads_mb', 'qsrs.total_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
+    /* Physical IO Reads (for newer versions). These count read operations, not pages, so there is no MB conversion */
+    (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads', 'qsrs.avg_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
+    (1210, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads', 'qsrs.last_num_physical_io_reads', 1, 'new', 1, 1, 'N0'),
+    (1220, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads', 'qsrs.min_num_physical_io_reads', 1, 'new', 1, 1, 'N0'),
+    (1230, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads', 'qsrs.max_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
+    (1240, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads', 'qsrs.total_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for new physical IO reads */
-    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
+    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Finish adding the remaining columns (log bytes and tempdb usage) */
     /* Log bytes used */
     (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -2496,12 +2496,12 @@ BEGIN
                 max_rowcount float NULL,
                 total_rowcount float NULL,
                 total_rowcount_by_query_hash float NULL,
-                avg_num_physical_io_reads_mb float NULL,
-                last_num_physical_io_reads_mb float NULL,
-                min_num_physical_io_reads_mb float NULL,
-                max_num_physical_io_reads_mb float NULL,
-                total_num_physical_io_reads_mb float NULL,
-                total_num_physical_io_reads_mb_by_query_hash float NULL,
+                avg_num_physical_io_reads float NULL,
+                last_num_physical_io_reads float NULL,
+                min_num_physical_io_reads float NULL,
+                max_num_physical_io_reads float NULL,
+                total_num_physical_io_reads float NULL,
+                total_num_physical_io_reads_by_query_hash float NULL,
                 avg_log_bytes_used_mb float NULL,
                 last_log_bytes_used_mb float NULL,
                 min_log_bytes_used_mb float NULL,
@@ -2520,6 +2520,46 @@ BEGIN
                 context_settings nvarchar(256) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _RuntimeStats tables created before the
+    num_physical_io_reads columns lost their _mb suffix need the
+    new columns added, or the insert fails. The old _mb columns
+    stay, with the rows logged before
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_RuntimeStats''
+            AND   s.name = @schema_name
+            AND   c.name = N''avg_num_physical_io_reads''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_runtime_stats + N' ADD
+                avg_num_physical_io_reads float NULL,
+                last_num_physical_io_reads float NULL,
+                min_num_physical_io_reads float NULL,
+                max_num_physical_io_reads float NULL,
+                total_num_physical_io_reads float NULL,
+                total_num_physical_io_reads_by_query_hash float NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added num_physical_io_reads columns to %s for runtime stats logging.'', 0, 1, ''' + REPLACE(@log_table_runtime_stats, N'''', N'''''') + N''') WITH NOWAIT; END;
         END';
 
     EXECUTE sys.sp_executesql
@@ -12247,10 +12287,10 @@ IF @new = 1
 BEGIN
     SELECT
         @sql += N'
-    ((SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
-    MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
-    MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.)),
+    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0),
+    MAX(qsrs_with_lasts.partitioned_last_num_physical_io_reads),
+    MIN(qsrs_with_lasts.min_num_physical_io_reads),
+    MAX(qsrs_with_lasts.max_num_physical_io_reads),
     (SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1048576.,
     MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 1048576.)),
     MIN((qsrs_with_lasts.min_log_bytes_used / 1048576.)),
@@ -12632,7 +12672,7 @@ WITH
     last_dop, min_dop, max_dop,
     avg_query_max_used_memory_mb, last_query_max_used_memory_mb, min_query_max_used_memory_mb, max_query_max_used_memory_mb,
     avg_rowcount, last_rowcount, min_rowcount, max_rowcount,
-    avg_num_physical_io_reads_mb, last_num_physical_io_reads_mb, min_num_physical_io_reads_mb, max_num_physical_io_reads_mb,
+    avg_num_physical_io_reads, last_num_physical_io_reads, min_num_physical_io_reads, max_num_physical_io_reads,
     avg_log_bytes_used_mb, last_log_bytes_used_mb, min_log_bytes_used_mb, max_log_bytes_used_mb,
     avg_tempdb_space_used_mb, last_tempdb_space_used_mb, min_tempdb_space_used_mb, max_tempdb_space_used_mb,
     from_regression_baseline,
@@ -13062,7 +13102,7 @@ BEGIN
       @new
       WHEN 1
       THEN N',
-        SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
+        SUM(qsrs.count_executions * qsrs.avg_num_physical_io_reads),
         SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 1048576.,
         SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
       ELSE N',
