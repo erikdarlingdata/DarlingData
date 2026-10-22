@@ -4405,6 +4405,19 @@ SELECT
                      LEN(ps.param_compiled_value) - 8
                  ) +
                  N''''
+            /*
+            The plan stores datetime and smalldatetime values as
+            'yyyy-mm-dd hh:mi:ss.mmm'. The repro also sets the original
+            DATEFORMAT and LANGUAGE, and under dmy (British, French, and
+            others) those two types read that string as yyyy-dd-mm:
+            '2026-01-05' binds as May 1, and '2026-01-13' fails with Msg 8114.
+            A T in place of the space makes it ISO 8601, which every
+            DATEFORMAT reads the same way. date, datetime2, and
+            datetimeoffset ignore DATEFORMAT for this form, so they stay as is.
+            */
+            WHEN ps.param_data_type IN (N'datetime', N'smalldatetime')
+            AND  ps.param_compiled_value LIKE N'''[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:%'''
+            THEN STUFF(ps.param_compiled_value, 12, 1, N'T')
             ELSE ps.param_compiled_value
         END
 FROM #parameter_shred AS ps
