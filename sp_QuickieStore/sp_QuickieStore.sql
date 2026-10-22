@@ -9481,13 +9481,37 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    Parameter Sensitive Plan variants are queries of their own, with
+    object_id 0. Their runtime stats are on the variant plans, so
+    the variants of the procedure's queries come along here.
+    */
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+CROSS APPLY
+(
+    SELECT
+        query_id = qsq.query_id
+
+    UNION ALL
+
+    SELECT
+        query_id = qsqv.query_variant_query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    WHERE qsqv.parent_query_id = qsq.query_id
+) AS q
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-   ON qsq.query_id = qsp.query_id
+  ON qsp.query_id = q.query_id'
+        ELSE N'
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+   ON qsq.query_id = qsp.query_id'
+    END + N'
 WHERE ';
 
 IF CHARINDEX(N'%', @procedure_name) = 0
@@ -9578,14 +9602,28 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    Parameter Sensitive Plan variants have object_id 0, so they
+    take the object_id of their parent query
+    */
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-  ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id ' +
+  ON qsq.query_id = qsp.query_id' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id
+LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+  ON qsq_parent.query_id = qsqv.parent_query_id
+WHERE ISNULL(qsq_parent.object_id, qsq.object_id) '
+        ELSE N'
+WHERE qsq.object_id '
+    END +
 CASE
     WHEN LOWER(@query_type) LIKE 'a%'
     THEN N'= 0'
@@ -12828,14 +12866,36 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
+/*
+Parameter Sensitive Plan variants have object_id 0, so they show
+the object of their parent query instead of Adhoc
+*/
 SELECT
     @sql += N'
 SELECT
     @database_id,
     qsq.query_id,
     qsq.query_text_id,
-    qsq.context_settings_id,
-    qsq.object_id,
+    qsq.context_settings_id,' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+    object_id =
+        ISNULL
+        (
+            (
+                SELECT TOP (1)
+                    qsq_parent.object_id
+                FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+                JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+                  ON qsq_parent.query_id = qsqv.parent_query_id
+                WHERE qsqv.query_variant_query_id = qsq.query_id
+            ),
+            qsq.object_id
+        ),'
+        ELSE N'
+    qsq.object_id,'
+    END + N'
     qsq.batch_sql_handle,
     qsq.query_hash,
     qsq.is_internal_query,
