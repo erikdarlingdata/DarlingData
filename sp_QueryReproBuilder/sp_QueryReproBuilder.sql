@@ -266,7 +266,10 @@ DECLARE
     @current_table nvarchar(100),
     @include_plans_seeded bit = 0,
     @match nvarchar(max) = N'',
-    @psp_message nvarchar(max) = N'';
+    @psp_message nvarchar(max) = N'',
+    @list_parameter sysname = NULL,
+    @list_item nvarchar(4000) = NULL,
+    @list_is_binary bit = 0;
 
 /*
 Attempt at overloading procedure name so it can accept a schema.procedure or
@@ -652,6 +655,134 @@ SELECT
         NULLIF(@query_text_search, ''),
     @query_text_search_not =
         NULLIF(@query_text_search_not, '');
+
+/*
+Check the id, hash, and handle lists before they are used, so a typo gets a
+message that names the parameter and the value instead of a bare Msg 8114
+from a conversion inside dynamic SQL. Ids are whole numbers; hashes and
+handles are hex that starts with 0x (CONVERT style 1 needs the 0x).
+*/
+IF @query_plan_xml IS NULL
+BEGIN
+    SELECT TOP (1)
+        @list_parameter = l.parameter_name,
+        @list_item =
+            CASE
+                WHEN l.list_value LIKE N'%[<&]%'
+                THEN l.list_value
+                ELSE i.item
+            END,
+        @list_is_binary = l.is_binary
+    FROM
+    (
+        VALUES
+            (N'@include_plan_ids', @include_plan_ids, 0),
+            (N'@include_query_ids', @include_query_ids, 0),
+            (N'@ignore_plan_ids', @ignore_plan_ids, 0),
+            (N'@ignore_query_ids', @ignore_query_ids, 0),
+            (N'@include_query_hashes', @include_query_hashes, 1),
+            (N'@include_plan_hashes', @include_plan_hashes, 1),
+            (N'@include_sql_handles', @include_sql_handles, 1),
+            (N'@ignore_query_hashes', @ignore_query_hashes, 1),
+            (N'@ignore_plan_hashes', @ignore_plan_hashes, 1),
+            (N'@ignore_sql_handles', @ignore_sql_handles, 1)
+    ) AS l (parameter_name, list_value, is_binary)
+    CROSS APPLY
+    (
+        SELECT
+            x =
+                CASE
+                    WHEN l.list_value NOT LIKE N'%[<&]%'
+                    THEN CONVERT
+                         (
+                             xml,
+                             N'<x>' +
+                             REPLACE
+                             (
+                                 CONVERT(nvarchar(max), l.list_value),
+                                 N',',
+                                 N'</x><x>'
+                             ) +
+                             N'</x>'
+                         )
+                    ELSE CONVERT(xml, N'<x>?</x>')
+                END
+    ) AS a
+    CROSS APPLY a.x.nodes(N'x') AS b (x)
+    CROSS APPLY
+    (
+        SELECT
+            item =
+                LTRIM(RTRIM(ISNULL(b.x.value(N'(./text())[1]', N'nvarchar(4000)'), N'')))
+    ) AS i
+    CROSS APPLY
+    (
+        /*
+        The id lists are cast to bigint by XQuery, which ignores the
+        white space around a number, line breaks and tabs included
+        */
+        SELECT
+            item =
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            i.item,
+                            NCHAR(9),
+                            N''
+                        ),
+                        NCHAR(10),
+                        N''
+                    ),
+                    NCHAR(13),
+                    N''
+                )
+    ) AS n
+    WHERE l.list_value IS NOT NULL
+    AND   n.item <> N''
+    AND
+    (
+        l.list_value LIKE N'%[<&]%'
+     OR
+        (
+            l.is_binary = 0
+        AND
+            (
+                LEN(n.item) > 19
+             OR n.item = N'-'
+             OR n.item LIKE N'%[^0-9-]%'
+             OR SUBSTRING(n.item, 2, 4000) LIKE N'%[^0-9]%'
+            )
+        )
+     OR
+        (
+            l.is_binary = 1
+        AND
+            (
+                i.item NOT LIKE N'0[xX]%'
+             OR SUBSTRING(i.item, 3, 4000) LIKE N'%[^0-9a-fA-F]%'
+             OR LEN(i.item) % 2 = 1
+            )
+        )
+    )
+    OPTION(RECOMPILE);
+
+    IF @list_parameter IS NOT NULL
+    BEGIN
+        IF @list_is_binary = 0
+        BEGIN
+            RAISERROR('%s must be a comma separated list of whole numbers, like N''123, 456''. This is not one: %s', 10, 1, @list_parameter, @list_item) WITH NOWAIT;
+        END;
+        ELSE
+        BEGIN
+            RAISERROR('%s must be a comma separated list of hex values that start with 0x, like N''0x2D3C7F502BA2AEE9''. This is not one: %s', 10, 1, @list_parameter, @list_item) WITH NOWAIT;
+        END;
+
+        RETURN;
+    END;
+END;
 
 /*Initialize procedure variables*/
 IF @procedure_name IS NOT NULL
