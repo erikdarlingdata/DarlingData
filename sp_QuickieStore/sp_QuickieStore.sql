@@ -15020,9 +15020,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS xml)
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
+                 WHEN qpx.query_plan_xml IS NOT NULL
+                 THEN qpx.query_plan_xml
+                 WHEN qpx.query_plan_xml IS NULL
                  THEN
                      (
                          SELECT
@@ -15204,6 +15204,13 @@ SELECT
         ) AS x
         WHERE x.pn = 1
     ) AS qsp
+    CROSS APPLY
+    (
+        /* One xml conversion per plan; the query_plan CASE reuses it, not a TRY_CAST in each branch */
+        SELECT
+            query_plan_xml =
+                TRY_CAST(qsp.query_plan AS xml)
+    ) AS qpx
     CROSS APPLY
     (
         SELECT TOP (1)
