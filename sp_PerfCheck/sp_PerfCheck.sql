@@ -3502,8 +3502,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHEN @azure_sql_db = 1
             THEN N'sys.database_files AS mf
         WHERE DB_NAME() = N''tempdb'';'
-            ELSE N'sys.master_files AS mf
-        WHERE mf.database_id = 2;'
+            /*
+            Current sizes. For tempdb, sys.master_files holds the sizes the
+            files are created with at startup, not what they have grown to.
+            */
+            ELSE N'tempdb.sys.database_files AS mf;'
         END;
 
         IF @debug = 1
