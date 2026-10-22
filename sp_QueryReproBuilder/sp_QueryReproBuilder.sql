@@ -1172,7 +1172,8 @@ CREATE TABLE
     query_sql_text_clickable xml NULL,
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
-    has_restricted_text bit NOT NULL
+    has_restricted_text bit NOT NULL,
+    has_control_characters bit NOT NULL DEFAULT 0
 );
 
 CREATE TABLE
@@ -3869,8 +3870,43 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
+XML cannot hold the control characters 0x00 to 0x1F other than tab, line
+feed, and carriage return. One of them in any query text in the window made
+the FOR XML below fail with Msg 6841, and the whole run failed with it.
+Replace them with ? and drop NCHAR(0), the way sp_QuickieCache does, and
+flag the text so its plans get a warning: a string literal that held one
+no longer matches the original.
+*/
+SELECT
+    @current_table = N'replacing control characters in #query_store_query_text';
+
+UPDATE
+    qsqt
+SET
+    qsqt.query_sql_text = x.query_sql_text,
+    qsqt.has_control_characters = 1
+FROM #query_store_query_text AS qsqt
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                qsqt.query_sql_text COLLATE Latin1_General_BIN2,
+            NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'')
+) AS x
+WHERE x.query_sql_text <> qsqt.query_sql_text COLLATE Latin1_General_BIN2
+OPTION(RECOMPILE);
+
+/*
 Populate the clickable XML column
 */
+SELECT
+    @current_table = N'populating query_sql_text_clickable in #query_store_query_text';
+
 UPDATE qsqt
 SET qsqt.query_sql_text_clickable =
     (
@@ -4950,6 +4986,35 @@ JOIN #query_store_query_text AS qsqt
 LEFT JOIN #query_store_query_variant AS qsqv
   ON qsqv.query_variant_query_id = qsq.query_id
 WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
+OPTION(RECOMPILE);
+
+/*
+Warn when control characters were replaced in the query text
+*/
+SELECT
+    @current_table = N'checking for control characters in query text';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'control characters',
+    warning_message =
+        N'Query text has control characters that XML cannot show. They were replaced with ? in the repro, ' +
+        N'so a string literal that held one no longer matches the original.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.has_control_characters = 1
 OPTION(RECOMPILE);
 
 /*
