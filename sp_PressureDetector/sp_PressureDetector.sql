@@ -2628,9 +2628,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                                 osi.cpu_count
                                             FROM sys.dm_os_sys_info AS osi
                                         )
-                                FROM sys.master_files AS mf
-                                WHERE mf.database_id = 2
-                                AND   mf.type = 0
+                                /*
+                                Current sizes. sys.master_files holds the sizes
+                                tempdb is created with at startup, not what the
+                                files have grown to since.
+                                */
+                                FROM tempdb.sys.database_files AS mf
+                                WHERE mf.type = 0
                                 FOR XML
                                     PATH('tempdb_configuration'),
                                     TYPE
