@@ -936,6 +936,15 @@ BEGIN
 END;
 
 /*
+A negative @top would fail later as a TOP with a negative row count
+*/
+IF @top < 0
+BEGIN
+    RAISERROR('@top must be 0 or greater. You supplied %I64d.', 11, 1, @top) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
 These are the tables that we'll use to grab data from query store
 It will be fun
 You'll love it
