@@ -1546,6 +1546,13 @@ IF @query_plan_xml IS NULL
 BEGIN
 
 /*
+Each list is split by turning it into XML with REPLACE. The list is
+CONVERTed to nvarchar(max) first: REPLACE on an nvarchar(4000) returns at
+most 4000 characters, every comma grows by six, and a list of about 380
+plan ids was cut off mid-element and failed with Msg 9400.
+*/
+
+/*
 Resolve the include filters into #include_plan_ids.
 
 Multiple include filters combine as an INTERSECTION: OR within a single filter's
@@ -1595,7 +1602,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_plan_ids,
+                            CONVERT(nvarchar(max), @include_plan_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -1657,7 +1664,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_query_ids,
+                            CONVERT(nvarchar(max), @include_query_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -1804,7 +1811,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_query_hashes,
+                            CONVERT(nvarchar(max), @include_query_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -1955,7 +1962,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_plan_hashes,
+                            CONVERT(nvarchar(max), @include_plan_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2099,7 +2106,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_sql_handles,
+                            CONVERT(nvarchar(max), @include_sql_handles),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2249,7 +2256,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_plan_ids,
+                            CONVERT(nvarchar(max), @ignore_plan_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2312,7 +2319,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_query_ids,
+                            CONVERT(nvarchar(max), @ignore_query_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2422,7 +2429,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_query_hashes,
+                            CONVERT(nvarchar(max), @ignore_query_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2533,7 +2540,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_plan_hashes,
+                            CONVERT(nvarchar(max), @ignore_plan_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2637,7 +2644,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_sql_handles,
+                            CONVERT(nvarchar(max), @ignore_sql_handles),
                             '','',
                             ''</x><x>''
                         ) +
