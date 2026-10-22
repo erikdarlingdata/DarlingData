@@ -3727,6 +3727,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     produces an empty <x></x> node whose value is NULL, which otherwise flows
     into the NOT NULL primary-key id/hash/handle columns and aborts the whole
     procedure with Msg 515. The @include_databases splitter already guarded this.
+    Spaces separate values the same as commas, so '50 51' is two ids, not 5051,
+    and the empty node that '50, 51' leaves between them is dropped the same way.
     */
     @string_split_ints = N'
         SELECT DISTINCT
@@ -3764,7 +3766,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                                     ''</x><x>''
                                 ),
                                 '' '',
-                                ''''
+                                ''</x><x>''
                             ) +
                             ''</x>''
                         )
@@ -3810,7 +3812,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                                     ''</x><x>''
                                 ),
                                 '' '',
-                                ''''
+                                ''</x><x>''
                             ) +
                             ''</x>''
                         )
@@ -9842,6 +9844,20 @@ BEGIN
             PRINT @dynamic_sql;
         END;
 
+        /* The error handler prints @sql, so point it at this statement and the list it splits */
+        SELECT
+            @sql =
+                N'/* @' + @param_name + N' = ' + @param_value + N' */' +
+                @split_sql;
+
+        /* Id lists hold numbers only, so name the bad value here rather than fail a conversion later */
+        IF  @data_type = N'bigint'
+        AND @param_value LIKE N'%[^0-9, ]%'
+        BEGIN
+            RAISERROR('@%s takes numbers separated by commas or spaces. You supplied: %s', 11, 1, @param_name, @param_value) WITH NOWAIT;
+            RETURN;
+        END;
+
         EXECUTE sys.sp_executesql
             @dynamic_sql,
           N'@split_sql nvarchar(max),
@@ -10012,6 +10028,9 @@ BEGIN
                 BEGIN
                     PRINT @secondary_sql;
                 END;
+
+                SELECT
+                    @sql = @secondary_sql;
 
                 /* Insert into the correct target table based on include/ignore */
                 IF @is_include = 1
