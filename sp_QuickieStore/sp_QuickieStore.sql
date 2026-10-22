@@ -2318,6 +2318,8 @@ BEGIN
     SELECT
         @log_database_name = ISNULL(@log_database_name, DB_NAME()),
         @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+        /* A NULL prefix makes every log table name NULL, and nothing gets logged */
+        @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'QuickieStore'),
         @log_retention_days =
             CASE
                 WHEN @log_retention_days < 0
