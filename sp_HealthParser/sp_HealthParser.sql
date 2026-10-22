@@ -128,7 +128,7 @@ BEGIN
             valid_inputs =
                 CASE
                     ap.name
-                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking'
+                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking (also accepts wait, blocking, blocks, deadlock, deadlocks, lock, locks)'
                     WHEN N'@start_date' THEN N'a reasonable date'
                     WHEN N'@end_date' THEN N'a reasonable date'
                     WHEN N'@warnings_only' THEN N'NULL, 0, 1'
@@ -533,8 +533,27 @@ AND   ca.utc_timestamp < @end_date';
                            'lock', 'locks'
                          )
                     THEN 'locking'
-                    ELSE 'all'
+                    ELSE @what_to_check
                 END;
+    END;
+
+    /*
+    Anything else used to fall back to 'all' without a word, which ran
+    the full (and slowest) check for a typo. Say what is valid instead.
+    */
+    IF @what_to_check NOT IN
+        (
+            'all',
+            'cpu',
+            'disk',
+            'locking',
+            'memory',
+            'system',
+            'waits'
+        )
+    BEGIN
+        RAISERROR('@what_to_check = ''%s'' is not valid. Use all, waits, disk, cpu, memory, system, or locking (wait, blocking, blocks, deadlock, deadlocks, lock, and locks also work).', 11, 1, @what_to_check) WITH NOWAIT;
+        RETURN;
     END;
 
     /* Validate logging parameters */
