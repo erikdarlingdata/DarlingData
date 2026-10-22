@@ -11370,8 +11370,8 @@ OR
     END;
 END;
 /*
-'total waits' is special. It's a sum, not a max, so
-we cover it above rather than here.
+'total waits' is special. It sums every wait category,
+so we cover it above rather than here.
 */
 
 IF  @sort_order_is_a_wait = 1
@@ -11404,12 +11404,13 @@ BEGIN
                 ELSE ''Yes''
             END,
         total_query_wait_time_ms =
-            MAX(qsws.total_query_wait_time_ms)
+            SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     /*
-    Joining on plan_id alone would take the max wait across
-    all of Query Store history rather than the requested
-    time window.
+    Joining on plan_id alone would sum waits across all of
+    Query Store history rather than the requested time window.
+    The sum covers every interval in the window, the same as
+    the total waits sort. A max would be one interval.
     */
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
       ON  qsrs.plan_id = qsws.plan_id
@@ -11461,7 +11462,7 @@ BEGIN
             ELSE ''Yes''
         END
     ORDER BY
-        MAX(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
