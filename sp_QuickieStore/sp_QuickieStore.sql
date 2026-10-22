@@ -11852,7 +11852,8 @@ BEGIN
                      WHEN 'total log' THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.'
                      WHEN 'total tempdb' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'total rows' THEN N'hashes_with_changes.change_since_regression_time_period'
-                     ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.'
+                     /* Wait times are already in milliseconds */
+                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'hashes_with_changes.change_since_regression_time_period' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                 END
             ELSE N'hashes_with_changes.change_since_regression_time_period' END
         + N'
