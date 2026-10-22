@@ -405,6 +405,7 @@ CREATE TABLE
     is_view_created bit NOT NULL DEFAULT 0,
     last_checked datetime2(7) NOT NULL DEFAULT '19000101',
     last_updated datetime2(7) NOT NULL DEFAULT '19000101',
+    is_truncation_warned bit NOT NULL DEFAULT 0,
     output_database sysname NOT NULL,
     output_schema sysname NOT NULL,
     output_table nvarchar(400) NOT NULL
@@ -1962,6 +1963,25 @@ BEGIN
         NULL,
         NULL
     ) AS f;
+END;
+
+
+/*
+sys.dm_xe_session_targets returns about 4 MB of ring buffer XML at
+most, and it returns the oldest events. Past that it marks the XML
+truncated="1" and the newest events are missing, so say so rather than
+return incomplete results that look complete.
+*/
+IF  LOWER(@target_output) = N'ring_buffer'
+AND EXISTS
+(
+    SELECT
+        1/0
+    FROM #x AS x
+    WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+)
+BEGIN
+    RAISERROR(N'Warning: the ring buffer XML for session %s was truncated, so the newest events are missing from these results. Use a shorter @seconds_sample, tighter filters, @skip_plans = 1, or @target_output = N''event_file''.', 10, 1, @session_name) WITH NOWAIT;
 END;
 
 
@@ -5132,6 +5152,40 @@ ORDER BY
                     NULL,
                     NULL
                 ) AS f;
+            END;
+
+            /*
+            The same ring buffer cap as the one-shot path, and worse
+            here: truncated XML holds only the oldest events, so once
+            those are logged the @date_filter watermark rejects
+            everything SQL Server returns, and nothing newer from this
+            session is ever logged. Warn once per session.
+            */
+            IF  LOWER(@target_output) = N'ring_buffer'
+            AND EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #x AS x
+                WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+            )
+            AND EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #human_events_worker AS hew
+                WHERE hew.id = @min_id
+                AND   hew.is_truncation_warned = 0
+            )
+            BEGIN
+                RAISERROR(N'Warning: the ring buffer XML for session %s is truncated. SQL Server returns only the oldest events, so newer events from this session are not logged. Recreate the session with @target_output = N''event_file'' and run this collector with @target_output = N''event_file'', or use @skip_plans = 1 or tighter filters.', 10, 1, @event_type_check) WITH NOWAIT;
+
+                UPDATE
+                    hew
+                SET
+                    hew.is_truncation_warned = 1
+                FROM #human_events_worker AS hew
+                WHERE hew.id = @min_id;
             END;
 
             /*
