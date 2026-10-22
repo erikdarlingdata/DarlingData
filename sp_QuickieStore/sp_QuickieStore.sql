@@ -1391,6 +1391,18 @@ CREATE TABLE
 );
 
 /*
+Every plan for the queries in #query_store_plan,
+to build all_plan_ids in one pass
+*/
+CREATE TABLE
+    #all_plan_ids
+(
+    query_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    PRIMARY KEY CLUSTERED (query_id, plan_id)
+);
+
+/*
 Queries and Compile Information
 */
 CREATE TABLE
@@ -3609,6 +3621,9 @@ TRUNCATE TABLE
 
 TRUNCATE TABLE
     #query_hash_totals;
+
+TRUNCATE TABLE
+    #all_plan_ids;
 
 
 /*
@@ -12855,24 +12870,8 @@ SELECT
     @database_id,
     qsp.plan_id,
     qsp.query_id,
-    all_plan_ids =
-        STUFF
-        (
-            (
-                SELECT DISTINCT
-                    '', '' +
-                    RTRIM
-                        (qsp_plans.plan_id)
-                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML
-                    PATH(''''),
-                    TYPE
-            ).value(''./text()[1]'', ''varchar(max)''),
-            1,
-            2,
-            ''''
-        ),
+    /* Filled in below, in one pass over sys.query_store_plan */
+    all_plan_ids = NULL,
     qsp.plan_group_id,
     qsp.engine_version,
     qsp.compatibility_level,
@@ -13030,6 +13029,107 @@ BEGIN
         @sql,
         @current_table;
 END; /*End getting query plans*/
+
+/*
+all_plan_ids lists every plan of each query. A subquery per plan
+in the insert above read sys.query_store_plan once per plan, about
+20 ms each on a big Query Store, so read it once here instead.
+*/
+SELECT
+    @current_table = 'inserting #all_plan_ids',
+    @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    EXECUTE sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    SET STATISTICS XML ON;
+END;
+
+SELECT
+    @sql += N'
+SELECT
+    qsp.query_id,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp2
+    WHERE qsp2.query_id = qsp.query_id
+    AND   qsp2.database_id = @database_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #all_plan_ids
+WITH
+    (TABLOCK)
+(
+    query_id,
+    plan_id
+)
+EXECUTE sys.sp_executesql
+    @sql,
+  N'@database_id integer',
+    @database_id;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    SET STATISTICS XML OFF;
+
+    EXECUTE sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXECUTE sys.sp_executesql
+        @troubleshoot_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+END;
+
+SELECT
+    @current_table = 'updating #query_store_plan all_plan_ids';
+
+UPDATE
+    qsp
+SET
+    qsp.all_plan_ids =
+        STUFF
+        (
+            (
+                SELECT
+                    ', ' +
+                    RTRIM(ap.plan_id)
+                FROM #all_plan_ids AS ap
+                WHERE ap.query_id = qsp.query_id
+                ORDER BY
+                    ap.plan_id
+                FOR
+                    XML
+                    PATH(''),
+                    TYPE
+            ).value('./text()[1]', 'varchar(max)'),
+            1,
+            2,
+            ''
+        )
+FROM #query_store_plan AS qsp
+WHERE qsp.database_id = @database_id
+OPTION(RECOMPILE); /*End getting all plan ids*/
 
 /*
 This gets some query information
