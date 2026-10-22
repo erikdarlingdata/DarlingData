@@ -3916,6 +3916,10 @@ SELECT
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
+
+        a date with a non-zero offset already says which instant it means,
+        so it only gets switched to UTC. a date without an offset arrives
+        here as +00:00 and is read as server local time.
     */
     @start_date =
         CASE
@@ -3931,6 +3935,14 @@ SELECT
                         '19000101',
                         SYSUTCDATETIME()
                     )
+                )
+            WHEN @start_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @start_date_original) <> 0
+            THEN
+                SWITCHOFFSET
+                (
+                    @start_date_original,
+                    '+00:00'
                 )
             WHEN @start_date IS NOT NULL
             THEN
@@ -3960,6 +3972,14 @@ SELECT
                             SYSUTCDATETIME()
                         )
                     )
+                )
+            WHEN @end_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @end_date_original) <> 0
+            THEN
+                SWITCHOFFSET
+                (
+                    @end_date_original,
+                    '+00:00'
                 )
             WHEN @end_date IS NOT NULL
             THEN
@@ -4006,22 +4026,43 @@ IF @regression_mode = 1
 BEGIN
 /*
 We set both _date_original variables earlier.
+Offsets work the same way as for @start_date and @end_date.
 */
     SELECT
         @regression_baseline_start_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_start_date_original
-            ),
+            CASE
+                WHEN DATEPART(TZOFFSET, @regression_baseline_start_date_original) <> 0
+                THEN
+                    SWITCHOFFSET
+                    (
+                        @regression_baseline_start_date_original,
+                        '+00:00'
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        @utc_minutes_difference,
+                        @regression_baseline_start_date_original
+                    )
+            END,
         @regression_baseline_end_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_end_date_original
-            );
+            CASE
+                WHEN DATEPART(TZOFFSET, @regression_baseline_end_date_original) <> 0
+                THEN
+                    SWITCHOFFSET
+                    (
+                        @regression_baseline_end_date_original,
+                        '+00:00'
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        @utc_minutes_difference,
+                        @regression_baseline_end_date_original
+                    )
+            END;
 END;
 
 /*
