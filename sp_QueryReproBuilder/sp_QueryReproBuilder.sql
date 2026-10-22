@@ -3574,13 +3574,26 @@ SELECT
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 WHERE qsp.is_online_index_plan = 0';
 
-/*Add date filtering if specified*/
+/*
+Add date filtering if specified.
+
+Keep the plans that have runtime stats in the window. This used to test
+qsp.last_execution_time, which is the last time the plan ran at all, so a
+plan that ran in a past window and again after @end_date was dropped, and
+the window came back empty. #query_store_runtime_stats was filled with the
+same filters and the per-interval window, so its plan ids are the answer.
+*/
 IF @start_date <= @end_date
 BEGIN
     SELECT
         @sql += N'
-AND   qsp.last_execution_time >= @start_date
-AND   qsp.last_execution_time < @end_date';
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_runtime_stats AS qsrs
+          WHERE qsrs.plan_id = qsp.plan_id
+      )';
 END;
 
 /*Add include plan IDs filter if specified*/
