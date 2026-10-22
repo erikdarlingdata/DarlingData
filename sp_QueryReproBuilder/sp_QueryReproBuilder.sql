@@ -71,6 +71,7 @@ ALTER PROCEDURE
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
+    @top bigint = NULL, /*the number of plans to build repros for, most recently executed first; NULL for all*/
     @query_plan_xml xml = NULL, /*a single query plan XML to process directly, bypassing Query Store*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
@@ -131,6 +132,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@query_text_search_not' THEN 'query text to exclude'
+                WHEN N'@top' THEN 'the number of plans to build repros for, most recently executed first'
                 WHEN N'@query_plan_xml' THEN 'a single query plan XML to process directly, bypassing Query Store'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values'
@@ -158,6 +160,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN N'@top' THEN 'a positive integer, or NULL for every plan in the window'
                 WHEN N'@query_plan_xml' THEN 'a valid ShowPlanXML document; when supplied, all Query Store filters are ignored'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
@@ -185,6 +188,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@query_text_search_not' THEN 'NULL'
+                WHEN N'@top' THEN 'NULL; every plan in the window'
                 WHEN N'@query_plan_xml' THEN 'NULL'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
@@ -623,6 +627,18 @@ BEGIN
                 7,
                 @start_date_original
             );
+END;
+
+/*
+@top limits the run to the most recently executed plans. Without it, a
+default run on a busy database builds a repro for every plan of the last
+seven days (4,098 repros, 129 MB of output, two minutes, on one test
+database).
+*/
+IF @top < 1
+BEGIN
+    RAISERROR('@top must be at least 1, or NULL for every plan in the window', 10, 1) WITH NOWAIT;
+    RETURN;
 END;
 
 /*
@@ -3207,7 +3223,21 @@ WITH
     max_tempdb_space_used_mb,
     context_settings
 )
+SELECT';
+
+/*
+A separate statement, not + inside the literal above: the pieces of one
+expression are each shorter than 4000 characters, so their sum would be
+cut to nvarchar(4000) before it ever reached @sql.
+*/
+IF @top IS NOT NULL
+BEGIN
+    SELECT
+        @sql += N' TOP (@top)';
+END;
+
 SELECT
+    @sql += N'
     @database_id,
     MAX(qsrs_with_lasts.runtime_stats_id),
     qsrs_with_lasts.plan_id,
@@ -3602,11 +3632,13 @@ EXECUTE sys.sp_executesql
   N'@database_id integer,
     @start_date datetimeoffset(7),
     @end_date datetimeoffset(7),
-    @procedure_name_quoted nvarchar(1024)',
+    @procedure_name_quoted nvarchar(1024),
+    @top bigint',
     @database_id,
     @start_date,
     @end_date,
-    @procedure_name_quoted;
+    @procedure_name_quoted,
+    @top;
 
 /*
 Populate #query_store_plan from sys.query_store_plan
