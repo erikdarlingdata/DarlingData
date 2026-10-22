@@ -4765,6 +4765,93 @@ WHERE qp.parameter_compiled_value = N'?'
 OPTION(RECOMPILE);
 
 /*
+Warn when a compiled value was probably cut off.
+
+Plan XML keeps only the first 256 characters of a string value and the
+first 127 bytes of a binary value. A value of exactly that size, for a
+parameter whose type can hold more, was most likely longer, and the repro
+would run with the shorter value without saying so.
+*/
+SELECT
+    @current_table = N'checking for truncated parameter values';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'truncated parameter value',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is as long as a plan keeps (256 characters, or 127 bytes for binary types) and its type can hold more, ' +
+        N'so it was probably cut off. The repro runs with the shorter value.'
+FROM #query_parameters AS qp
+CROSS APPLY
+(
+    SELECT
+        type_length =
+            CASE
+                WHEN qp.parameter_data_type LIKE N'%(max)'
+                THEN 2147483647
+                WHEN qp.parameter_data_type LIKE N'%(%)'
+                THEN TRY_CAST
+                     (
+                         SUBSTRING
+                         (
+                             qp.parameter_data_type,
+                             CHARINDEX(N'(', qp.parameter_data_type) + 1,
+                             CHARINDEX(N')', qp.parameter_data_type) - CHARINDEX(N'(', qp.parameter_data_type) - 1
+                         ) AS integer
+                     )
+            END,
+        value_start =
+            CASE
+                WHEN qp.parameter_compiled_value LIKE N'N''%'
+                THEN 3
+                ELSE 2
+            END
+) AS t
+WHERE
+(
+    qp.parameter_data_type LIKE N'%char(%'
+AND qp.parameter_compiled_value LIKE N'%'''
+AND t.type_length > 256
+AND DATALENGTH
+    (
+        REPLACE
+        (
+            SUBSTRING
+            (
+                qp.parameter_compiled_value,
+                t.value_start,
+                CASE
+                    WHEN DATALENGTH(qp.parameter_compiled_value) / 2 > t.value_start
+                    THEN DATALENGTH(qp.parameter_compiled_value) / 2 - t.value_start
+                    ELSE 0
+                END
+            ),
+            N'''''',
+            N''''
+        )
+    ) / 2 = 256
+)
+OR
+(
+    qp.parameter_data_type LIKE N'%binary(%'
+AND qp.parameter_compiled_value LIKE N'0x%'
+AND t.type_length > 127
+AND DATALENGTH(qp.parameter_compiled_value) / 2 = 256
+)
+OPTION(RECOMPILE);
+
+/*
 Check for plans too large to cast to XML
 */
 SELECT
