@@ -1824,7 +1824,16 @@ BEGIN
 END;
 ELSE
 BEGIN
-    IF @debug = 1 BEGIN RAISERROR(@session_sql, 0, 1) WITH NOWAIT; END;
+    IF @debug = 1
+    BEGIN
+        /* RAISERROR cuts messages at 2,047 characters, which lost the
+           target and WITH clause of longer sessions, so print 4,000
+           character tiles as the view and table debug output does. */
+        PRINT SUBSTRING(@session_sql,     1, 4000);
+        PRINT SUBSTRING(@session_sql,  4001, 4000);
+        PRINT SUBSTRING(@session_sql,  8001, 4000);
+        PRINT SUBSTRING(@session_sql, 12001, 4000);
+    END;
     EXECUTE (@session_sql);
 
     /* This starts the event session */
