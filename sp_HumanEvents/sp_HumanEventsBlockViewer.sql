@@ -504,20 +504,21 @@ BEGIN
 END;';
 
 /*
-Normalize @target_type. The parameter comment and help used to spell
-these "ring buffer" and "file", and those values matched no branch
-below, so the run read nothing and reported 0 total events without an
+Normalize @target_type: trim first, so trailing spaces are not turned
+into underscores, then convert inner spaces. The parameter comment and
+help used to spell these "ring buffer" and "file", and those values
+matched no branch below, so the run read nothing and reported 0 total events without an
 error. Accept those spellings and reject anything else. NULL stays NULL
 and is auto-detected further down.
 */
 SELECT
     @target_type =
-        CASE LOWER(LTRIM(RTRIM(REPLACE(@target_type, N' ', N'_'))))
+        CASE LOWER(REPLACE(LTRIM(RTRIM(@target_type)), N' ', N'_'))
             WHEN N'file'
             THEN N'event_file'
             WHEN N'ringbuffer'
             THEN N'ring_buffer'
-            ELSE LOWER(LTRIM(RTRIM(REPLACE(@target_type, N' ', N'_'))))
+            ELSE LOWER(REPLACE(LTRIM(RTRIM(@target_type)), N' ', N'_'))
         END;
 
 IF @target_type NOT IN
