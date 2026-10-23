@@ -4920,33 +4920,8 @@ WITH
 )
 SELECT DISTINCT
     qsp.plan_id,
-    parameter_name =
-        LTRIM(RTRIM
-        (
-            LEFT
-            (
-                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                CHARINDEX
-                (
-                    N' ',
-                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                ) - 1
-            )
-        )),
-    parameter_data_type =
-        LTRIM(RTRIM
-        (
-            SUBSTRING
-            (
-                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                CHARINDEX
-                (
-                    N' ',
-                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                ) + 1,
-                LEN(LTRIM(p.param_text.value(N'.', N'nvarchar(max)')))
-            )
-        )),
+    pn.parameter_name,
+    pn.parameter_data_type,
     parameter_compiled_value =
         N'?'
 FROM #query_store_plan AS qsp
@@ -4999,24 +4974,51 @@ CROSS APPLY
             )
 ) AS px
 CROSS APPLY px.param_xml.nodes(N'/p') AS p(param_text)
+CROSS APPLY
+(
+    /* Read each parameter's text once; every .value() call is its own XML reader */
+    SELECT
+        param_text =
+            LTRIM(p.param_text.value(N'(./text())[1]', N'nvarchar(max)'))
+) AS pt
+CROSS APPLY
+(
+    SELECT
+        parameter_name =
+            LTRIM(RTRIM
+            (
+                LEFT
+                (
+                    pt.param_text,
+                    CHARINDEX
+                    (
+                        N' ',
+                        pt.param_text
+                    ) - 1
+                )
+            )),
+        parameter_data_type =
+            LTRIM(RTRIM
+            (
+                SUBSTRING
+                (
+                    pt.param_text,
+                    CHARINDEX
+                    (
+                        N' ',
+                        pt.param_text
+                    ) + 1,
+                    LEN(pt.param_text)
+                )
+            ))
+) AS pn
 WHERE NOT EXISTS
 (
     SELECT
         1/0
     FROM #query_parameters AS qp
     WHERE qp.plan_id = qsp.plan_id
-    AND   qp.parameter_name = LTRIM(RTRIM
-          (
-              LEFT
-              (
-                  LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                  CHARINDEX
-                  (
-                      N' ',
-                      LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                  ) - 1
-              )
-          ))
+    AND   qp.parameter_name = pn.parameter_name
 )
 OPTION(RECOMPILE);
 
