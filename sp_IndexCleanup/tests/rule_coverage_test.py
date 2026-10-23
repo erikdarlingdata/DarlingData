@@ -1160,6 +1160,8 @@ GO
 #   ic_sg_part     Group I: a partitioned merge target with STATISTICS_INCREMENTAL = ON.
 #                  Group N: its clustered primary key has three uncompressed
 #                  partitions, each of which gets a per-partition compression script.
+#   ic_sg_pmix     Group N: a partitioned clustered primary key with mixed compression
+#                  (partition 2 PAGE, partitions 1 and 3 uncompressed).
 #   ic_sg_sup      Group J: a superset that already has every column of its subset.
 #   ic_sg_uqnoop   Group J: a unique index that already replaces a constraint.
 #   ic_sg_real     Group J: a superset that really does absorb a column (control).
@@ -1199,7 +1201,7 @@ M_TABLES = tuple(
 
 SCRIPTGEN_TABLES = (
     "ic_sg_c3", "ic_sg_c4", "ic_sg_c5a", "ic_sg_c5b", "ic_sg_p3", "ic_sg_p4",
-    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_cci", "ic_sg_locks", "ic_sg_part", "ic_sg_sup",
+    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_cci", "ic_sg_locks", "ic_sg_part", "ic_sg_pmix", "ic_sg_sup",
     "ic_sg_uqnoop", "ic_sg_real",
 ) + L_TABLES
 
@@ -1342,6 +1344,12 @@ CREATE TABLE dbo.ic_sg_part (id integer NOT NULL, k integer NOT NULL, x integer 
 """ + _sg_rows("ic_sg_part", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
 CREATE INDEX ix_a_sg_part ON dbo.ic_sg_part (k) INCLUDE (x) WITH (STATISTICS_INCREMENTAL = ON) ON ps_ic_sg (id);
 CREATE INDEX ix_b_sg_part ON dbo.ic_sg_part (k) INCLUDE (y) ON ps_ic_sg (id);
+GO
+
+/* Group N: partition 2 is PAGE compressed, partitions 1 and 3 are not */
+CREATE TABLE dbo.ic_sg_pmix (id integer NOT NULL, k integer NOT NULL, CONSTRAINT pk_ic_sg_pmix PRIMARY KEY (id) ON ps_ic_sg (id)) ON ps_ic_sg (id);
+""" + _sg_rows("ic_sg_pmix", "id, k", ["RN", "RN"]) + """
+ALTER INDEX pk_ic_sg_pmix ON dbo.ic_sg_pmix REBUILD PARTITION = 2 WITH (DATA_COMPRESSION = PAGE);
 GO
 
 CREATE TABLE dbo.ic_sg_sup (id integer NOT NULL CONSTRAINT pk_ic_sg_sup PRIMARY KEY, a integer NULL, b integer NULL, c integer NULL);
@@ -2579,6 +2587,16 @@ def run_tests(server, password, uptime_days):
     assert_test("N-PartitionCompression",
                 "executed: every partition of pk_ic_sg_part ends up PAGE compressed",
                 comp == ["PAGE,PAGE,PAGE"] and not errs, "compression=%s errors=%s" % (comp, errs))
+
+    # A partitioned clustered index with mixed compression came in twice (#filtered_objects
+    # keeps a row per can_compress value), so every compression row was doubled.
+    rows, _ = run_proc(server, password, "ic_sg_pmix", extra=sg)
+    pmix = find_rows(rows, index_name="pk_ic_sg_pmix")
+    pmix_scripts = [r["script"] for r in pmix if "COMPRESSION SCRIPT" in r.get("script_type", "")]
+    assert_test("N-PartitionCompression",
+                "mixed-compression pk_ic_sg_pmix gets each compression script once, not once per can_compress value",
+                len(pmix_scripts) > 0 and len(pmix_scripts) == len(set(pmix_scripts)),
+                "%d scripts, %d distinct" % (len(pmix_scripts), len(set(pmix_scripts))))
 
     # ---- Group J: no MERGE SCRIPT when the merge changes nothing ----
     #

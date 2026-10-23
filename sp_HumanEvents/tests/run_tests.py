@@ -33,7 +33,7 @@ Session hygiene is non-negotiable. Every session this proc or this harness
 creates is dropped, even on assertion failure:
 
   * sp_HumanEvents names its sessions predictably:
-      HumanEvents_<event_type>_<guid>   (one-shot, @keep_alive = 0)
+      HumanEvents_<event_type>_<guid>_<spid>   (one-shot, @keep_alive = 0)
       keeper_HumanEvents_<event_type>[_<custom_name>]   (@keep_alive = 1)
     The harness sweeps BOTH name patterns at start (idempotency: reap anything a
     prior aborted run left) and in a finally block at the end.
@@ -579,6 +579,49 @@ def group_live_sample(server, password, R, caps):
                 "before=%s after=%s" % (d["before"], d["after"]))
 
 
+def group_orphan_cleanup(server, password, R, caps):
+    """Startup cleanup of one-shot sessions. A running session named
+    HumanEvents_<event_type>_<guid>_<spid> is dropped when that spid is not
+    executing sp_HumanEvents (here: spid 9999, no such connection). A running
+    session with no spid in its name (an older version's) is left alone for 10
+    minutes. The harness sweep reaps the second one afterwards."""
+    fake = ("CREATE EVENT SESSION %s ON SERVER ADD EVENT sqlos.wait_info(ACTION(sqlserver.session_id)) "
+            "ADD TARGET package0.ring_buffer WITH (STARTUP_STATE = OFF); "
+            "ALTER EVENT SESSION %s ON SERVER STATE = START;")
+    dead = "HumanEvents_waits_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_9999"
+    legacy = "HumanEvents_waits_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    batch = (
+        "SET NOCOUNT ON;\n"
+        "EXECUTE (N'" + fake % (dead, dead) + "');\n"
+        "EXECUTE (N'" + fake % (legacy, legacy) + "');\n"
+        "BEGIN TRY\n"
+        "    EXECUTE dbo.sp_HumanEvents @event_type = N'waits', @seconds_sample = 1, "
+        "@wait_duration_ms = 100000;\n"
+        "    SELECT line = 'RESULT|proc_ok|1';\n"
+        "END TRY\n"
+        "BEGIN CATCH\n"
+        "    SELECT line = 'RESULT|proc_error|' + "
+        "LEFT(REPLACE(REPLACE(ERROR_MESSAGE(), CHAR(13), N' '), CHAR(10), N' '), 240);\n"
+        "END CATCH;\n"
+        "SELECT line = 'RESULT|gone|' + CONVERT(varchar(1), "
+        "CASE WHEN EXISTS (SELECT 1/0 FROM sys.server_event_sessions AS s WHERE s.name = N'" + dead + "') "
+        "THEN 0 ELSE 1 END);\n"
+        "SELECT line = 'RESULT|exists|' + CONVERT(varchar(1), "
+        "CASE WHEN EXISTS (SELECT 1/0 FROM sys.server_event_sessions AS s WHERE s.name = N'" + legacy + "') "
+        "THEN 1 ELSE 0 END);\n"
+    )
+    out, err = _sqlcmd(server, password, batch, subprocess_timeout=60)
+    combined = out + "\n" + err
+    d = parse_results(out)
+    R.check("OrphanCleanup", "run with fake one-shot sessions: no severe SQL error",
+            not find_sql_errors(combined), str(find_sql_errors(combined)))
+    R.check("OrphanCleanup", "running one-shot session whose spid is not executing sp_HumanEvents is dropped",
+            d["gone"] is True, "gone=%s" % d["gone"])
+    R.check("OrphanCleanup", "running session with no spid in its name is kept while under 10 minutes",
+            d["exists"] is True, "exists=%s" % d["exists"])
+    sweep_he_sessions(server, password)
+
+
 def group_collector(server, password, R, caps):
     """Logging-to-table mode: @keep_alive = 1 with @output_database_name enters
     an unbounded collector loop that creates permanent tables/views for keeper
@@ -818,6 +861,7 @@ def main():
         group_matrix_filters(args.server, args.password, R, caps)
         group_debug_ddl(args.server, args.password, R, caps)
         group_live_sample(args.server, args.password, R, caps)
+        group_orphan_cleanup(args.server, args.password, R, caps)
         group_collector(args.server, args.password, R, caps)
     finally:
         # ----- session hygiene: measure leaks, then sweep ----------------

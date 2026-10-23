@@ -1434,7 +1434,7 @@ CREATE TABLE
     last_compile_start_time datetimeoffset(7) NULL,
     last_execution_time datetimeoffset(7) NULL,
     avg_compile_duration_ms float NULL,
-    last_compile_duration_ms bigint NULL,
+    last_compile_duration_ms float NULL,
     plan_forcing_type_desc nvarchar(60) NULL,
     has_compile_replay_script bit NULL,
     is_optimized_plan_forcing_disabled bit NULL,
@@ -1507,28 +1507,28 @@ CREATE TABLE
     avg_compile_duration_ms float NULL,
     total_compile_duration_ms AS
         (count_compiles * avg_compile_duration_ms),
-    last_compile_duration_ms bigint NULL,
+    last_compile_duration_ms float NULL,
     avg_bind_duration_ms float NULL,
     total_bind_duration_ms AS
         (count_compiles * avg_bind_duration_ms),
-    last_bind_duration_ms bigint NULL,
+    last_bind_duration_ms float NULL,
     avg_bind_cpu_time_ms float NULL,
     total_bind_cpu_time_ms AS
         (count_compiles * avg_bind_cpu_time_ms),
-    last_bind_cpu_time_ms bigint NULL,
+    last_bind_cpu_time_ms float NULL,
     avg_optimize_duration_ms float NULL,
     total_optimize_duration_ms AS
         (count_compiles * avg_optimize_duration_ms),
-    last_optimize_duration_ms bigint NULL,
+    last_optimize_duration_ms float NULL,
     avg_optimize_cpu_time_ms float NULL,
     total_optimize_cpu_time_ms AS
         (count_compiles * avg_optimize_cpu_time_ms),
-    last_optimize_cpu_time_ms bigint NULL,
+    last_optimize_cpu_time_ms float NULL,
     avg_compile_memory_mb float NULL,
     total_compile_memory_mb AS
         (count_compiles * avg_compile_memory_mb),
-    last_compile_memory_mb bigint NULL,
-    max_compile_memory_mb bigint NULL,
+    last_compile_memory_mb float NULL,
+    max_compile_memory_mb float NULL,
     is_clouddb_internal_query bit NULL,
     PRIMARY KEY CLUSTERED (database_id, query_id)
 );
@@ -1545,18 +1545,18 @@ CREATE TABLE
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL,
-    total_grant_mb bigint NULL,
-    last_grant_mb bigint NULL,
-    min_grant_mb bigint NULL,
-    max_grant_mb bigint NULL,
-    total_used_grant_mb bigint NULL,
-    last_used_grant_mb bigint NULL,
-    min_used_grant_mb bigint NULL,
-    max_used_grant_mb bigint NULL,
-    total_ideal_grant_mb bigint NULL,
-    last_ideal_grant_mb bigint NULL,
-    min_ideal_grant_mb bigint NULL,
-    max_ideal_grant_mb bigint NULL,
+    total_grant_mb float NULL,
+    last_grant_mb float NULL,
+    min_grant_mb float NULL,
+    max_grant_mb float NULL,
+    total_used_grant_mb float NULL,
+    last_used_grant_mb float NULL,
+    min_used_grant_mb float NULL,
+    max_used_grant_mb float NULL,
+    total_ideal_grant_mb float NULL,
+    last_ideal_grant_mb float NULL,
+    min_ideal_grant_mb float NULL,
+    max_ideal_grant_mb float NULL,
     total_reserved_threads bigint NULL,
     last_reserved_threads bigint NULL,
     min_reserved_threads bigint NULL,
@@ -1575,18 +1575,18 @@ CREATE TABLE
     #dm_exec_query_stats
 (
     statement_sql_handle varbinary(64) NOT NULL,
-    total_grant_mb bigint NULL,
-    last_grant_mb bigint NULL,
-    min_grant_mb bigint NULL,
-    max_grant_mb bigint NULL,
-    total_used_grant_mb bigint NULL,
-    last_used_grant_mb bigint NULL,
-    min_used_grant_mb bigint NULL,
-    max_used_grant_mb bigint NULL,
-    total_ideal_grant_mb bigint NULL,
-    last_ideal_grant_mb bigint NULL,
-    min_ideal_grant_mb bigint NULL,
-    max_ideal_grant_mb bigint NULL,
+    total_grant_mb float NULL,
+    last_grant_mb float NULL,
+    min_grant_mb float NULL,
+    max_grant_mb float NULL,
+    total_used_grant_mb float NULL,
+    last_used_grant_mb float NULL,
+    min_used_grant_mb float NULL,
+    max_used_grant_mb float NULL,
+    total_ideal_grant_mb float NULL,
+    last_ideal_grant_mb float NULL,
+    min_ideal_grant_mb float NULL,
+    max_ideal_grant_mb float NULL,
     total_reserved_threads bigint NULL,
     last_reserved_threads bigint NULL,
     min_reserved_threads bigint NULL,
@@ -1628,48 +1628,48 @@ CREATE TABLE
             0
         ),
     avg_duration_ms float NULL,
-    last_duration_ms bigint NOT NULL,
-    min_duration_ms bigint NOT NULL,
-    max_duration_ms bigint NOT NULL,
+    last_duration_ms float NOT NULL,
+    min_duration_ms float NOT NULL,
+    max_duration_ms float NOT NULL,
     total_duration_ms AS
         (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
-    last_cpu_time_ms bigint NOT NULL,
-    min_cpu_time_ms bigint NOT NULL,
-    max_cpu_time_ms bigint NOT NULL,
+    last_cpu_time_ms float NOT NULL,
+    min_cpu_time_ms float NOT NULL,
+    max_cpu_time_ms float NOT NULL,
     total_cpu_time_ms AS
         (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
-    last_logical_io_reads_mb bigint NOT NULL,
-    min_logical_io_reads_mb bigint NOT NULL,
-    max_logical_io_reads_mb bigint NOT NULL,
+    last_logical_io_reads_mb float NOT NULL,
+    min_logical_io_reads_mb float NOT NULL,
+    max_logical_io_reads_mb float NOT NULL,
     total_logical_io_reads_mb AS
         (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
-    last_logical_io_writes_mb bigint NOT NULL,
-    min_logical_io_writes_mb bigint NOT NULL,
-    max_logical_io_writes_mb bigint NOT NULL,
+    last_logical_io_writes_mb float NOT NULL,
+    min_logical_io_writes_mb float NOT NULL,
+    max_logical_io_writes_mb float NOT NULL,
     total_logical_io_writes_mb AS
         (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
-    last_physical_io_reads_mb bigint NOT NULL,
-    min_physical_io_reads_mb bigint NOT NULL,
-    max_physical_io_reads_mb bigint NOT NULL,
+    last_physical_io_reads_mb float NOT NULL,
+    min_physical_io_reads_mb float NOT NULL,
+    max_physical_io_reads_mb float NOT NULL,
     total_physical_io_reads_mb AS
         (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
-    last_clr_time_ms bigint NOT NULL,
-    min_clr_time_ms bigint NOT NULL,
-    max_clr_time_ms bigint NOT NULL,
+    last_clr_time_ms float NOT NULL,
+    min_clr_time_ms float NOT NULL,
+    max_clr_time_ms float NOT NULL,
     total_clr_time_ms AS
         (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
     avg_query_max_used_memory_mb float NULL,
-    last_query_max_used_memory_mb bigint NOT NULL,
-    min_query_max_used_memory_mb bigint NOT NULL,
-    max_query_max_used_memory_mb bigint NOT NULL,
+    last_query_max_used_memory_mb float NOT NULL,
+    min_query_max_used_memory_mb float NOT NULL,
+    max_query_max_used_memory_mb float NOT NULL,
     total_query_max_used_memory_mb AS
         (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
@@ -1685,15 +1685,15 @@ CREATE TABLE
     total_num_physical_io_reads AS
         (avg_num_physical_io_reads * count_executions),
     avg_log_bytes_used_mb float NULL,
-    last_log_bytes_used_mb bigint NULL,
-    min_log_bytes_used_mb bigint NULL,
-    max_log_bytes_used_mb bigint NULL,
+    last_log_bytes_used_mb float NULL,
+    min_log_bytes_used_mb float NULL,
+    max_log_bytes_used_mb float NULL,
     total_log_bytes_used_mb AS
         (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
-    last_tempdb_space_used_mb bigint NULL,
-    min_tempdb_space_used_mb bigint NULL,
-    max_tempdb_space_used_mb bigint NULL,
+    last_tempdb_space_used_mb float NULL,
+    min_tempdb_space_used_mb float NULL,
+    max_tempdb_space_used_mb float NULL,
     total_tempdb_space_used_mb AS
         (avg_tempdb_space_used_mb * count_executions),
     from_regression_baseline varchar(3) NULL,
@@ -2535,15 +2535,15 @@ BEGIN
                 executions_per_second bigint NULL,
                 count_executions_by_query_hash bigint NULL,
                 avg_duration_ms float NULL,
-                last_duration_ms bigint NULL,
-                min_duration_ms bigint NULL,
-                max_duration_ms bigint NULL,
+                last_duration_ms float NULL,
+                min_duration_ms float NULL,
+                max_duration_ms float NULL,
                 total_duration_ms float NULL,
                 total_duration_ms_by_query_hash float NULL,
                 avg_cpu_time_ms float NULL,
-                last_cpu_time_ms bigint NULL,
-                min_cpu_time_ms bigint NULL,
-                max_cpu_time_ms bigint NULL,
+                last_cpu_time_ms float NULL,
+                min_cpu_time_ms float NULL,
+                max_cpu_time_ms float NULL,
                 total_cpu_time_ms float NULL,
                 total_cpu_time_ms_by_query_hash float NULL,
                 avg_logical_io_reads_mb float NULL,
@@ -2744,23 +2744,23 @@ BEGIN
                 count_compiles bigint NULL,
                 avg_compile_duration_ms float NULL,
                 total_compile_duration_ms float NULL,
-                last_compile_duration_ms bigint NULL,
+                last_compile_duration_ms float NULL,
                 avg_bind_duration_ms float NULL,
                 total_bind_duration_ms float NULL,
-                last_bind_duration_ms bigint NULL,
+                last_bind_duration_ms float NULL,
                 avg_bind_cpu_time_ms float NULL,
                 total_bind_cpu_time_ms float NULL,
-                last_bind_cpu_time_ms bigint NULL,
+                last_bind_cpu_time_ms float NULL,
                 avg_optimize_duration_ms float NULL,
                 total_optimize_duration_ms float NULL,
-                last_optimize_duration_ms bigint NULL,
+                last_optimize_duration_ms float NULL,
                 avg_optimize_cpu_time_ms float NULL,
                 total_optimize_cpu_time_ms float NULL,
-                last_optimize_cpu_time_ms bigint NULL,
+                last_optimize_cpu_time_ms float NULL,
                 avg_compile_memory_mb float NULL,
                 total_compile_memory_mb float NULL,
-                last_compile_memory_mb bigint NULL,
-                max_compile_memory_mb bigint NULL,
+                last_compile_memory_mb float NULL,
+                max_compile_memory_mb float NULL,
                 query_hash binary(8) NULL,
                 batch_sql_handle varbinary(64) NULL,
                 statement_sql_handle varbinary(64) NULL,
@@ -2801,18 +2801,18 @@ BEGIN
                 database_name sysname NULL,
                 query_id bigint NULL,
                 object_name nvarchar(257) NULL,
-                total_grant_mb bigint NULL,
-                last_grant_mb bigint NULL,
-                min_grant_mb bigint NULL,
-                max_grant_mb bigint NULL,
-                total_used_grant_mb bigint NULL,
-                last_used_grant_mb bigint NULL,
-                min_used_grant_mb bigint NULL,
-                max_used_grant_mb bigint NULL,
-                total_ideal_grant_mb bigint NULL,
-                last_ideal_grant_mb bigint NULL,
-                min_ideal_grant_mb bigint NULL,
-                max_ideal_grant_mb bigint NULL,
+                total_grant_mb float NULL,
+                last_grant_mb float NULL,
+                min_grant_mb float NULL,
+                max_grant_mb float NULL,
+                total_used_grant_mb float NULL,
+                last_used_grant_mb float NULL,
+                min_used_grant_mb float NULL,
+                max_used_grant_mb float NULL,
+                total_ideal_grant_mb float NULL,
+                last_ideal_grant_mb float NULL,
+                min_ideal_grant_mb float NULL,
+                max_ideal_grant_mb float NULL,
                 total_reserved_threads bigint NULL,
                 last_reserved_threads bigint NULL,
                 min_reserved_threads bigint NULL,
@@ -2857,15 +2857,15 @@ BEGIN
                 object_name nvarchar(257) NULL,
                 wait_category_desc nvarchar(60) NULL,
                 total_query_wait_time_ms bigint NULL,
-                total_query_duration_ms bigint NULL,
-                avg_query_wait_time_ms bigint NULL,
-                avg_query_duration_ms bigint NULL,
+                total_query_duration_ms float NULL,
+                avg_query_wait_time_ms float NULL,
+                avg_query_duration_ms float NULL,
                 last_query_wait_time_ms bigint NULL,
-                last_query_duration_ms bigint NULL,
+                last_query_duration_ms float NULL,
                 min_query_wait_time_ms bigint NULL,
-                min_query_duration_ms bigint NULL,
+                min_query_duration_ms float NULL,
                 max_query_wait_time_ms bigint NULL,
-                max_query_duration_ms bigint NULL,
+                max_query_duration_ms float NULL,
                 from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
@@ -2934,15 +2934,15 @@ BEGIN
                 database_name sysname NULL,
                 wait_category_desc nvarchar(60) NULL,
                 total_query_wait_time_ms bigint NULL,
-                total_query_duration_ms bigint NULL,
-                avg_query_wait_time_ms bigint NULL,
-                avg_query_duration_ms bigint NULL,
+                total_query_duration_ms float NULL,
+                avg_query_wait_time_ms float NULL,
+                avg_query_duration_ms float NULL,
                 last_query_wait_time_ms bigint NULL,
-                last_query_duration_ms bigint NULL,
+                last_query_duration_ms float NULL,
                 min_query_wait_time_ms bigint NULL,
-                min_query_duration_ms bigint NULL,
+                min_query_duration_ms float NULL,
                 max_query_wait_time_ms bigint NULL,
-                max_query_duration_ms bigint NULL,
+                max_query_duration_ms float NULL,
                 from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
@@ -12260,7 +12260,13 @@ BEGIN
                      WHEN 'total log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)'
                      WHEN 'total tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)'
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
-                     /* Waits and the fallback path — waits are per-interval totals so AVG is correct; fallback mirrors cpu path. */
+                     /*
+                     Waits: waits.total_query_wait_time_ms is each plan's wait total over the
+                     whole period, summed across its intervals, and the join repeats it on
+                     every runtime stats row of the plan. So this is a mean of period totals,
+                     not of per-interval waits, and like the "total ..." sorts it grows with
+                     the length of the period. The fallback path mirrors cpu.
+                     */
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                 END
                 + N'
@@ -14420,8 +14426,22 @@ SELECT
     qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
+    /*
+    Weighted by executions. avg_query_wait_time_ms is the total for the interval
+    divided by the number of executions behind it (on SQL Server 2025 that
+    is the executions that had this wait, not all executions in the
+    interval), so total / avg gives back that number, and
+    SUM(total) / SUM(executions) is the average wait per execution across
+    the intervals. AVG() of the interval averages gave a quiet interval the
+    same weight as a busy one.
+    */
     avg_query_wait_time_ms =
-        AVG(qsws_with_lasts.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms) /
+        NULLIF
+        (
+            SUM(qsws_with_lasts.total_query_wait_time_ms / NULLIF(qsws_with_lasts.avg_query_wait_time_ms, 0)),
+            0
+        ),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
@@ -17138,16 +17158,16 @@ BEGIN
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_query_wait_time_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_query_wait_time_ms)'
+                        THEN N'FORMAT(SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0), ''N0'')'
+                        ELSE N'SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0)'
                     END
                     + N',
                     avg_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_duration_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_duration_ms)'
+                        THEN N'FORMAT(SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0), ''N0'')'
+                        ELSE N'SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0)'
                     END
                     + N',
                     last_query_wait_time_ms = '
@@ -17202,8 +17222,13 @@ BEGIN
                 (
                     /*
                     One row per plan and wait category, with the plan''s
-                    runtime stats. Totals add up, averages average, and
-                    minimums and maximums take the lowest and highest.
+                    runtime stats. Totals add up, and averages are weighted
+                    by executions: the wait average is total wait divided by
+                    the executions behind it (total / avg, since the average
+                    wait is the total over an execution count), and the
+                    duration average is total duration divided by
+                    executions. Minimums and maximums take the lowest and
+                    highest.
                     Last values come from the plan with the latest wait
                     in the category. The windows run before GROUP BY,
                     so they see each plan''s row.
@@ -17217,7 +17242,7 @@ BEGIN
                         qsws.min_query_wait_time_ms,
                         qsws.max_query_wait_time_ms,
                         x.total_duration_ms,
-                        x.avg_duration_ms,
+                        x.count_executions,
                         x.min_duration_ms,
                         x.max_duration_ms,
                         latest_last_query_wait_time_ms =
@@ -17269,6 +17294,7 @@ BEGIN
                             qsrs.min_duration_ms,
                             qsrs.max_duration_ms,
                             qsrs.total_duration_ms,
+                            qsrs.count_executions,
                             qsrs.last_execution_time
                         FROM #query_store_runtime_stats AS qsrs
                         JOIN #query_store_plan AS qsp

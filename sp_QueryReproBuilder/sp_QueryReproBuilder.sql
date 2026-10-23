@@ -266,6 +266,8 @@ DECLARE
     @azure bit = 0,
     @sql_2017 bit = 0,
     @sql_2022_views bit = 0,
+    @procedure_variants_single nvarchar(max) = N'',
+    @procedure_variants_wildcard nvarchar(max) = N'',
     @new bit = 0,
     @current_table nvarchar(100),
     @include_plans_seeded bit = 0,
@@ -844,6 +846,39 @@ BEGIN
         object_id bigint NOT NULL,
         INDEX object_id CLUSTERED (object_id)
     );
+
+    /*
+    Parameter Sensitive Plan variants are queries of their own with
+    object_id 0, so the procedure filters also take the variants
+    of the procedure's queries, found through their parent query.
+    sys.query_store_query_variant exists on SQL Server 2022+ only.
+    */
+    IF @sql_2022_views = 1
+    BEGIN
+        SELECT
+            @procedure_variants_single = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE qsq_parent.object_id = OBJECT_ID(@procedure_name_quoted)',
+            @procedure_variants_wildcard = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #procedure_object_ids AS poi
+              WHERE poi.object_id = qsq_parent.object_id
+          )';
+    END;
 
     /*Check if procedure exists in Query Store - wildcard procedure name*/
     IF CHARINDEX(N'%', @procedure_name) > 0
@@ -3008,7 +3043,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -3033,7 +3068,7 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
@@ -3138,7 +3173,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -3163,7 +3198,7 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
@@ -3627,7 +3662,7 @@ BEGIN
                         SELECT
                             qsq.query_id
                         FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
                     )
           )';
 END;
@@ -3658,7 +3693,7 @@ BEGIN
                                 1/0
                             FROM #procedure_object_ids AS poi
                             WHERE poi.object_id = qsq.object_id
-                        )
+                        )' + @procedure_variants_wildcard + N'
                     )
           )';
 END;
@@ -3912,7 +3947,7 @@ AND   qsp.query_id IN
           SELECT
               qsq.query_id
           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
       )';
 END;
 
@@ -3937,7 +3972,7 @@ AND   qsp.query_id IN
                   1/0
               FROM #procedure_object_ids AS poi
               WHERE poi.object_id = qsq.object_id
-          )
+          )' + @procedure_variants_wildcard + N'
       )';
 END;
 
@@ -4329,7 +4364,10 @@ SELECT
     /*
     Weighted by executions like the runtime stats averages. Query Store
     computes avg_query_wait_time_ms as total / executions for the interval,
-    so total / avg gives back the executions of each interval.
+    so total / avg gives back the executions of each interval. An interval
+    without this wait has no row here, so it adds nothing to the divisor:
+    the average is per execution in the intervals that had the wait, not
+    per execution of the plan.
     */
     avg_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms) /
@@ -4655,7 +4693,7 @@ OPTION(RECOMPILE);' + @nc10;
                         N''
                     );
 
-            RAISERROR('%s', 10, 1, @psp_message) WITH NOWAIT;
+            RAISERROR(N'%s', 10, 1, @psp_message) WITH NOWAIT;
         END;
     END;
 
@@ -4724,6 +4762,11 @@ carry a ParameterList of their own earlier in the plan, and reading the
 first one picked up that decoy: it holds no parameters, so the real ones
 were lost and the repro fell back to ? values. Read the last ParameterList,
 and only for plans where it holds no parameters, the first one.
+
+A document can hold more than one statement, such as a multi-statement plan
+passed in @query_plan_xml. The repro uses the first statement's text, so both
+lists are the ones found before the first closing QueryPlan tag, not the last
+ParameterList of the whole document, which belongs to the last statement.
 */
 SELECT
     @current_table = N'extracting parameters from query plans';
@@ -4756,10 +4799,26 @@ SELECT
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
-    /* Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation */
+    /*
+    Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation.
+    Only the text up to the first closing QueryPlan tag is searched: that is the first statement's plan, and the
+    statement text is the first statement's too.
+    */
     SELECT
         query_plan =
-            qsp.query_plan COLLATE Latin1_General_100_BIN2
+            LEFT
+            (
+                qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(N'</QueryPlan>', qsp.query_plan COLLATE Latin1_General_100_BIN2),
+                        0
+                    ) + LEN(N'</QueryPlan>') - 1,
+                    DATALENGTH(qsp.query_plan) / 2
+                )
+            )
 ) AS qpb
 WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
 OPTION(RECOMPILE);
@@ -4782,6 +4841,11 @@ CROSS APPLY
 ) AS qpb
 OPTION(RECOMPILE);
 
+/*
+The positions above come from a binary collation, so the cut has to use the
+same one: under an _SC or UTF8 collation a supplementary character would
+otherwise shift the cut.
+*/
 INSERT
     #parameter_lists
 WITH
@@ -4800,7 +4864,7 @@ SELECT
                  (
                      SUBSTRING
                      (
-                         qsp.query_plan,
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
                          plp.last_start,
                          plp.last_end + LEN(N'</ParameterList>') - plp.last_start
                      ) AS xml
@@ -4813,7 +4877,7 @@ SELECT
                  (
                      SUBSTRING
                      (
-                         qsp.query_plan,
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
                          plp.first_start,
                          plp.first_end + LEN(N'</ParameterList>') - plp.first_start
                      ) AS xml

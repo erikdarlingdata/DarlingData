@@ -6367,7 +6367,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
                 END +
             CASE
@@ -7128,6 +7128,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       OR id.is_primary_key = 1
     )
     AND   ce.can_compress = 1 /* Only those eligible for compression */
+    AND   fo.can_compress = 1 /* One #filtered_objects row per index, not one per partition compression mix */
     AND   fo.database_id = @current_database_id
     /* Only add if not already in #index_analysis */
     AND   NOT EXISTS
@@ -7227,7 +7228,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
             CASE
@@ -7435,7 +7436,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
             N');',
