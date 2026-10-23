@@ -4691,6 +4691,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (blocking_session_id, session_id)
         );
 
+        /*
+        blocked > 0 only: sysprocesses reports negative values for sessions that wait
+        on no session (-2 orphaned distributed transaction, -3 deferred recovery,
+        -4 latch owner not known). Kept as edges they made a lead blocker look blocked.
+        */
         INSERT
             @blocking_edges
         (
@@ -4701,7 +4706,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             session_id = sp.spid,
             blocking_session_id = sp.blocked
         FROM sys.sysprocesses AS sp
-        WHERE sp.blocked <> 0
+        WHERE sp.blocked > 0
         AND   sp.blocked <> sp.spid;
 
         /*
