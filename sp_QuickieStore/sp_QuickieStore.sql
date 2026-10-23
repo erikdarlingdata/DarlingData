@@ -574,7 +574,31 @@ BEGIN
     SELECT '    that plan.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'query_hash_from_hash_counting: the query hash' UNION ALL
-    SELECT 'plan_hash_count_for_query_hash: distinct plan hashes (plan shapes). The results are ranked on this.';
+    SELECT 'plan_hash_count_for_query_hash: distinct plan hashes (plan shapes). The results are ranked on this.' UNION ALL
+    SELECT 'the columns below count over every plan of the query hash that ran in the window, to show why it has' UNION ALL
+    SELECT '    so many plans:' UNION ALL
+    SELECT 'plan_count_reasons: the counts below in words, one sentence for each rule that applies, joined by | .' UNION ALL
+    SELECT '    NULL when no rule applies. The rules:' UNION ALL
+    SELECT '    more than one query text, and at least half as many texts as query_ids, not counting Parameter' UNION ALL
+    SELECT '        Sensitive Plan variants: the texts differ only in literal values' UNION ALL
+    SELECT '    more than one batch, and at least half as many batches as query_ids: the statement uses a temp' UNION ALL
+    SELECT '        table or table variable and runs in batches whose text changes' UNION ALL
+    SELECT '    more than one context setting: it compiled under different SET options, with the ones that differ' UNION ALL
+    SELECT '    more than one module: the same statement is in several modules' UNION ALL
+    SELECT '    more plan hashes than query_ids: queries compiled more than one plan shape each' UNION ALL
+    SELECT '    any Parameter Sensitive Plan variants (2022+)' UNION ALL
+    SELECT '    more than one compatibility level' UNION ALL
+    SELECT 'plan_id_count_for_query_hash: distinct plans. Many plans but few shapes means the same plan compiled again.' UNION ALL
+    SELECT 'query_id_count_for_query_hash: distinct query_ids. Query Store makes a new query_id for each different' UNION ALL
+    SELECT '    combination of query text, context settings, parent object, and, for some queries, batch.' UNION ALL
+    SELECT 'query_text_id_count_for_query_hash: distinct query texts' UNION ALL
+    SELECT 'batch_sql_handle_count_for_query_hash: distinct batches. Query Store fills batch_sql_handle only for' UNION ALL
+    SELECT '    queries that use a temp table or table variable, and gives the same statement in each batch its own query_id.' UNION ALL
+    SELECT 'object_id_count_for_query_hash: distinct modules (ad hoc statements are not counted)' UNION ALL
+    SELECT 'compatibility_level_count_for_query_hash: distinct compatibility levels the plans compiled under' UNION ALL
+    SELECT 'context_settings_count_for_query_hash: distinct context settings (SET options, language, date format, and so on)' UNION ALL
+    SELECT 'context_settings_that_differ_for_query_hash: the settings that differ across those context settings' UNION ALL
+    SELECT 'variant_query_count_for_query_hash (2022+): query_ids that are Parameter Sensitive Plan variants';
 
     /*
     Limitations
@@ -1085,8 +1109,9 @@ is done after the point where we would truncate.
 */
 
 /*
-Holds one row per query hash, with one representative plan_id
-and the count of plan hashes the query hash has.
+Holds one row per query hash, with one representative plan_id,
+the count of plan hashes the query hash has, and counts that
+show why it has so many plans.
 Only used when we're sorting by how many plan hashes each
 query hash has.
 */
@@ -1097,6 +1122,16 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     plan_hash_count_for_query_hash integer NOT NULL,
+    plan_count_reasons nvarchar(2000) NULL,
+    plan_id_count_for_query_hash bigint NULL,
+    query_id_count_for_query_hash bigint NULL,
+    query_text_id_count_for_query_hash bigint NULL,
+    batch_sql_handle_count_for_query_hash bigint NULL,
+    object_id_count_for_query_hash bigint NULL,
+    compatibility_level_count_for_query_hash bigint NULL,
+    context_settings_count_for_query_hash bigint NULL,
+    context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+    variant_query_count_for_query_hash bigint NULL,
     PRIMARY KEY CLUSTERED (database_id, plan_id, query_hash)
 );
 
@@ -2036,7 +2071,18 @@ BEGIN
     VALUES
         /* 230, so just before avg_query_duration_ms. */
         (230, 'sort_order', 'query_hash', 'query_hash_from_hash_counting', 'hashes.query_hash', 0, NULL, NULL, 0, NULL),
-        (231, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0');
+        (231, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        /* Why the query hash has so many plans, counted over the window */
+        (232, 'sort_order', 'reasons', 'plan_count_reasons', 'hashes.plan_count_reasons', 0, NULL, NULL, 0, NULL),
+        (250, 'sort_order', 'plan_ids', 'plan_id_count_for_query_hash', 'hashes.plan_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (251, 'sort_order', 'query_ids', 'query_id_count_for_query_hash', 'hashes.query_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (252, 'sort_order', 'query_texts', 'query_text_id_count_for_query_hash', 'hashes.query_text_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (253, 'sort_order', 'batches', 'batch_sql_handle_count_for_query_hash', 'hashes.batch_sql_handle_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (254, 'sort_order', 'modules', 'object_id_count_for_query_hash', 'hashes.object_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (255, 'sort_order', 'compat_levels', 'compatibility_level_count_for_query_hash', 'hashes.compatibility_level_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (256, 'sort_order', 'contexts', 'context_settings_count_for_query_hash', 'hashes.context_settings_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (257, 'sort_order', 'context_diffs', 'context_settings_that_differ_for_query_hash', 'hashes.context_settings_that_differ_for_query_hash', 0, NULL, NULL, 0, NULL),
+        (258, 'sort_order', 'variants', 'variant_query_count_for_query_hash', 'hashes.variant_query_count_for_query_hash', 1, 'sql_2022_views', 1, 0, 'N0');
 END;
 
 /* Dynamic regression change column based on formatting and comparator */
@@ -2559,6 +2605,16 @@ BEGIN
                 total_tempdb_space_used_mb_by_query_hash float NULL,
                 query_hash_from_hash_counting binary(8) NULL,
                 plan_hash_count_for_query_hash bigint NULL,
+                plan_count_reasons nvarchar(2000) NULL,
+                plan_id_count_for_query_hash bigint NULL,
+                query_id_count_for_query_hash bigint NULL,
+                query_text_id_count_for_query_hash bigint NULL,
+                batch_sql_handle_count_for_query_hash bigint NULL,
+                object_id_count_for_query_hash bigint NULL,
+                compatibility_level_count_for_query_hash bigint NULL,
+                context_settings_count_for_query_hash bigint NULL,
+                context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+                variant_query_count_for_query_hash bigint NULL,
                 total_wait_time_from_sort_order_ms bigint NULL,
                 context_settings nvarchar(256) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
@@ -2603,6 +2659,48 @@ BEGIN
                 total_num_physical_io_reads float NULL,
                 total_num_physical_io_reads_by_query_hash float NULL;
             IF @debug = 1 BEGIN RAISERROR(''Added num_physical_io_reads columns to %s for runtime stats logging.'', 0, 1, ''' + REPLACE(@log_table_runtime_stats, N'''', N'''''') + N''') WITH NOWAIT; END;
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _RuntimeStats tables created before 'plan count by hashes'
+    explained its plan counts need those columns, or the insert fails
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_RuntimeStats''
+            AND   s.name = @schema_name
+            AND   c.name = N''plan_count_reasons''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_runtime_stats + N' ADD
+                plan_count_reasons nvarchar(2000) NULL,
+                plan_id_count_for_query_hash bigint NULL,
+                query_id_count_for_query_hash bigint NULL,
+                query_text_id_count_for_query_hash bigint NULL,
+                batch_sql_handle_count_for_query_hash bigint NULL,
+                object_id_count_for_query_hash bigint NULL,
+                compatibility_level_count_for_query_hash bigint NULL,
+                context_settings_count_for_query_hash bigint NULL,
+                context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+                variant_query_count_for_query_hash bigint NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added plan count by hashes columns to %s for runtime stats logging.'', 0, 1, ''' + REPLACE(@log_table_runtime_stats, N'''', N'''''') + N''') WITH NOWAIT; END;
         END';
 
     EXECUTE sys.sp_executesql
@@ -11470,6 +11568,345 @@ BEGIN
             @sql,
             @current_table;
     END;
+
+    /*
+    Counts that show why each of those query hashes has so many plans,
+    over every plan of the query hash that ran in the window
+    */
+    SELECT
+        @current_table = 'updating #plan_ids_with_query_hashes plan counts',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    UPDATE
+        hashes
+    SET
+        hashes.plan_id_count_for_query_hash = counts.plan_id_count,
+        hashes.query_id_count_for_query_hash = counts.query_id_count,
+        hashes.query_text_id_count_for_query_hash = counts.query_text_id_count,
+        hashes.batch_sql_handle_count_for_query_hash = counts.batch_sql_handle_count,
+        hashes.object_id_count_for_query_hash = counts.object_id_count,
+        hashes.compatibility_level_count_for_query_hash = counts.compatibility_level_count,
+        hashes.context_settings_count_for_query_hash = counts.context_settings_count,
+        hashes.context_settings_that_differ_for_query_hash = counts.context_settings_that_differ,
+        hashes.variant_query_count_for_query_hash = counts.variant_query_count
+    FROM #plan_ids_with_query_hashes AS hashes
+    JOIN
+    (
+        SELECT
+            p.query_hash,
+            plan_id_count =
+                COUNT_BIG(*),
+            query_id_count =
+                COUNT_BIG(DISTINCT p.query_id),
+            query_text_id_count =
+                COUNT_BIG(DISTINCT p.query_text_id),
+            /* Subtracting the flag takes the stand-in value back out, see below */
+            batch_sql_handle_count =
+                COUNT_BIG(DISTINCT p.batch_sql_handle) -
+                MAX(p.no_batch_sql_handle),
+            object_id_count =
+                COUNT_BIG(DISTINCT p.object_id) -
+                MAX(p.is_ad_hoc),
+            compatibility_level_count =
+                COUNT_BIG(DISTINCT p.compatibility_level),
+            context_settings_count =
+                COUNT_BIG(DISTINCT p.context_settings_id),
+            /* A setting differs when its lowest and highest values differ */
+            context_settings_that_differ =
+                STUFF
+                (
+                    CASE
+                        WHEN MIN(p.set_options & 1) < MAX(p.set_options & 1)
+                        THEN N'', ANSI_PADDING''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 8) < MAX(p.set_options & 8)
+                        THEN N'', CONCAT_NULL_YIELDS_NULL''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 16) < MAX(p.set_options & 16)
+                        THEN N'', ANSI_WARNINGS''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 32) < MAX(p.set_options & 32)
+                        THEN N'', ANSI_NULLS''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 64) < MAX(p.set_options & 64)
+                        THEN N'', QUOTED_IDENTIFIER''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 4096) < MAX(p.set_options & 4096)
+                        THEN N'', ARITH_ABORT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 8192) < MAX(p.set_options & 8192)
+                        THEN N'', NUMERIC_ROUNDABORT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.language_id) < MAX(p.language_id)
+                        THEN N'', LANGUAGE''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.date_format) < MAX(p.date_format)
+                        THEN N'', DATEFORMAT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.date_first) < MAX(p.date_first)
+                        THEN N'', DATEFIRST''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.default_schema_id) < MAX(p.default_schema_id)
+                        THEN N'', default schema''
+                        ELSE N''''
+                    END,
+                    1,
+                    2,
+                    N''''
+                ),
+            variant_query_count =' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N'
+                COUNT_BIG(DISTINCT p.variant_query_id) -
+                MAX(p.not_a_variant)'
+                ELSE N'
+                CONVERT(bigint, NULL)'
+            END + N'
+        FROM
+        (
+            /*
+            One row per plan of these query hashes that ran in the window.
+            0x and 0 stand in for NULL and for ad hoc, so no aggregate above
+            drops a NULL and prints a warning. No real batch_sql_handle,
+            module, or query_id has those values.
+            */
+            SELECT
+                qsq.query_hash,
+                qsq.query_id,
+                qsq.query_text_id,
+                batch_sql_handle =
+                    ISNULL(qsq.batch_sql_handle, 0x),
+                no_batch_sql_handle =
+                    CASE
+                        WHEN qsq.batch_sql_handle IS NULL
+                        THEN 1
+                        ELSE 0
+                    END,
+                object_id =
+                    ISNULL(qsq.object_id, 0),
+                is_ad_hoc =
+                    CASE
+                        WHEN ISNULL(qsq.object_id, 0) = 0
+                        THEN 1
+                        ELSE 0
+                    END,
+                qsp.compatibility_level,
+                qsq.context_settings_id,
+                set_options =
+                    CONVERT(integer, ISNULL(qcs.set_options, 0x)),
+                qcs.language_id,
+                qcs.date_format,
+                qcs.date_first,
+                qcs.default_schema_id' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N',
+                variant_query_id =
+                    ISNULL(qsqv.query_variant_query_id, 0),
+                not_a_variant =
+                    CASE
+                        WHEN qsqv.query_variant_query_id IS NULL
+                        THEN 1
+                        ELSE 0
+                    END'
+                ELSE N''
+            END + N'
+            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsp.query_id = qsq.query_id
+            JOIN ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
+              ON qcs.context_settings_id = qsq.context_settings_id' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N'
+            LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+              ON qsqv.query_variant_query_id = qsq.query_id'
+                ELSE N''
+            END + N'
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #plan_ids_with_query_hashes AS hashes
+                WHERE hashes.query_hash = qsq.query_hash
+                AND   hashes.database_id = @database_id
+            )
+            AND   EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                WHERE qsrs.plan_id = qsp.plan_id
+                ' + @where_clause
+                  + N'
+            )
+        ) AS p
+        GROUP BY
+            p.query_hash
+    ) AS counts
+      ON counts.query_hash = hashes.query_hash
+    WHERE hashes.database_id = @database_id
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*
+    Put the counts into words, one sentence for each rule that applies.
+    When no rule applies, plan_count_reasons stays NULL.
+    */
+    UPDATE
+        hashes
+    SET
+        hashes.plan_count_reasons =
+            STUFF
+            (
+                /* Parameter Sensitive Plan variants have texts of their own, so they do not count as literal values */
+                CASE
+                    WHEN hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0) > 1
+                    AND  (hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0)) * 2 >=
+                         hashes.query_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0)
+                    THEN N' | ' +
+                         FORMAT(hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0), 'N0') +
+                         N' query texts differ only in literal values. Parameterize them, or use forced parameterization.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.batch_sql_handle_count_for_query_hash > 1
+                    AND  hashes.batch_sql_handle_count_for_query_hash * 2 >= hashes.query_id_count_for_query_hash
+                    THEN N' | The statement uses a temporary table or table variable and ran in ' +
+                         FORMAT(hashes.batch_sql_handle_count_for_query_hash, 'N0') +
+                         N' different batches. Query Store gives it a new query_id in each batch. Send the batch with parameters, or move it into a stored procedure, so the batch text stays the same.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.context_settings_count_for_query_hash > 1
+                    THEN N' | Compiled under ' +
+                         FORMAT(hashes.context_settings_count_for_query_hash, 'N0') +
+                         N' different sets of SET options' +
+                         CASE
+                             WHEN hashes.context_settings_that_differ_for_query_hash LIKE N'%,%'
+                             THEN N' (' + hashes.context_settings_that_differ_for_query_hash + N' differ)'
+                             WHEN hashes.context_settings_that_differ_for_query_hash IS NOT NULL
+                             THEN N' (' + hashes.context_settings_that_differ_for_query_hash + N' differs)'
+                             ELSE N''
+                         END +
+                         N'.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.object_id_count_for_query_hash > 1
+                    THEN N' | The same statement is in ' +
+                         FORMAT(hashes.object_id_count_for_query_hash, 'N0') +
+                         N' modules.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.plan_hash_count_for_query_hash > hashes.query_id_count_for_query_hash
+                    AND  hashes.query_id_count_for_query_hash = 1
+                    THEN N' | One query compiled ' +
+                         FORMAT(hashes.plan_hash_count_for_query_hash, 'N0') +
+                         N' different plan shapes. Look at recompiles, parameter sensitivity, and statistics changes.'
+                    WHEN hashes.plan_hash_count_for_query_hash > hashes.query_id_count_for_query_hash
+                    THEN N' | ' +
+                         FORMAT(hashes.query_id_count_for_query_hash, 'N0') +
+                         N' queries compiled ' +
+                         FORMAT(hashes.plan_hash_count_for_query_hash, 'N0') +
+                         N' different plan shapes. Look at recompiles, parameter sensitivity, and statistics changes.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.variant_query_count_for_query_hash = 1
+                    THEN N' | Parameter Sensitive Plan optimization made 1 variant.'
+                    WHEN hashes.variant_query_count_for_query_hash > 1
+                    THEN N' | Parameter Sensitive Plan optimization made ' +
+                         FORMAT(hashes.variant_query_count_for_query_hash, 'N0') +
+                         N' variants.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.compatibility_level_count_for_query_hash > 1
+                    THEN N' | Compiled under ' +
+                         FORMAT(hashes.compatibility_level_count_for_query_hash, 'N0') +
+                         N' compatibility levels.'
+                    ELSE N''
+                END,
+                1,
+                3,
+                N''
+            )
+    FROM #plan_ids_with_query_hashes AS hashes
+    WHERE hashes.database_id = @database_id
+    OPTION(RECOMPILE);
 END;
 IF @sort_order = 'total waits'
 BEGIN
