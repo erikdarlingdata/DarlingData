@@ -13090,6 +13090,9 @@ END; /*End getting query plans*/
 all_plan_ids lists every plan of each query. A subquery per plan
 in the insert above read sys.query_store_plan once per plan, about
 20 ms each on a big Query Store, so read it once here instead.
+The hash join keeps it to one read: with few plans in
+#query_store_plan, a nested loops join reads the in-memory part
+of sys.query_store_plan again for every plan it finds.
 */
 SELECT
     @current_table = 'inserting #all_plan_ids',
@@ -13119,7 +13122,7 @@ WHERE EXISTS
     WHERE qsp2.query_id = qsp.query_id
     AND   qsp2.database_id = @database_id
 )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
