@@ -4008,14 +4008,36 @@ SELECT
     @sql = @isolation_level,
     @current_table = N'inserting #query_store_query';
 
+/*
+Parameter Sensitive Plan variants have object_id 0, so they show
+the object of their parent query instead of Adhoc
+*/
 SELECT
     @sql += N'
 SELECT
     @database_id,
     qsq.query_id,
     qsq.query_text_id,
-    qsq.context_settings_id,
-    qsq.object_id,
+    qsq.context_settings_id,' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+    object_id =
+        ISNULL
+        (
+            (
+                SELECT TOP (1)
+                    qsq_parent.object_id
+                FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+                JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+                  ON qsq_parent.query_id = qsqv.parent_query_id
+                WHERE qsqv.query_variant_query_id = qsq.query_id
+            ),
+            qsq.object_id
+        ),'
+        ELSE N'
+    qsq.object_id,'
+    END + N'
     qsq.query_hash,
     qsq.initial_compile_start_time,
     qsq.last_compile_start_time,

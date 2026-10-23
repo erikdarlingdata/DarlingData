@@ -1255,6 +1255,13 @@ def run_psp_cases(server, password, only=None, verbose=False):
                "repro count=%d; output tail=%r" % (n_repros, out[-300:]))
             ck("qrb_psp_rows" in out, "repro is the fixture procedure's query",
                "output tail=%r" % out[-300:])
+            # object_name: a variant has object_id 0, so it takes its parent
+            # query's object instead of showing Adhoc.
+            n_named = len(re.findall(r"\[dbo\]\.\[qrb_psp_proc\]", out))
+            ck(n_named >= 2 and "Adhoc" not in out,
+               "each variant's object name is the procedure, not Adhoc",
+               "procedure-name count=%d; Adhoc present=%s" %
+               (n_named, "Adhoc" in out))
 
             case_failed = any(not ok for (ok, _l, _d) in checks)
             for (ok, label, detail) in checks:
