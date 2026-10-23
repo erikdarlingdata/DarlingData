@@ -959,6 +959,26 @@ CROSS APPLY
 WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'),
                         OBJECT_ID(N'dbo.rm_q3'))
 GROUP BY qsws.plan_id, qsq.object_id, p.period, qsws.wait_category_desc;
+SELECT
+    gt = 'GT|wexec|' + CONVERT(varchar(20), qsws.plan_id) + '|' +
+         OBJECT_NAME(qsq.object_id) + '|' + p.period + '|' +
+         qsws.wait_category_desc + '|' +
+         CONVERT(varchar(40), SUM(qsws.total_query_wait_time_ms / NULLIF(qsws.avg_query_wait_time_ms, 0)))
+FROM sys.query_store_wait_stats AS qsws
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsws.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+CROSS APPLY
+(
+    SELECT period = CASE WHEN MAX(qsrs.last_execution_time) >= @split THEN 'No' ELSE 'Yes' END
+    FROM sys.query_store_runtime_stats AS qsrs
+    WHERE qsrs.plan_id = qsws.plan_id
+    AND   qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+    AND   qsrs.execution_type = qsws.execution_type
+) AS p
+WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'),
+                        OBJECT_ID(N'dbo.rm_q3'))
+AND   qsws.total_query_wait_time_ms > 0
+GROUP BY qsws.plan_id, qsq.object_id, p.period, qsws.wait_category_desc;
 """
 
 # WaitStatsByQuery and WaitStatsTotal log tables in the shape the procedure
@@ -1225,6 +1245,14 @@ def regression_window_tests(server, password, R, state):
     for plan, obj, period, cat, ms in re.findall(
             r"GT\|waits\|(\d+)\|(\w+)\|(Yes|No)\|([^|\r\n]+)\|(\d+)", out):
         waits[(plan, period, cat)] = int(ms)
+    # The executions behind each wait average, from Query Store's own total
+    # and average: its avg_query_wait_time_ms is the total over an execution
+    # count. On SQL Server 2025 the count is the executions that had the wait,
+    # not the interval's count_executions.
+    wait_execs = {}
+    for plan, obj, period, cat, n in re.findall(
+            r"GT\|wexec\|(\d+)\|(\w+)\|(Yes|No)\|([^|\r\n]+)\|([\d.]+)", out):
+        wait_execs[(plan, period, cat)] = float(n)
     q1_plans = sorted({p for (p, _), (o, _) in runs.items() if o == "rm_q1"})
     q2_plans = sorted({p for (p, _), (o, _) in runs.items() if o == "rm_q2"},
                       key=int)
@@ -1243,6 +1271,10 @@ def regression_window_tests(server, password, R, state):
 
     def lock_ms(period=None, plan=None):
         return sum(ms for (p, per, cat), ms in waits.items()
+                   if p == (plan or q1) and cat == "Lock" and period in (None, per))
+
+    def lock_execs(period=None, plan=None):
+        return sum(n for (p, per, cat), n in wait_execs.items()
                    if p == (plan or q1) and cat == "Lock" and period in (None, per))
 
     def one_per_query(stdout, group):
@@ -1275,7 +1307,26 @@ def regression_window_tests(server, password, R, state):
         R.check(group, "wait stats total Lock covers rm_q1 and rm_q3, matching "
                 "Query Store", all(got.get(p) == [str(n)] for p, n in expected.items()),
                 "got=%s expected=%s" % (got, expected))
-        rules = {"sum": sum, "avg": lambda v: sum(v) / len(v), "min": min, "max": max}
+        # Lock's average is the wait over the executions that had it, from
+        # Query Store, not a mean of per-interval or per-plan averages.
+        bad = []
+        for p in latest:
+            execs = lock_execs(p, q1) + lock_execs(p, q3)
+            got_avg = [number(r.get("avg_query_wait_time_ms")) for r in lock.get(p, [])]
+            want_avg = expected[p] / execs if execs else None
+            if (want_avg is None or len(got_avg) != 1 or got_avg[0] is None
+                    or not math.isclose(got_avg[0], want_avg, rel_tol=1e-6, abs_tol=0.001)):
+                bad.append("%s: got %s, %s ms over %s executions = %s; by-query "
+                           "(plan, total, avg) %s; execs %s"
+                           % (p, got_avg, expected[p], execs, want_avg,
+                              [(r.get("plan_id"), r.get("total_query_wait_time_ms"),
+                                r.get("avg_query_wait_time_ms")) for r in by_query
+                               if r.get("wait_category_desc") == "Lock"
+                               and r.get(period_col) == p],
+                              {k: v for k, v in wait_execs.items() if k[1:] == (p, "Lock")}))
+        R.check(group, "wait stats total Lock average is the wait per execution "
+                "from Query Store", not bad, "; ".join(bad[:3]))
+        rules = {"sum": sum, "min": min, "max": max}
         bad = []
         for t in totals:
             key = (t.get("wait_category_desc"), t.get(period_col))
@@ -1284,11 +1335,27 @@ def regression_window_tests(server, password, R, state):
             if not rows:
                 bad.append("%s: no by-query rows" % (key,))
                 continue
+            # The averages are weighted by executions: a by-query row's total
+            # divided by its average is its executions, so the total row's
+            # average is the sum of the totals over the sum of the executions.
+            # A plain mean of the by-query averages is what it used to be.
+            for column, total in (("avg_query_wait_time_ms", "total_query_wait_time_ms"),
+                                  ("avg_query_duration_ms", "total_query_duration_ms")):
+                totals_v = [number(r.get(total)) for r in rows]
+                avgs = [number(r.get(column)) for r in rows]
+                value = number(t.get(column))
+                if None in totals_v or None in avgs or 0 in avgs:
+                    expected_avg = None
+                else:
+                    expected_avg = sum(totals_v) / sum(a_t / a for a_t, a in zip(totals_v, avgs))
+                if (value is None or expected_avg is None or not math.isclose(
+                        value, expected_avg, rel_tol=1e-6, abs_tol=0.001)):
+                    bad.append("%s %s: got %s, executions-weighted %s of %s"
+                               % (key, column, t.get(column), expected_avg,
+                                  [(r.get(total), r.get(column)) for r in rows]))
             for column, rule in (
                     ("total_query_wait_time_ms", "sum"),
                     ("total_query_duration_ms", "sum"),
-                    ("avg_query_wait_time_ms", "avg"),
-                    ("avg_query_duration_ms", "avg"),
                     ("min_query_wait_time_ms", "min"),
                     ("min_query_duration_ms", "min"),
                     ("max_query_wait_time_ms", "max"),
@@ -1300,8 +1367,8 @@ def regression_window_tests(server, password, R, state):
                     bad.append("%s %s: got %s, %s of %s"
                                % (key, column, t.get(column), rule,
                                   [r.get(column) for r in rows]))
-        R.check(group, "wait stats total adds up, averages, and takes the min "
-                "and max of the by-query rows", bool(totals) and not bad,
+        R.check(group, "wait stats total adds up, weights the averages by "
+                "executions, and takes the min and max of the by-query rows", bool(totals) and not bad,
                 "; ".join(bad[:3]) or "no wait stats total rows")
         bad = []
         for period, plan in latest.items():

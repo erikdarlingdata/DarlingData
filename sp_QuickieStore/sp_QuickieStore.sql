@@ -12260,7 +12260,13 @@ BEGIN
                      WHEN 'total log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)'
                      WHEN 'total tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)'
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
-                     /* Waits and the fallback path — waits are per-interval totals so AVG is correct; fallback mirrors cpu path. */
+                     /*
+                     Waits: waits.total_query_wait_time_ms is each plan's wait total over the
+                     whole period, summed across its intervals, and the join repeats it on
+                     every runtime stats row of the plan. So this is a mean of period totals,
+                     not of per-interval waits, and like the "total ..." sorts it grows with
+                     the length of the period. The fallback path mirrors cpu.
+                     */
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                 END
                 + N'
@@ -14420,8 +14426,22 @@ SELECT
     qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
+    /*
+    Weighted by executions. avg_query_wait_time_ms is the total for the interval
+    divided by the number of executions behind it (on SQL Server 2025 that
+    is the executions that had this wait, not all executions in the
+    interval), so total / avg gives back that number, and
+    SUM(total) / SUM(executions) is the average wait per execution across
+    the intervals. AVG() of the interval averages gave a quiet interval the
+    same weight as a busy one.
+    */
     avg_query_wait_time_ms =
-        AVG(qsws_with_lasts.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms) /
+        NULLIF
+        (
+            SUM(qsws_with_lasts.total_query_wait_time_ms / NULLIF(qsws_with_lasts.avg_query_wait_time_ms, 0)),
+            0
+        ),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
@@ -17137,16 +17157,16 @@ BEGIN
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_query_wait_time_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_query_wait_time_ms)'
+                        THEN N'FORMAT(SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0), ''N0'')'
+                        ELSE N'SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0)'
                     END
                     + N',
                     avg_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_duration_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_duration_ms)'
+                        THEN N'FORMAT(SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0), ''N0'')'
+                        ELSE N'SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0)'
                     END
                     + N',
                     last_query_wait_time_ms = '
@@ -17201,8 +17221,13 @@ BEGIN
                 (
                     /*
                     One row per plan and wait category, with the plan''s
-                    runtime stats. Totals add up, averages average, and
-                    minimums and maximums take the lowest and highest.
+                    runtime stats. Totals add up, and averages are weighted
+                    by executions: the wait average is total wait divided by
+                    the executions behind it (total / avg, since the average
+                    wait is the total over an execution count), and the
+                    duration average is total duration divided by
+                    executions. Minimums and maximums take the lowest and
+                    highest.
                     Last values come from the plan with the latest wait
                     in the category. The windows run before GROUP BY,
                     so they see each plan''s row.
@@ -17216,7 +17241,7 @@ BEGIN
                         qsws.min_query_wait_time_ms,
                         qsws.max_query_wait_time_ms,
                         x.total_duration_ms,
-                        x.avg_duration_ms,
+                        x.count_executions,
                         x.min_duration_ms,
                         x.max_duration_ms,
                         latest_last_query_wait_time_ms =
@@ -17268,6 +17293,7 @@ BEGIN
                             qsrs.min_duration_ms,
                             qsrs.max_duration_ms,
                             qsrs.total_duration_ms,
+                            qsrs.count_executions,
                             qsrs.last_execution_time
                         FROM #query_store_runtime_stats AS qsrs
                         JOIN #query_store_plan AS qsp
