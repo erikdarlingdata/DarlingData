@@ -10676,8 +10676,8 @@ BEGIN
         @text_search_close =
             N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2' +
             CASE
-                WHEN @escape_brackets = 1
                 /* A single quote as the escape character has to be doubled inside the literal */
+                WHEN @escape_brackets = 1
                 THEN N' ESCAPE ''' +
                      REPLACE(UPPER(@escape_character COLLATE SQL_Latin1_General_CP1_CI_AS), N'''', N'''''') +
                      N''''
@@ -18212,6 +18212,29 @@ BEGIN
         SELECT
             result =
                 '#include_plan_ids is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #all_plan_ids AS api
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#all_plan_ids',
+            api.*
+        FROM #all_plan_ids AS api
+        ORDER BY
+            api.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#all_plan_ids is empty';
     END;
 
     IF EXISTS
