@@ -3124,14 +3124,15 @@ BEGIN
         /*
         DB_NAME(0) returns the current database, so a report with
         database_id 0 (parallel workers waiting on each other) was
-        labeled with the caller's database. A dropped database falls
-        back to the name the event carries.
+        labeled with the caller's database. The name the event carries
+        comes first, so a reused database_id still shows the name the
+        event was recorded with; DB_NAME is the fallback.
         */
         database_name =
             COALESCE
             (
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0)),
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N'')
+                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
             ),
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
@@ -3230,14 +3231,15 @@ BEGIN
         /*
         DB_NAME(0) returns the current database, so a report with
         database_id 0 (parallel workers waiting on each other) was
-        labeled with the caller's database. A dropped database falls
-        back to the name the event carries.
+        labeled with the caller's database. The name the event carries
+        comes first, so a reused database_id still shows the name the
+        event was recorded with; DB_NAME is the fallback.
         */
         database_name =
             COALESCE
             (
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0)),
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N'')
+                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
             ),
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
@@ -4750,8 +4752,8 @@ FROM
             database_name =
                 COALESCE
                 (
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0)),
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N'''')
+                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
+                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
                 ),
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
@@ -4806,8 +4808,8 @@ FROM
             database_name =
                 COALESCE
                 (
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0)),
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N'''')
+                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
+                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
                 ),
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
