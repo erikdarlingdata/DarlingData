@@ -3896,7 +3896,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             (
                                 REPLACE
                                 (
-                                    @ids,
+                                    CONVERT(nvarchar(max), @ids),
                                     '','',
                                     ''</x><x>''
                                 ),
@@ -3942,7 +3942,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             (
                                 REPLACE
                                 (
-                                    @ids,
+                                    CONVERT(nvarchar(max), @ids),
                                     '','',
                                     ''</x><x>''
                                 ),
