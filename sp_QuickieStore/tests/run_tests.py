@@ -34,6 +34,7 @@ Exits 1 if any assertion fails.
 """
 
 import argparse
+import calendar
 import math
 import os
 import re
@@ -1617,6 +1618,31 @@ def regression_window_tests(server, password, R, state):
     R.check("WaitWindow", "count_executions per plan match Query Store",
             all(got.get(p) == str(n) for p, n in totals.items()),
             "got=%s expected=%s" % (got, totals))
+    # executions_per_second is a fraction below one execution per second: it
+    # is count_executions over the whole seconds between the first and last
+    # execution, and it is NULL when they fall in the same second.
+    def whole_seconds(first, last):
+        def secs(v):
+            m = re.match(r"(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)", v)
+            return calendar.timegm(tuple(int(g) for g in m.groups()) + (0, 0, 0))
+        return secs(last) - secs(first)
+    eps_bad = []
+    eps_slow = 0
+    for r in main_rows:
+        gap = whole_seconds(r["first_execution_time"], r["last_execution_time"])
+        want = int(r["count_executions"]) / gap if gap > 0 else None
+        have = r.get("executions_per_second")
+        have = float(have) if have not in (None, "", "NULL") else None
+        if want is None:
+            ok = have is None or have == 0
+        else:
+            ok = have is not None and abs(have - want) < 1e-6
+            eps_slow += 1 if want < 1 else 0
+        if not ok:
+            eps_bad.append((r.get("plan_id"), r["count_executions"], gap, have))
+    R.check("WaitWindow", "executions_per_second is a fraction below one per second",
+            not eps_bad and eps_slow > 0,
+            "bad=%s slow rows=%d" % (eps_bad, eps_slow))
     by_plan = {r.get("plan_id"): r for r in main_rows}
     R.check("WaitWindow", "top_waits shows Lock for rm_q1",
             "Lock" in by_plan.get(q1, {}).get("top_waits", ""),

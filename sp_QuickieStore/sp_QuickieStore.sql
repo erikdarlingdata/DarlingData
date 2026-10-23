@@ -1614,7 +1614,7 @@ CREATE TABLE
     executions_per_second AS
         ISNULL
         (
-            count_executions /
+            count_executions * 1. /
                 NULLIF
                 (
                     DATEDIFF
@@ -1962,7 +1962,7 @@ VALUES
     (150, 'regression', 'hash', 'query_hash_from_regression_checking', 'regression.query_hash', 1, 'regression_mode', 1, 0, NULL),
     /* Execution columns */
     (200, 'executions', 'count', 'count_executions', 'qsrs.count_executions', 0, NULL, NULL, 0, 'N0'),
-    (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N0'),
+    (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N2'),
     /* Hash totals - conditionally added */
     (215, 'executions', 'count_hash', 'count_executions_by_query_hash', 'qht.total_executions', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Duration metrics (group together avg, total, last, min, max) */
@@ -2532,7 +2532,7 @@ BEGIN
                 query_hash_from_regression_checking binary(8) NULL,
                 change_in_average_for_query_hash_since_regression_time_period float NULL,
                 count_executions bigint NULL,
-                executions_per_second bigint NULL,
+                executions_per_second decimal(38,6) NULL,
                 count_executions_by_query_hash bigint NULL,
                 avg_duration_ms float NULL,
                 last_duration_ms float NULL,
