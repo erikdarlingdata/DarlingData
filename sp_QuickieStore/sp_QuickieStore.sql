@@ -10719,7 +10719,7 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
-    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character. When it is [, ] or _ the doubling already escapes that character, so it is not escaped again */
     IF @escape_brackets = 1
     BEGIN
         SELECT
@@ -10727,9 +10727,9 @@ BEGIN
                 REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search,
                 @escape_character, @escape_character + @escape_character),
-                N'[', @escape_character + N'['),
-                N']', @escape_character + N']'),
-                N'_', @escape_character + N'_');
+                N'[', CASE WHEN @escape_character = N'[' THEN N'[' ELSE @escape_character + N'[' END),
+                N']', CASE WHEN @escape_character = N']' THEN N']' ELSE @escape_character + N']' END),
+                N'_', CASE WHEN @escape_character = N'_' THEN N'_' ELSE @escape_character + N'_' END);
     END;
 
     SELECT
@@ -10870,7 +10870,7 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
-    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character. When it is [, ] or _ the doubling already escapes that character, so it is not escaped again */
     IF @escape_brackets = 1
     BEGIN
         SELECT
@@ -10878,9 +10878,9 @@ BEGIN
                 REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search_not,
                 @escape_character, @escape_character + @escape_character),
-                N'[', @escape_character + N'['),
-                N']', @escape_character + N']'),
-                N'_', @escape_character + N'_');
+                N'[', CASE WHEN @escape_character = N'[' THEN N'[' ELSE @escape_character + N'[' END),
+                N']', CASE WHEN @escape_character = N']' THEN N']' ELSE @escape_character + N']' END),
+                N'_', CASE WHEN @escape_character = N'_' THEN N'_' ELSE @escape_character + N'_' END);
     END;
 
     SELECT
