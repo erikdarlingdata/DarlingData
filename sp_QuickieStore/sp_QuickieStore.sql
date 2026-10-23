@@ -562,6 +562,21 @@ BEGIN
     SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order (work-weighted)';
 
     /*
+    Plan count by hashes guide
+    */
+    SELECT
+        plan_count_by_hashes_columns =
+           'when using @sort_order = ''plan count by hashes'', results are one row per query hash:' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'the top @top query hashes by how many plan hashes (plan shapes) they have in the time window.' UNION ALL
+    SELECT '    each row shows one representative plan: the plan with the most executions in the window for that' UNION ALL
+    SELECT '    query hash, then the most recently run one. The runtime columns, query text, and query_plan are for' UNION ALL
+    SELECT '    that plan.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'query_hash_from_hash_counting: the query hash' UNION ALL
+    SELECT 'plan_hash_count_for_query_hash: distinct plan hashes (plan shapes). The results are ranked on this.';
+
+    /*
     Limitations
     */
     SELECT
@@ -1070,7 +1085,8 @@ is done after the point where we would truncate.
 */
 
 /*
-Holds plan_id with the count of the number of query hashes they have.
+Holds one row per query hash, with one representative plan_id
+and the count of plan hashes the query hash has.
 Only used when we're sorting by how many plan hashes each
 query hash has.
 */
@@ -11322,63 +11338,88 @@ BEGIN
 
     SELECT
     /*
-    This sort order is useless if we don't show the
-    ties, so only DENSE_RANK() makes sense to use.
-    This is why this is not SELECT TOP.
+    One row per query hash: the top @top query hashes by how many
+    plan hashes they have, each with one representative plan. That
+    is the plan with the most executions in the window, then the most
+    recently run one, then the highest plan_id. Returning every plan of
+    each query hash made a hash with tens of thousands of query_ids
+    bring all of their plans along, when the count is the point.
     */
         @sql += N'
     SELECT
         @database_id,
-        ranked_plans.plan_id,
-        ranked_plans.query_hash,
-        ranked_plans.plan_hash_count_for_query_hash
+        hashes.plan_id,
+        hashes.query_hash,
+        hashes.plan_hash_count_for_query_hash
     FROM
     (
         SELECT
-            QueryHashesWithIds.plan_id,
-            QueryHashesWithCounts.query_hash,
-            QueryHashesWithCounts.plan_hash_count_for_query_hash,
+            plans.plan_id,
+            plans.query_hash,
+            plans.plan_hash_count_for_query_hash,
             ranking =
                 DENSE_RANK() OVER
                 (
                     ORDER BY
-                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC,
-                        QueryHashesWithCounts.query_hash DESC
+                        plans.plan_hash_count_for_query_hash DESC,
+                        plans.query_hash DESC
                 )
         FROM
         (
-           SELECT
-               qsq.query_hash,
-               plan_hash_count_for_query_hash =
-                   COUNT_BIG(DISTINCT qsp.query_plan_hash)
-           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-             ON qsq.query_id = qsp.query_id
-           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-             ON qsp.plan_id = qsrs.plan_id
-           WHERE 1 = 1
-           ' + @where_clause
-             + N'
-           GROUP
-               BY qsq.query_hash
-        ) AS QueryHashesWithCounts
-        JOIN
-        (
-           SELECT DISTINCT
-               qsq.query_hash,
-               qsp.plan_id
-           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
-           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-             ON qsp.plan_id = qsrs.plan_id
-            WHERE 1 = 1
-           ' + @where_clause
-             + N'
-        ) AS QueryHashesWithIds
-          ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
-    ) AS ranked_plans
-    WHERE ranked_plans.ranking <= @top
+            SELECT
+                plan_hashes.plan_id,
+                plan_hashes.query_hash,
+                plan_hash_count_for_query_hash =
+                    MAX(plan_hashes.plan_hash_number) OVER
+                    (
+                        PARTITION BY
+                            plan_hashes.query_hash
+                    ),
+                plan_rank =
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            plan_hashes.query_hash
+                        ORDER BY
+                            plan_hashes.count_executions DESC,
+                            plan_hashes.last_execution_time DESC,
+                            plan_hashes.plan_id DESC
+                    )
+            FROM
+            (
+                SELECT
+                    qsp.plan_id,
+                    qsq.query_hash,
+                    count_executions =
+                        SUM(qsrs.count_executions),
+                    last_execution_time =
+                        MAX(qsrs.last_execution_time),
+                    /* The highest number per query hash is its count of distinct plan hashes */
+                    plan_hash_number =
+                        DENSE_RANK() OVER
+                        (
+                            PARTITION BY
+                                qsq.query_hash
+                            ORDER BY
+                                qsp.query_plan_hash
+                        )
+                FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+                  ON qsq.query_id = qsp.query_id
+                JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                  ON qsp.plan_id = qsrs.plan_id
+                WHERE 1 = 1
+                ' + @where_clause
+                  + N'
+                GROUP BY
+                    qsq.query_hash,
+                    qsp.query_plan_hash,
+                    qsp.plan_id
+            ) AS plan_hashes
+        ) AS plans
+        WHERE plans.plan_rank = 1
+    ) AS hashes
+    WHERE hashes.ranking <= @top
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
