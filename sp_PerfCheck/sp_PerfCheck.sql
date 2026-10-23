@@ -2258,11 +2258,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OR dows.wait_type = N'IO_RETRY'
             OR dows.wait_type = N'RESMGR_THROTTLED'
         )
-        /* Only include waits that are significant in terms of percentage of uptime or average wait time (>1 second) */
+        /*
+        Only include waits that are significant in terms of percentage of uptime,
+        or average wait time (>1 second) backed by at least 60 seconds of total
+        wait time. Without that floor, a handful of long waits (a few
+        WAIT_AT_LOW_PRIORITY lock waits from an online index rebuild) is enough.
+        */
         AND
         (
              (dows.wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0)) > @significant_wait_threshold_pct
-          OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
+          OR (
+                  (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
+              AND dows.wait_time_ms >= 60000 /* ...and at least 60 seconds in total */
+             )
         );
 
         /* Calculate wait time as percentage of uptime */
@@ -2302,10 +2310,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN
                         CASE
                             WHEN ws.wait_time_percent_of_uptime >= @wait_high_pct
-                            OR   ws.avg_wait_ms >= 1000.0
-                            THEN 20 /* High: dominates uptime, or each wait is very long */
+                            OR   (ws.avg_wait_ms >= 1000.0 AND ws.wait_time_ms >= 60000)
+                            THEN 20 /* High: dominates uptime, or each wait is very long and the total is not trivial */
                             WHEN ws.wait_time_percent_of_uptime >= @wait_medium_pct
-                            OR   ws.avg_wait_ms >= 250.0
+                            OR   (ws.avg_wait_ms >= 250.0 AND ws.wait_time_ms >= 60000)
                             THEN 30 /* Medium */
                             ELSE 40 /* Low */
                         END
@@ -2380,7 +2388,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE
         (
              ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
-          OR (ws.wait_time_ms * 1.0 / NULLIF(ws.waiting_tasks_count, 0)) > 1000.0
+          OR (
+                  (ws.wait_time_ms * 1.0 / NULLIF(ws.waiting_tasks_count, 0)) > 1000.0
+              AND ws.wait_time_ms >= 60000
+             )
         )
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
@@ -2389,6 +2400,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Calculate pagelatch wait time for TempDB contention check */
     /* Check for CPU scheduling pressure (signal wait ratio) */
+        The long-average path needs at least 60 seconds of total wait time,
+        so a few long waits do not qualify or rate High on their own.
     /* Check for stolen memory from buffer pool */
     IF @has_view_server_state = 1
     BEGIN
