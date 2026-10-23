@@ -1752,7 +1752,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     event_time = t.StartTime,
                     event_class = t.EventClass,
                     event_subclass = t.EventSubClass,
-                    database_name = DB_NAME(t.DatabaseID),
+                    /*
+                    DB_NAME is NULL for a database dropped since the event was
+                    logged, and the NOT NULL database_name in #results then
+                    raises Msg 515 and ends the run. Fall back to the name the
+                    trace row carries, then to the id.
+                    */
+                    database_name =
+                        COALESCE
+                        (
+                            DB_NAME(t.DatabaseID),
+                            t.DatabaseName,
+                            N'database_id ' + CONVERT(nvarchar(11), t.DatabaseID),
+                            N'N/A'
+                        ),
                     database_id = t.DatabaseID,
                     file_name = t.FileName,
                     object_name = t.ObjectName,
@@ -1860,7 +1873,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE N'Slow File Auto Grow'
                     END,
                 database_name = te.database_name,
-                object_name = te.file_name,
+                object_name = ISNULL(te.file_name, N'N/A'),
                 details =
                     N'Auto grow operation took ' +
                     CONVERT(nvarchar(20), te.duration_ms) +
@@ -1905,7 +1918,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE N'File Auto Shrink'
                     END,
                 database_name = te.database_name,
-                object_name = te.file_name,
+                object_name = ISNULL(te.file_name, N'N/A'),
                 details =
                     N'Auto shrink operation occurred on ' +
                     CONVERT(nvarchar(30), te.event_time, 120) +
@@ -2384,6 +2397,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         Both ways into #wait_stats: a large share of uptime, or a long
         average wait (the priority CASE above rates those High for
         resource waits). Filtering on the share alone dropped the second.
+        The long-average path needs at least 60 seconds of total wait time,
+        so a few long waits do not qualify or rate High on their own.
         */
         WHERE
         (
@@ -2400,8 +2415,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Calculate pagelatch wait time for TempDB contention check */
     /* Check for CPU scheduling pressure (signal wait ratio) */
-        The long-average path needs at least 60 seconds of total wait time,
-        so a few long waits do not qualify or rate High on their own.
     /* Check for stolen memory from buffer pool */
     IF @has_view_server_state = 1
     BEGIN
