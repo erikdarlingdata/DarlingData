@@ -288,11 +288,13 @@ AND @session_name NOT LIKE N'system%health'
 /*
 Table-source mode reads blocked process report XML somebody already
 captured into a table, so the server's CURRENT threshold setting has
-no bearing on it. The exemption checks @target_table AND @target_column
-because table-mode routing guarantees both by the time any work
-happens: supplying either one auto-promotes @target_type to table mode
-further down, and a call with only one of the two routes to table mode
-and fails its parameter validation before any reading starts.
+no bearing on it. The exemption needs both @target_table and
+@target_column, because both are required to pass the table validation
+further down. It is only a threshold exemption: a call that supplies
+only one of the two is not exempt, so it meets this check first. When
+the threshold is set, it then reaches the promotion to table mode
+below (either parameter promotes unless the session is system_health)
+and fails that validation before any reading starts.
 */
 AND (@target_table IS NULL OR @target_column IS NULL)
 BEGIN
