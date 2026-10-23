@@ -6008,12 +6008,22 @@ SELECT
     qsp.compatibility_level,
     qsq.object_name,
     qsqt.query_sql_text_clickable,
+    /*
+    The too-large check above already tried every plan, so its warning picks
+    the branch, and each plan is converted once, not once per TRY_CAST
+    */
     query_plan =
          CASE
-             WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+             WHEN NOT EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #reproduction_warnings AS rw
+                      WHERE rw.plan_id = rq.plan_id
+                      AND   rw.warning_type = N'plan too large for XML parsing'
+                  )
              THEN TRY_CAST(qsp.query_plan AS xml)
-             WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
-             THEN
+             ELSE
                  (
                      SELECT
                          [processing-instruction(query_plan)] =
