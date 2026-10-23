@@ -600,8 +600,10 @@ def wait_floor_tests(server, password, R):
     (the #wait_stats feed) swapped for two fixed rows, both with an average
     wait over 1 second: LCK_M_IS at 4 waits / 6,900 ms total (under the floor,
     must not surface) and LCK_M_X at 40 waits / 80,000 ms (over it, High).
-    Both stay far under the share-of-uptime threshold on any instance up more
-    than a few minutes."""
+    The uptime the proc divides by is pinned to 30 days in the scratch copy, so
+    only the long-average path decides. Unpinned, a container with minutes of
+    uptime lets the 6,900 ms row qualify through the share-of-uptime path (6.9 s
+    is over 10 percent of a minute), which is that path working as intended."""
     grp = "WaitFloor[6001]"
     name = "sp_PerfCheck_zz_waitfloor"
     src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sp_PerfCheck.sql")
@@ -620,6 +622,10 @@ def wait_floor_tests(server, password, R):
     body = re.sub(r"ALTER PROCEDURE\s+dbo\.sp_PerfCheck(?![A-Za-z_])",
                   "CREATE OR ALTER PROCEDURE dbo.%s" % name, body, count=1)
     body = body.replace(feed, fake)
+    uptime = re.compile(r"@uptime_ms\s*=.*?FROM\s+sys\.dm_os_sys_info\s+AS\s+osi;", re.S)
+    R.check(grp, "setup: uptime source found in source", len(uptime.findall(body)) == 1,
+            "uptime select not found once")
+    body = uptime.sub(lambda _m: "@uptime_ms = CONVERT(bigint, 30) * 86400000;", body, count=1)
     tmp = os.path.join(tempfile.mkdtemp(prefix="pc_waitfloor_"), "scratch.sql")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("SET QUOTED_IDENTIFIER ON;\nGO\n" + body + "\nGO\n")
