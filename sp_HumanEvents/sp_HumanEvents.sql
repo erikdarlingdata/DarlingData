@@ -1894,14 +1894,50 @@ ELSE
 BEGIN
     IF @debug = 1
     BEGIN
-        /* RAISERROR cuts messages at 2,047 characters, which lost the
-           target and WITH clause of longer sessions, so print 4,000
-           character tiles as the view and table debug output does. */
-        PRINT SUBSTRING(@session_sql,     1, 4000);
-        PRINT SUBSTRING(@session_sql,  4001, 4000);
-        PRINT SUBSTRING(@session_sql,  8001, 4000);
-        PRINT SUBSTRING(@session_sql, 12001, 4000);
-    END;
+        /*
+        RAISERROR cuts messages at 2,047 characters, which lost the
+        target and WITH clause of longer sessions, and PRINT cuts at
+        4,000. Print the DDL in tiles of at most 4,000 characters, each
+        ending at the last line break before the boundary so a tile
+        never splits a token, however long the session gets.
+        */
+        DECLARE
+            @print_pos integer = 1,
+            @print_len integer = LEN(@session_sql),
+            @print_take integer = 0,
+            @print_break integer = 0;
+
+        WHILE @print_pos <= @print_len
+        BEGIN
+            SELECT
+                @print_take = 4000,
+                @print_break = 0;
+
+            IF @print_pos + 3999 < @print_len
+            BEGIN
+                /* Position of the last line break inside this tile, counted from the end */
+                SELECT
+                    @print_break =
+                        CHARINDEX
+                        (
+                            NCHAR(10),
+                            REVERSE(SUBSTRING(@session_sql, @print_pos, 4000))
+                        );
+            END;
+
+            /* No line break in the tile means a hard split at 4,000 */
+            IF @print_break > 0
+            BEGIN
+                SELECT
+                    @print_take = 4000 - @print_break;
+            END;
+
+            PRINT SUBSTRING(@session_sql, @print_pos, @print_take);
+
+            /* A tile that ended at a line break skips the break itself */
+            SELECT
+                @print_pos += @print_take + CASE WHEN @print_break > 0 THEN 1 ELSE 0 END;
+        END;
     END;
     EXECUTE (@session_sql);
 
