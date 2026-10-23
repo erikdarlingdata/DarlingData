@@ -5204,14 +5204,14 @@ SELECT DISTINCT
     qsp.plan_id,
     constant_value =
         CASE
-            WHEN c.const.value(N'@ConstValue', N'nvarchar(max)') LIKE N'(%)'
+            WHEN cv.const_value LIKE N'(%)'
             THEN SUBSTRING
                  (
-                     c.const.value(N'@ConstValue', N'nvarchar(max)'),
+                     cv.const_value,
                      2,
-                     LEN(c.const.value(N'@ConstValue', N'nvarchar(max)')) - 2
+                     LEN(cv.const_value) - 2
                  )
-            ELSE LTRIM(RTRIM(c.const.value(N'@ConstValue', N'nvarchar(max)')))
+            ELSE LTRIM(RTRIM(cv.const_value))
         END
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
@@ -5225,8 +5225,19 @@ CROSS APPLY
             TRY_CAST(qsp.query_plan AS xml)
 ) AS x
 CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c(const)
-WHERE x.query_plan_xml IS NOT NULL
-AND   qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
+CROSS APPLY
+(
+    /* Read the attribute once; each .value() call is its own XML reader */
+    SELECT
+        const_value =
+            c.const.value(N'@ConstValue', N'nvarchar(max)')
+) AS cv
+/*
+No IS NOT NULL test on the xml here: .nodes() returns no rows for NULL.
+With the test, the plan converted every plan before the text filter
+below picked the OPTION(RECOMPILE) ones.
+*/
+WHERE qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
 OPTION(RECOMPILE);
 
 /*
