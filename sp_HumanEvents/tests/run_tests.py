@@ -591,40 +591,27 @@ def group_orphan_cleanup(server, password, R, caps):
     dead = "HumanEvents_waits_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_9999"
     legacy = "HumanEvents_waits_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     batch = (
-        "SET NOCOUNT ON;
-"
-        "EXECUTE (N'" + fake % (dead, dead) + "');
-"
-        "EXECUTE (N'" + fake % (legacy, legacy) + "');
-"
-        "BEGIN TRY
-"
+        "SET NOCOUNT ON;\n"
+        "EXECUTE (N'" + fake % (dead, dead) + "');\n"
+        "EXECUTE (N'" + fake % (legacy, legacy) + "');\n"
+        "BEGIN TRY\n"
         "    EXECUTE dbo.sp_HumanEvents @event_type = N'waits', @seconds_sample = 1, "
-        "@wait_duration_ms = 100000;
-"
-        "    SELECT line = 'RESULT|proc_ok|1';
-"
-        "END TRY
-"
-        "BEGIN CATCH
-"
+        "@wait_duration_ms = 100000;\n"
+        "    SELECT line = 'RESULT|proc_ok|1';\n"
+        "END TRY\n"
+        "BEGIN CATCH\n"
         "    SELECT line = 'RESULT|proc_error|' + "
-        "LEFT(REPLACE(REPLACE(ERROR_MESSAGE(), CHAR(13), N' '), CHAR(10), N' '), 240);
-"
-        "END CATCH;
-"
+        "LEFT(REPLACE(REPLACE(ERROR_MESSAGE(), CHAR(13), N' '), CHAR(10), N' '), 240);\n"
+        "END CATCH;\n"
         "SELECT line = 'RESULT|gone|' + CONVERT(varchar(1), "
         "CASE WHEN EXISTS (SELECT 1/0 FROM sys.server_event_sessions AS s WHERE s.name = N'" + dead + "') "
-        "THEN 0 ELSE 1 END);
-"
+        "THEN 0 ELSE 1 END);\n"
         "SELECT line = 'RESULT|exists|' + CONVERT(varchar(1), "
         "CASE WHEN EXISTS (SELECT 1/0 FROM sys.server_event_sessions AS s WHERE s.name = N'" + legacy + "') "
-        "THEN 1 ELSE 0 END);
-"
+        "THEN 1 ELSE 0 END);\n"
     )
     out, err = _sqlcmd(server, password, batch, subprocess_timeout=60)
-    combined = out + "
-" + err
+    combined = out + "\n" + err
     d = parse_results(out)
     R.check("OrphanCleanup", "run with fake one-shot sessions: no severe SQL error",
             not find_sql_errors(combined), str(find_sql_errors(combined)))
