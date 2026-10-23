@@ -4817,6 +4817,11 @@ CROSS APPLY
 ) AS qpb
 OPTION(RECOMPILE);
 
+/*
+The positions above come from a binary collation, so the cut has to use the
+same one: under an _SC or UTF8 collation a supplementary character would
+otherwise shift the cut.
+*/
 INSERT
     #parameter_lists
 WITH
@@ -4835,7 +4840,7 @@ SELECT
                  (
                      SUBSTRING
                      (
-                         qsp.query_plan,
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
                          plp.last_start,
                          plp.last_end + LEN(N'</ParameterList>') - plp.last_start
                      ) AS xml
@@ -4848,7 +4853,7 @@ SELECT
                  (
                      SUBSTRING
                      (
-                         qsp.query_plan,
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
                          plp.first_start,
                          plp.first_end + LEN(N'</ParameterList>') - plp.first_start
                      ) AS xml
