@@ -1297,6 +1297,7 @@ CREATE TABLE
     query_text_id bigint NOT NULL,
     INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
+    /* Upper case under a binary collation: the temp table checks match upper-case patterns, and the column collation made them take seconds */
     query_sql_text_normalized AS
         REPLACE
         (
@@ -1310,7 +1311,7 @@ CREATE TABLE
                         (
                             REPLACE
                             (
-                                query_sql_text,
+                                UPPER(query_sql_text) COLLATE Latin1_General_100_BIN2,
                                 NCHAR(13),
                                 N' '
                             ),
@@ -4711,29 +4712,36 @@ SELECT
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
+    /* Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation */
+    SELECT
+        query_plan =
+            qsp.query_plan COLLATE Latin1_General_100_BIN2
+) AS qpb
+CROSS APPLY
+(
     SELECT
         list_start =
-            DATALENGTH(qsp.query_plan) / 2 -
-            CHARINDEX(REVERSE(N'<ParameterList>'), REVERSE(qsp.query_plan)) -
+            DATALENGTH(qpb.query_plan) / 2 -
+            CHARINDEX(REVERSE(N'<ParameterList>'), REVERSE(qpb.query_plan)) -
             LEN(N'<ParameterList>') + 2
-    WHERE CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
+    WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
 ) AS pl
 CROSS APPLY
 (
     SELECT
         parameter_list_xml =
             CASE
-                WHEN CHARINDEX(N'</ParameterList>', qsp.query_plan, pl.list_start) > 0
+                WHEN CHARINDEX(N'</ParameterList>', qpb.query_plan, pl.list_start) > 0
                 THEN TRY_CAST
                      (
                          SUBSTRING
                          (
-                             qsp.query_plan,
+                             qpb.query_plan,
                              pl.list_start,
                              CHARINDEX
                              (
                                  N'</ParameterList>',
-                                 qsp.query_plan,
+                                 qpb.query_plan,
                                  pl.list_start
                              )
                              + LEN(N'</ParameterList>')
@@ -4767,30 +4775,37 @@ SELECT
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
+    /* Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation */
+    SELECT
+        query_plan =
+            qsp.query_plan COLLATE Latin1_General_100_BIN2
+) AS qpb
+CROSS APPLY
+(
     SELECT
         parameter_list_xml =
             CASE
-                WHEN CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
+                WHEN CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
                 THEN TRY_CAST
                      (
                          SUBSTRING
                          (
-                             qsp.query_plan,
-                             CHARINDEX(N'<ParameterList>', qsp.query_plan),
+                             qpb.query_plan,
+                             CHARINDEX(N'<ParameterList>', qpb.query_plan),
                              CHARINDEX
                              (
                                  N'</ParameterList>',
-                                 qsp.query_plan,
-                                 CHARINDEX(N'<ParameterList>', qsp.query_plan)
+                                 qpb.query_plan,
+                                 CHARINDEX(N'<ParameterList>', qpb.query_plan)
                              )
                              + LEN(N'</ParameterList>')
-                             - CHARINDEX(N'<ParameterList>', qsp.query_plan)
+                             - CHARINDEX(N'<ParameterList>', qpb.query_plan)
                          ) AS xml
                      )
             END
 ) AS x
 CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
-WHERE CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
+WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
 AND   x.parameter_list_xml IS NOT NULL
 AND   NOT EXISTS
       (
