@@ -3457,27 +3457,41 @@ BEGIN
 
     /*
     Capture the actual date range and report count from what is shown.
-    Each blocked row in #blocks is one blocked process report. The old
+    #blocks has one 'blocked' row per blocked process report and per
+    blocking process, so a report with two simultaneous blockers has two
+    rows. Counting the rows overstated the header (2 reports printed as
+    3 total events) and could print "limited to most recent 2" next to
+    a count of 3. Count the distinct reports instead: a report is one
+    blocked process in one monitor pass at one event time. The old
     count, COUNT_BIG(DISTINCT monitor_loop) over #blocked, counted
     monitor passes (one pass can raise several reports) and was taken
     before the @database_name and @object_name filters, so the header
     counted reports the output did not show. The "limited to most
-    recent" note compares @max_blocking_events with the reports read,
+    recent" note compares @max_blocking_events with the events read,
     before any filter, because that is what the limit applies to.
+    #blocking_xml holds one row per event read, which is what the TOP
+    limits.
     */
     SELECT
-        @actual_start_date = MIN(b.event_time),
-        @actual_end_date = MAX(b.event_time),
+        @actual_start_date = MIN(x.event_time),
+        @actual_end_date = MAX(x.event_time),
         @actual_event_count = COUNT_BIG(*)
-    FROM #blocks AS b
-    WHERE b.activity = 'blocked'
-    AND   b.event_time IS NOT NULL
-    AND  (b.contentious_object = @object_name
-          OR @object_name IS NULL);
+    FROM
+    (
+        SELECT DISTINCT
+            b.event_time,
+            b.monitor_loop,
+            b.blocked_desc
+        FROM #blocks AS b
+        WHERE b.activity = 'blocked'
+        AND   b.event_time IS NOT NULL
+        AND  (b.contentious_object = @object_name
+              OR @object_name IS NULL)
+    ) AS x;
 
     SELECT
         @reports_read = COUNT_BIG(*)
-    FROM #blocked AS b;
+    FROM #blocking_xml AS bx;
 
     /*
     Use original dates if no data found. The originals are NULL when
