@@ -14427,13 +14427,15 @@ SELECT
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
     /*
-    Weighted by executions. avg_query_wait_time_ms is the total for the interval
-    divided by the number of executions behind it (on SQL Server 2025 that
-    is the executions that had this wait, not all executions in the
-    interval), so total / avg gives back that number, and
-    SUM(total) / SUM(executions) is the average wait per execution across
-    the intervals. AVG() of the interval averages gave a quiet interval the
-    same weight as a busy one.
+    Weighted like the runtime stats averages. Query Store computes
+    avg_query_wait_time_ms as the total of the interval divided by some number
+    of executions, so total / avg recovers the count Query Store itself
+    averaged over in that interval. That is not always all the
+    executions in the interval: it can be 1, or only the
+    executions that had this wait.
+    SUM(total) / SUM(total / avg) combines the averages Query Store computed.
+    AVG() of the interval averages gave a quiet interval the same weight
+    as a busy one.
     */
     avg_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms) /

@@ -4384,12 +4384,15 @@ SELECT
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
     /*
-    Weighted by executions like the runtime stats averages. Query Store
-    computes avg_query_wait_time_ms as total / executions for the interval,
-    so total / avg gives back the executions of each interval. An interval
-    without this wait has no row here, so it adds nothing to the divisor:
-    the average is per execution in the intervals that had the wait, not
-    per execution of the plan.
+    Weighted like the runtime stats averages. Query Store computes
+    avg_query_wait_time_ms as the total of the interval divided by some number
+    of executions, so total / avg recovers the count Query Store itself
+    averaged over in that interval. That is not always all the
+    executions in the interval: it can be 1, or only the
+    executions that had this wait.
+    SUM(total) / SUM(total / avg) combines the averages Query Store computed.
+    An interval without this wait has no row here, so it adds nothing to the
+    divisor.
     */
     avg_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms) /
