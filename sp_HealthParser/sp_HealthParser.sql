@@ -6353,21 +6353,26 @@ AND   ca.utc_timestamp < @end_date';
                 deqs.total_elapsed_time / 1000.,
             avg_elapsed_time =
                 CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+            /* * 1.0 forces decimal division; bigint / integer truncates */
             executions_per_second =
                 ISNULL
                 (
-                    deqs.execution_count /
-                        NULLIF
-                        (
-                            DATEDIFF
+                    CONVERT
+                    (
+                        decimal(38,2),
+                        deqs.execution_count * 1.0 /
+                            NULLIF
                             (
-                                SECOND,
-                                deqs.creation_time,
-                                NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
-                            ),
-                            0
-                        ),
-                        0
+                                DATEDIFF
+                                (
+                                    SECOND,
+                                    deqs.creation_time,
+                                    NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
+                                ),
+                                0
+                            )
+                    ),
+                    0
                 ),
             total_physical_reads_mb =
                 deqs.total_physical_reads * 8. / 1024.,
