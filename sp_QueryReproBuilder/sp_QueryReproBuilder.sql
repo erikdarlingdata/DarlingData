@@ -266,6 +266,8 @@ DECLARE
     @azure bit = 0,
     @sql_2017 bit = 0,
     @sql_2022_views bit = 0,
+    @procedure_variants_single nvarchar(max) = N'',
+    @procedure_variants_wildcard nvarchar(max) = N'',
     @new bit = 0,
     @current_table nvarchar(100),
     @include_plans_seeded bit = 0,
@@ -844,6 +846,39 @@ BEGIN
         object_id bigint NOT NULL,
         INDEX object_id CLUSTERED (object_id)
     );
+
+    /*
+    Parameter Sensitive Plan variants are queries of their own with
+    object_id 0, so the procedure filters also take the variants
+    of the procedure's queries, found through their parent query.
+    sys.query_store_query_variant exists on SQL Server 2022+ only.
+    */
+    IF @sql_2022_views = 1
+    BEGIN
+        SELECT
+            @procedure_variants_single = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE qsq_parent.object_id = OBJECT_ID(@procedure_name_quoted)',
+            @procedure_variants_wildcard = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #procedure_object_ids AS poi
+              WHERE poi.object_id = qsq_parent.object_id
+          )';
+    END;
 
     /*Check if procedure exists in Query Store - wildcard procedure name*/
     IF CHARINDEX(N'%', @procedure_name) > 0
@@ -3008,7 +3043,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -3033,7 +3068,7 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
@@ -3138,7 +3173,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -3163,7 +3198,7 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
@@ -3627,7 +3662,7 @@ BEGIN
                         SELECT
                             qsq.query_id
                         FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
                     )
           )';
 END;
@@ -3658,7 +3693,7 @@ BEGIN
                                 1/0
                             FROM #procedure_object_ids AS poi
                             WHERE poi.object_id = qsq.object_id
-                        )
+                        )' + @procedure_variants_wildcard + N'
                     )
           )';
 END;
@@ -3912,7 +3947,7 @@ AND   qsp.query_id IN
           SELECT
               qsq.query_id
           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
       )';
 END;
 
@@ -3937,7 +3972,7 @@ AND   qsp.query_id IN
                   1/0
               FROM #procedure_object_ids AS poi
               WHERE poi.object_id = qsq.object_id
-          )
+          )' + @procedure_variants_wildcard + N'
       )';
 END;
 

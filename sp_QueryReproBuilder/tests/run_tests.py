@@ -1069,6 +1069,196 @@ def run_procname_cases(server, password, only=None, verbose=False):
     return results, None
 
 
+# ------------------------------------------- parameter sensitive plan variants
+
+# On SQL Server 2022+, a procedure statement with Parameter Sensitive Plan
+# optimization has a parent query that carries the procedure's object_id and a
+# dispatcher plan with no runtime stats. Each variant is a query of its own,
+# with object_id 0, and the runtime stats are on the variant plans. A
+# @procedure_name filter that matches by object_id alone finds only the
+# dispatcher and reports "#repro_queries is empty". The skewed table gives
+# half the rows to one value, so the procedure gets two variants.
+PSP_DB = "qrb_psp_db"
+
+PSP_SETUP = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_psp_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_psp_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_psp_db;
+END;
+CREATE DATABASE qrb_psp_db;
+GO
+ALTER DATABASE qrb_psp_db SET COMPATIBILITY_LEVEL = 160;
+ALTER DATABASE qrb_psp_db SET QUERY_STORE = ON;
+ALTER DATABASE qrb_psp_db SET QUERY_STORE
+    (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL, INTERVAL_LENGTH_MINUTES = 1);
+GO
+DECLARE
+    @qs_state_tries integer = 0;
+
+WHILE @qs_state_tries < 30
+BEGIN
+    IF EXISTS (SELECT 1/0 FROM qrb_psp_db.sys.database_query_store_options AS dqso WHERE dqso.actual_state_desc = N'READ_WRITE')
+    BEGIN
+        BREAK;
+    END;
+
+    WAITFOR DELAY '00:00:01';
+    SET @qs_state_tries += 1;
+END;
+GO
+USE qrb_psp_db;
+GO
+CREATE TABLE dbo.qrb_psp_rows (id integer NOT NULL PRIMARY KEY CLUSTERED, val integer NOT NULL, pad char(200) NOT NULL);
+INSERT dbo.qrb_psp_rows WITH (TABLOCK) (id, val, pad)
+SELECT x.n, CASE WHEN x.n <= 1000000 THEN 1 ELSE x.n END, 'x'
+FROM
+(
+    SELECT TOP (2000000)
+        n = CONVERT(integer, ROW_NUMBER() OVER (ORDER BY 1/0))
+    FROM sys.all_columns AS ac1
+    CROSS JOIN sys.all_columns AS ac2
+) AS x;
+CREATE INDEX ix_val ON dbo.qrb_psp_rows (val);
+UPDATE STATISTICS dbo.qrb_psp_rows WITH FULLSCAN;
+GO
+CREATE PROCEDURE dbo.qrb_psp_proc
+(
+    @v integer
+)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SELECT m = MAX(r.pad) FROM dbo.qrb_psp_rows AS r WHERE r.val = @v;
+END;
+GO
+/*
+Retry like the procedure-name fixture: a cold Query Store can miss the
+first compiles, and the variants only show after the plan cache is cleared
+and both parameter shapes have run.
+*/
+DECLARE
+    @psp_tries integer = 0,
+    @psp_variants bigint = 0;
+
+WHILE @psp_tries < 5 AND @psp_variants < 2
+BEGIN
+    ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
+    EXECUTE dbo.qrb_psp_proc @v = 1;
+    EXECUTE dbo.qrb_psp_proc @v = 1500000;
+    EXECUTE dbo.qrb_psp_proc @v = 1;
+    EXECUTE dbo.qrb_psp_proc @v = 1500000;
+    EXECUTE sys.sp_query_store_flush_db;
+
+    SELECT @psp_variants = COUNT_BIG(DISTINCT qsqv.query_variant_query_id)
+    FROM qrb_psp_db.sys.query_store_query_variant AS qsqv;
+
+    SET @psp_tries += 1;
+END;
+
+SELECT marker = 'PSP_VARIANTS:' + CONVERT(varchar(20), @psp_variants);
+GO
+"""
+
+PSP_TEARDOWN = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_psp_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_psp_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_psp_db;
+END;
+"""
+
+PSP_CASES = [
+    {
+        "name": "psp:procedure_name_finds_variants",
+        "args": "@database_name = 'qrb_psp_db',\n        @procedure_name = 'qrb_psp_proc'",
+        "note": "the variants have object_id 0, so they are found through their parent",
+    },
+    {
+        "name": "psp:procedure_name_wildcard_finds_variants",
+        "args": "@database_name = 'qrb_psp_db',\n        @procedure_name = 'qrb_psp_%'",
+        "note": "the wildcard filter finds the variants through their parent too",
+    },
+]
+
+
+def run_psp_cases(server, password, only=None, verbose=False):
+    """Run the Parameter Sensitive Plan variant cases against their own
+    fixture. SQL Server 2022 and later only; older versions have no variants.
+
+    Returns (results, setup_error) in the same shape as run_procname_cases.
+    """
+    cases = PSP_CASES
+    if only:
+        cases = [c for c in cases if only in c["name"]]
+    if not cases:
+        return [], None
+
+    ver = _run_inline(server, password,
+                      "SET NOCOUNT ON; SELECT marker = 'MAJOR:' + "
+                      "CONVERT(varchar(10), SERVERPROPERTY('ProductMajorVersion'));",
+                      "psp_version")
+    m = re.search(r"MAJOR:(\d+)", ver)
+    if not m or int(m.group(1)) < 16:
+        print("SKIP  psp:* (needs SQL Server 2022 or later)")
+        return [], None
+
+    def bail(message):
+        _run_inline(server, password, PSP_TEARDOWN, "psp_teardown")
+        return [], message
+
+    setup_out = _run_inline(server, password, PSP_SETUP, "psp_setup")
+    setup_err = find_sql_errors(setup_out)
+    if setup_err:
+        return bail("could not build the PSP fixture: " + "; ".join(setup_err))
+    m = re.search(r"PSP_VARIANTS:(\d+)", setup_out)
+    if not m or int(m.group(1)) < 2:
+        return bail("the PSP fixture did not produce two variants "
+                    "(marker=%s); the variant cases cannot run" %
+                    (m.group(1) if m else "absent"))
+
+    results = []
+    try:
+        for case in cases:
+            sql = PROCNAME_TEMPLATE.format(db="master", args=case["args"])
+            out = _run_inline(server, password, sql, "psp_case")
+
+            checks = []
+
+            def ck(ok, label, detail=""):
+                checks.append((bool(ok), label, detail))
+
+            ck(not find_sql_errors(out), "no severe SQL error",
+               str(find_sql_errors(out)))
+            # One repro per variant plan: the dispatcher plan has no runtime
+            # stats, so the two variants are the two results.
+            n_repros = len(re.findall(r"results\s+qrb_psp_db\s+<\?_", out))
+            ck(n_repros == 2, "a repro for each of the two variants",
+               "repro count=%d; output tail=%r" % (n_repros, out[-300:]))
+            ck("qrb_psp_rows" in out, "repro is the fixture procedure's query",
+               "output tail=%r" % out[-300:])
+
+            case_failed = any(not ok for (ok, _l, _d) in checks)
+            for (ok, label, detail) in checks:
+                results.append((case["name"], ok, label, detail))
+            if case_failed and not verbose:
+                print("FAIL  %s" % case["name"])
+                for (ok, label, detail) in checks:
+                    if not ok:
+                        print("        - %s :: %s" % (label, detail))
+            elif not case_failed:
+                print("PASS  %s" % case["name"])
+                if verbose:
+                    for (ok, label, _d) in checks:
+                        print("        - %s" % label)
+    finally:
+        _run_inline(server, password, PSP_TEARDOWN, "psp_teardown")
+
+    return results, None
+
+
 # --------------------------------------------------- wait stats time window
 
 # Wait stats have to cover the whole search window, like every other metric.
@@ -1481,6 +1671,13 @@ def main():
         print("ERROR: " + procname_setup_error)
         sys.exit(1)
     results.extend(procname_results)
+
+    psp_results, psp_setup_error = run_psp_cases(
+        args.server, args.password, only=args.only, verbose=args.verbose)
+    if psp_setup_error:
+        print("ERROR: " + psp_setup_error)
+        sys.exit(1)
+    results.extend(psp_results)
 
     passed = sum(1 for (_n, ok, _l, _d) in results if ok)
     failed = sum(1 for (_n, ok, _l, _d) in results if not ok)
