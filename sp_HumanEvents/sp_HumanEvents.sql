@@ -598,8 +598,13 @@ A running one-shot session can belong to someone else's run that is
 still sampling. @seconds_sample is a tinyint, so a run lasts up to
 255 seconds plus the time to shred the results. The old one-minute
 cutoff dropped those live sessions, and the other run came back empty
-with Msg 15151. Stopped sessions are always orphans; running ones are
-only treated as orphans after 10 minutes.
+with Msg 15151. Stopped sessions are always orphans. A running one-shot
+session ends with the spid of the run that created it
+(HumanEvents_<event_type>_<guid>_<spid>): it is dropped when that spid is
+this run, or is not currently executing sp_HumanEvents. A run on a long
+shred and output phase therefore keeps its session no matter how long it
+takes. A running session from an older version has no spid in its name,
+so it is still treated as an orphan after 10 minutes.
 */
 IF @azure = 0
 BEGIN
@@ -615,9 +620,30 @@ BEGIN
     FROM sys.server_event_sessions AS ses
     LEFT JOIN sys.dm_xe_sessions AS dxe
       ON dxe.name = ses.name
+    CROSS APPLY
+    (
+        SELECT
+            owner_spid =
+                TRY_CONVERT
+                (
+                    integer,
+                    RIGHT(ses.name, CHARINDEX(N'_', REVERSE(ses.name)) - 1)
+                )
+    ) AS os
     WHERE ses.name LIKE N'HumanEvents[_]%'
-    AND  (dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME())
-    OR    dxe.create_time IS NULL);
+    AND  (dxe.create_time IS NULL
+    OR    (os.owner_spid IS NULL AND dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME()))
+    OR    os.owner_spid = @@SPID
+    OR    (os.owner_spid IS NOT NULL
+           AND NOT EXISTS
+           (
+               SELECT
+                   1/0
+               FROM sys.dm_exec_requests AS r
+               CROSS APPLY sys.dm_exec_input_buffer(r.session_id, r.request_id) AS ib
+               WHERE r.session_id = os.owner_spid
+               AND   ib.event_info LIKE N'%sp[_]HumanEvents%'
+           )));
 END;
 
 IF @azure = 1
@@ -634,9 +660,30 @@ BEGIN
     FROM sys.database_event_sessions AS ses
     LEFT JOIN sys.dm_xe_database_sessions AS dxe
       ON dxe.name = ses.name
+    CROSS APPLY
+    (
+        SELECT
+            owner_spid =
+                TRY_CONVERT
+                (
+                    integer,
+                    RIGHT(ses.name, CHARINDEX(N'_', REVERSE(ses.name)) - 1)
+                )
+    ) AS os
     WHERE ses.name LIKE N'HumanEvents[_]%'
-    AND  (dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME())
-    OR    dxe.create_time IS NULL);
+    AND  (dxe.create_time IS NULL
+    OR    (os.owner_spid IS NULL AND dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME()))
+    OR    os.owner_spid = @@SPID
+    OR    (os.owner_spid IS NOT NULL
+           AND NOT EXISTS
+           (
+               SELECT
+                   1/0
+               FROM sys.dm_exec_requests AS r
+               CROSS APPLY sys.dm_exec_input_buffer(r.session_id, r.request_id) AS ib
+               WHERE r.session_id = os.owner_spid
+               AND   ib.event_info LIKE N'%sp[_]HumanEvents%'
+           )));
 END;
 
 IF EXISTS
@@ -682,7 +729,11 @@ END;
 
 IF @debug = 1 BEGIN RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT; END;
 
-/* Give sessions super unique names in case more than one person uses it at a time */
+/*
+Give sessions super unique names in case more than one person uses it at a time.
+The name ends with the spid of the run that created it, so the startup cleanup
+can tell a live run's session from an orphan.
+*/
 IF @keep_alive = 0
 BEGIN
     SET @session_name +=
@@ -695,7 +746,9 @@ BEGIN
                 (
                     nvarchar(36),
                     NEWID()
-                ),
+                ) +
+                N'_' +
+                CONVERT(nvarchar(11), @@SPID),
                 N'-',
                 N''
             );
@@ -1848,6 +1901,7 @@ BEGIN
         PRINT SUBSTRING(@session_sql,  4001, 4000);
         PRINT SUBSTRING(@session_sql,  8001, 4000);
         PRINT SUBSTRING(@session_sql, 12001, 4000);
+    END;
     END;
     EXECUTE (@session_sql);
 
