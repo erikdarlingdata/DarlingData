@@ -4364,7 +4364,10 @@ SELECT
     /*
     Weighted by executions like the runtime stats averages. Query Store
     computes avg_query_wait_time_ms as total / executions for the interval,
-    so total / avg gives back the executions of each interval.
+    so total / avg gives back the executions of each interval. An interval
+    without this wait has no row here, so it adds nothing to the divisor:
+    the average is per execution in the intervals that had the wait, not
+    per execution of the plan.
     */
     avg_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms) /
@@ -4690,7 +4693,7 @@ OPTION(RECOMPILE);' + @nc10;
                         N''
                     );
 
-            RAISERROR('%s', 10, 1, @psp_message) WITH NOWAIT;
+            RAISERROR(N'%s', 10, 1, @psp_message) WITH NOWAIT;
         END;
     END;
 
