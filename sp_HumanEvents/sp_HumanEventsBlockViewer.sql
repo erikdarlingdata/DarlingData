@@ -3216,7 +3216,7 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process[@spid = sql:column("b.spid") and @ecid = sql:column("b.ecid")]/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         /*
         Every #blocks row holds the whole report, so each branch reads
         only the frames of the process the row describes. Without this,
