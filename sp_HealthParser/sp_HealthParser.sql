@@ -6300,7 +6300,11 @@ AND   ca.utc_timestamp < @end_date';
             stmtstart,
             stmtend
         )
-        SELECT
+        /*
+        #deadlocks_parsed has one row per process per deadlock, so the
+        same frame repeats. DISTINCT matches the blocking branch.
+        */
+        SELECT DISTINCT
             finding =
                 'available plans for deadlocks',
             dp.database_name,
