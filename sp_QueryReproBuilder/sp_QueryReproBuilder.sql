@@ -1157,12 +1157,12 @@ CREATE TABLE
     max_rowcount bigint NOT NULL,
     total_rowcount AS
         (avg_rowcount * count_executions),
-    avg_num_physical_io_reads_mb float NULL,
-    last_num_physical_io_reads_mb float NULL,
-    min_num_physical_io_reads_mb float NULL,
-    max_num_physical_io_reads_mb float NULL,
-    total_num_physical_io_reads_mb AS
-        (avg_num_physical_io_reads_mb * count_executions),
+    avg_num_physical_io_reads float NULL,
+    last_num_physical_io_reads float NULL,
+    min_num_physical_io_reads float NULL,
+    max_num_physical_io_reads float NULL,
+    total_num_physical_io_reads AS
+        (avg_num_physical_io_reads * count_executions),
     avg_log_bytes_used_mb float NULL,
     last_log_bytes_used_mb float NULL,
     min_log_bytes_used_mb float NULL,
@@ -3250,10 +3250,10 @@ WITH
     last_rowcount,
     min_rowcount,
     max_rowcount,
-    avg_num_physical_io_reads_mb,
-    last_num_physical_io_reads_mb,
-    min_num_physical_io_reads_mb,
-    max_num_physical_io_reads_mb,
+    avg_num_physical_io_reads,
+    last_num_physical_io_reads,
+    min_num_physical_io_reads,
+    max_num_physical_io_reads,
     avg_log_bytes_used_mb,
     last_log_bytes_used_mb,
     min_log_bytes_used_mb,
@@ -3327,10 +3327,11 @@ SELECT
 IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
-    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
-    MAX((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.),
-    MIN((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.),
-    MAX((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.),
+    /* num_physical_io_reads counts read operations, not pages, so it stays a count */
+    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0),
+    MAX(qsrs_with_lasts.partitioned_last_num_physical_io_reads),
+    MIN(qsrs_with_lasts.min_num_physical_io_reads),
+    MAX(qsrs_with_lasts.max_num_physical_io_reads),
     SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000000.,
     MAX(qsrs_with_lasts.partitioned_last_log_bytes_used / 1000000.),
     MIN(qsrs_with_lasts.min_log_bytes_used / 1000000.),
@@ -6101,11 +6102,11 @@ SELECT
     qsrs.max_rowcount,
     qsrs.total_rowcount,
     qsrs.last_rowcount,
-    qsrs.avg_num_physical_io_reads_mb,
-    qsrs.min_num_physical_io_reads_mb,
-    qsrs.max_num_physical_io_reads_mb,
-    qsrs.total_num_physical_io_reads_mb,
-    qsrs.last_num_physical_io_reads_mb
+    qsrs.avg_num_physical_io_reads,
+    qsrs.min_num_physical_io_reads,
+    qsrs.max_num_physical_io_reads,
+    qsrs.total_num_physical_io_reads,
+    qsrs.last_num_physical_io_reads
 FROM
 (
    SELECT DISTINCT
