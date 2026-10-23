@@ -627,7 +627,7 @@ BEGIN
                 TRY_CONVERT
                 (
                     integer,
-                    RIGHT(ses.name, CHARINDEX(N'_', REVERSE(ses.name)) - 1)
+                    RIGHT(ses.name, NULLIF(CHARINDEX(N'_', REVERSE(ses.name)), 0) - 1)
                 )
     ) AS os
     WHERE ses.name LIKE N'HumanEvents[_]%'
@@ -667,7 +667,7 @@ BEGIN
                 TRY_CONVERT
                 (
                     integer,
-                    RIGHT(ses.name, CHARINDEX(N'_', REVERSE(ses.name)) - 1)
+                    RIGHT(ses.name, NULLIF(CHARINDEX(N'_', REVERSE(ses.name)), 0) - 1)
                 )
     ) AS os
     WHERE ses.name LIKE N'HumanEvents[_]%'
