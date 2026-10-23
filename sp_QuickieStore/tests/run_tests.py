@@ -41,6 +41,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 TEST_DB = "quickiestore_test"
 
@@ -562,7 +563,7 @@ ALTER DATABASE {db} SET QUERY_STORE = ON
 
 # Both databases run the same statements in the same order, so their
 # query_id, query_text_id and plan_id values collide.
-MD_WORKLOAD_SQL = """
+MD_TABLE_SQL = """
 SET NOCOUNT ON;
 DECLARE @tries integer = 0;
 WHILE @tries < 30
@@ -574,12 +575,72 @@ BEGIN
 END;
 CREATE TABLE dbo.t (id integer NOT NULL);
 INSERT dbo.t (id) VALUES (1), (2), (3);
-SELECT c = COUNT_BIG(*) FROM dbo.t AS t WHERE t.id > 0 /*md_q1*/;
-SELECT c = COUNT_BIG(*) FROM dbo.t AS t WHERE t.id > 1 /*md_q2*/;
-SELECT c = COUNT_BIG(*) FROM dbo.t AS t WHERE t.id > 2 /*md_q3*/;
-SELECT c = COUNT_BIG(*) FROM dbo.t AS t WHERE t.id = 1 /*md_q4*/;
+"""
+
+# The self joins keep simple parameterization from folding the four markers
+# into one parameterized query, which drops the comments and merges the
+# literals. Each marker sits before the select list because Query Store keeps
+# only the statement text, so a trailing comment is lost. Query Store can
+# report READ_WRITE a moment before it captures anything, and a plan compiled
+# in that gap is never captured and is then reused from cache, so every
+# attempt clears this database's plan cache first.
+MD_QUERIES_SQL = """
+SET NOCOUNT ON;
+ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
+SELECT /*md_q1*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id > 0;
+SELECT /*md_q2*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id > 1;
+SELECT /*md_q3*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id > 2;
+SELECT /*md_q4*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id = 1;
 EXECUTE sys.sp_query_store_flush_db;
 """
+
+# One row per marker that has a query and runtime stats. The [_] keeps this
+# probe's own text from matching its own patterns.
+MD_PROBE_SQL = """
+SET NOCOUNT ON;
+SELECT DISTINCT
+    marker = m.marker
+FROM (VALUES (N'md_q1'), (N'md_q2'), (N'md_q3'), (N'md_q4')) AS m (marker)
+JOIN sys.query_store_query_text AS qsqt
+  ON qsqt.query_sql_text LIKE N'%/*' + REPLACE(m.marker, N'_', N'[_]') + N'*/%'
+JOIN sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+JOIN sys.query_store_runtime_stats AS qsrs
+  ON qsrs.plan_id = qsp.plan_id;
+"""
+
+MD_MARKERS = ("md_q1", "md_q2", "md_q3", "md_q4")
+
+
+def md_missing_markers(server, password, db):
+    """Markers with no captured query and runtime stats in the database."""
+    out, _ = _sqlcmd(server, password, MD_PROBE_SQL, database=db)
+    found = {line.strip() for line in out.splitlines()}
+    return [m for m in MD_MARKERS if m not in found]
+
+
+def md_build_database(server, password, db):
+    """Create one database, load it, and run the marker queries until every
+    marker is captured. Returns (errors, missing markers)."""
+    out, err = _sqlcmd(server, password, MD_SETUP_SQL.format(db=db))
+    out2, err2 = _sqlcmd(server, password, MD_TABLE_SQL, database=db, timeout=600)
+    errs = find_sql_errors(out + "\n" + err + "\n" + out2 + "\n" + err2)
+    if errs:
+        return errs, list(MD_MARKERS)
+    missing = list(MD_MARKERS)
+    for _ in range(5):
+        out, err = _sqlcmd(server, password, MD_QUERIES_SQL, database=db,
+                           timeout=600)
+        errs = find_sql_errors(out + "\n" + err)
+        if errs:
+            return errs, missing
+        missing = md_missing_markers(server, password, db)
+        if not missing:
+            break
+        time.sleep(2)
+    return [], missing
 
 
 def multi_database_tests(server, password, R):
@@ -588,12 +649,13 @@ def multi_database_tests(server, password, R):
     row of every query, not one per colliding id."""
     try:
         for db in MD_DBS:
-            out, err = _sqlcmd(server, password, MD_SETUP_SQL.format(db=db))
-            out2, err2 = _sqlcmd(server, password, MD_WORKLOAD_SQL,
-                                 database=db, timeout=600)
-            errs = find_sql_errors(out + "\n" + err + "\n" + out2 + "\n" + err2)
+            errs, missing = md_build_database(server, password, db)
             R.check("MultiDb", "%s created and loaded" % db, not errs, str(errs))
             if errs:
+                return
+            R.check("MultiDb", "%s captured every marker query" % db,
+                    not missing, "missing from Query Store: %s" % ", ".join(missing))
+            if missing:
                 return
 
         out, err = _sqlcmd(
@@ -1735,6 +1797,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="SQL2022")
     ap.add_argument("--password", default="L!nt0044")
+    ap.add_argument("--only", choices=["multidb"],
+                    help="run one group by itself (multidb: the MultiDb group)")
     args = ap.parse_args()
 
     print("Running sp_QuickieStore assertion tests against %s..." % args.server)
@@ -1750,6 +1814,16 @@ def main():
         sys.exit(1)
 
     R = Results()
+    if args.only == "multidb":
+        try:
+            multi_database_tests(args.server, args.password, R)
+        finally:
+            for db in MD_DBS:
+                _sqlcmd(args.server, args.password, CLEANUP_SQL.replace(TEST_DB, db))
+        for item in R.items:
+            print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",
+                                           item["group"], item["name"], item["detail"]))
+        sys.exit(1 if R.failed else 0)
     try:
         # Slot A of the regression fixture runs first, so the other tests
         # put time between it and slot B.
