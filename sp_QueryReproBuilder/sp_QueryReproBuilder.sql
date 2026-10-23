@@ -1421,6 +1421,19 @@ CREATE TABLE
 );
 
 /*
+Each plan's last and first ParameterList as xml, so the parameter
+extraction searches the plan text and converts each list only once.
+*/
+CREATE TABLE
+    #parameter_lists
+(
+    plan_id bigint NOT NULL,
+    last_parameter_list xml NULL,
+    first_parameter_list xml NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
 If @query_plan_xml was supplied, seed the repro pipeline with one synthetic
 plan so the parser, warnings, and repro-builder can all run without Query
 Store. Synthetic ids are -1 so they can't collide with real Query Store ids.
@@ -4691,24 +4704,63 @@ and only for plans where it holds no parameters, the first one.
 SELECT
     @current_table = N'extracting parameters from query plans';
 
+/*
+Find each plan's last and first ParameterList once, convert each to xml
+once, and shred them from this table. Shredding straight from the
+expression ran the search of the plan text and the conversion again for
+the .nodes() call and for each .value() call.
+*/
 INSERT
-    #parameter_shred
+    #parameter_lists
 WITH
     (TABLOCK)
 (
     plan_id,
-    param_column,
-    param_data_type,
-    param_compiled_value
+    last_parameter_list,
+    first_parameter_list
 )
 SELECT
     qsp.plan_id,
-    param_column =
-        cr.c.value(N'@Column', N'sysname'),
-    param_data_type =
-        cr.c.value(N'@ParameterDataType', N'sysname'),
-    param_compiled_value =
-        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
+    last_parameter_list =
+        CASE
+            WHEN CHARINDEX(N'</ParameterList>', qpb.query_plan, pl.last_start) > 0
+            THEN TRY_CAST
+                 (
+                     SUBSTRING
+                     (
+                         qpb.query_plan,
+                         pl.last_start,
+                         CHARINDEX
+                         (
+                             N'</ParameterList>',
+                             qpb.query_plan,
+                             pl.last_start
+                         )
+                         + LEN(N'</ParameterList>')
+                         - pl.last_start
+                     ) AS xml
+                 )
+        END,
+    first_parameter_list =
+        CASE
+            WHEN CHARINDEX(N'</ParameterList>', qpb.query_plan, pl.first_start) > 0
+            THEN TRY_CAST
+                 (
+                     SUBSTRING
+                     (
+                         qpb.query_plan,
+                         pl.first_start,
+                         CHARINDEX
+                         (
+                             N'</ParameterList>',
+                             qpb.query_plan,
+                             pl.first_start
+                         )
+                         + LEN(N'</ParameterList>')
+                         - pl.first_start
+                     ) AS xml
+                 )
+        END
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
@@ -4720,38 +4772,14 @@ CROSS APPLY
 CROSS APPLY
 (
     SELECT
-        list_start =
+        last_start =
             DATALENGTH(qpb.query_plan) / 2 -
             CHARINDEX(REVERSE(N'<ParameterList>'), REVERSE(qpb.query_plan)) -
-            LEN(N'<ParameterList>') + 2
+            LEN(N'<ParameterList>') + 2,
+        first_start =
+            CHARINDEX(N'<ParameterList>', qpb.query_plan)
     WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
 ) AS pl
-CROSS APPLY
-(
-    SELECT
-        parameter_list_xml =
-            CASE
-                WHEN CHARINDEX(N'</ParameterList>', qpb.query_plan, pl.list_start) > 0
-                THEN TRY_CAST
-                     (
-                         SUBSTRING
-                         (
-                             qpb.query_plan,
-                             pl.list_start,
-                             CHARINDEX
-                             (
-                                 N'</ParameterList>',
-                                 qpb.query_plan,
-                                 pl.list_start
-                             )
-                             + LEN(N'</ParameterList>')
-                             - pl.list_start
-                         ) AS xml
-                     )
-            END
-) AS x
-CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
-WHERE x.parameter_list_xml IS NOT NULL
 OPTION(RECOMPILE);
 
 INSERT
@@ -4765,54 +4793,43 @@ WITH
     param_compiled_value
 )
 SELECT
-    qsp.plan_id,
+    pl.plan_id,
     param_column =
         cr.c.value(N'@Column', N'sysname'),
     param_data_type =
         cr.c.value(N'@ParameterDataType', N'sysname'),
     param_compiled_value =
         cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
-FROM #query_store_plan AS qsp
-CROSS APPLY
+FROM #parameter_lists AS pl
+CROSS APPLY pl.last_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr(c)
+OPTION(RECOMPILE);
+
+INSERT
+    #parameter_shred
+WITH
+    (TABLOCK)
 (
-    /* Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation */
-    SELECT
-        query_plan =
-            qsp.query_plan COLLATE Latin1_General_100_BIN2
-) AS qpb
-CROSS APPLY
-(
-    SELECT
-        parameter_list_xml =
-            CASE
-                WHEN CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
-                THEN TRY_CAST
-                     (
-                         SUBSTRING
-                         (
-                             qpb.query_plan,
-                             CHARINDEX(N'<ParameterList>', qpb.query_plan),
-                             CHARINDEX
-                             (
-                                 N'</ParameterList>',
-                                 qpb.query_plan,
-                                 CHARINDEX(N'<ParameterList>', qpb.query_plan)
-                             )
-                             + LEN(N'</ParameterList>')
-                             - CHARINDEX(N'<ParameterList>', qpb.query_plan)
-                         ) AS xml
-                     )
-            END
-) AS x
-CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
-WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
-AND   x.parameter_list_xml IS NOT NULL
-AND   NOT EXISTS
+    plan_id,
+    param_column,
+    param_data_type,
+    param_compiled_value
+)
+SELECT
+    pl.plan_id,
+    param_column =
+        cr.c.value(N'@Column', N'sysname'),
+    param_data_type =
+        cr.c.value(N'@ParameterDataType', N'sysname'),
+    param_compiled_value =
+        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
+FROM #parameter_lists AS pl
+CROSS APPLY pl.first_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr(c)
+WHERE NOT EXISTS
       (
           SELECT
               1/0
           FROM #parameter_shred AS ps
-          WHERE ps.plan_id = qsp.plan_id
+          WHERE ps.plan_id = pl.plan_id
       )
 OPTION(RECOMPILE);
 
