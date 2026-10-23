@@ -16565,6 +16565,7 @@ BEGIN
                     ROW_NUMBER() OVER
                     (
                         PARTITION BY
+                            qsq.database_id,
                             qsq.query_id,
                             qsq.query_text_id
                         ORDER BY
