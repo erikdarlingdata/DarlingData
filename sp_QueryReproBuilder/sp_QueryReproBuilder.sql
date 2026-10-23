@@ -1421,6 +1421,20 @@ CREATE TABLE
 );
 
 /*
+Where each plan's last and first ParameterList start and end in the plan text
+*/
+CREATE TABLE
+    #parameter_list_positions
+(
+    plan_id bigint NOT NULL,
+    last_start bigint NULL,
+    first_start bigint NULL,
+    last_end bigint NULL,
+    first_end bigint NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
 Each plan's last and first ParameterList as xml, so the parameter
 extraction searches the plan text and converts each list only once.
 */
@@ -4705,11 +4719,59 @@ SELECT
     @current_table = N'extracting parameters from query plans';
 
 /*
-Find each plan's last and first ParameterList once, convert each to xml
-once, and shred them from this table. Shredding straight from the
-expression ran the search of the plan text and the conversion again for
-the .nodes() call and for each .value() call.
+Find where each plan's last and first ParameterList start and end, then
+convert each list to xml once and shred them from #parameter_lists.
+Shredding straight from the expression ran the search of the plan text
+and the conversion again for the .nodes() call and for each .value()
+call. The positions are stored first because one statement that found
+and used them searched the plan text again for each use.
 */
+INSERT
+    #parameter_list_positions
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    last_start,
+    first_start
+)
+SELECT
+    qsp.plan_id,
+    last_start =
+        DATALENGTH(qpb.query_plan) / 2 -
+        CHARINDEX(REVERSE(N'<ParameterList>'), REVERSE(qpb.query_plan)) -
+        LEN(N'<ParameterList>') + 2,
+    first_start =
+        CHARINDEX(N'<ParameterList>', qpb.query_plan)
+FROM #query_store_plan AS qsp
+CROSS APPLY
+(
+    /* Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation */
+    SELECT
+        query_plan =
+            qsp.query_plan COLLATE Latin1_General_100_BIN2
+) AS qpb
+WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
+OPTION(RECOMPILE);
+
+UPDATE
+    plp
+SET
+    plp.last_end =
+        CHARINDEX(N'</ParameterList>', qpb.query_plan, plp.last_start),
+    plp.first_end =
+        CHARINDEX(N'</ParameterList>', qpb.query_plan, plp.first_start)
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+CROSS APPLY
+(
+    SELECT
+        query_plan =
+            qsp.query_plan COLLATE Latin1_General_100_BIN2
+) AS qpb
+OPTION(RECOMPILE);
+
 INSERT
     #parameter_lists
 WITH
@@ -4720,66 +4782,36 @@ WITH
     first_parameter_list
 )
 SELECT
-    qsp.plan_id,
+    plp.plan_id,
     last_parameter_list =
         CASE
-            WHEN CHARINDEX(N'</ParameterList>', qpb.query_plan, pl.last_start) > 0
+            WHEN plp.last_end > 0
             THEN TRY_CAST
                  (
                      SUBSTRING
                      (
-                         qpb.query_plan,
-                         pl.last_start,
-                         CHARINDEX
-                         (
-                             N'</ParameterList>',
-                             qpb.query_plan,
-                             pl.last_start
-                         )
-                         + LEN(N'</ParameterList>')
-                         - pl.last_start
+                         qsp.query_plan,
+                         plp.last_start,
+                         plp.last_end + LEN(N'</ParameterList>') - plp.last_start
                      ) AS xml
                  )
         END,
     first_parameter_list =
         CASE
-            WHEN CHARINDEX(N'</ParameterList>', qpb.query_plan, pl.first_start) > 0
+            WHEN plp.first_end > 0
             THEN TRY_CAST
                  (
                      SUBSTRING
                      (
-                         qpb.query_plan,
-                         pl.first_start,
-                         CHARINDEX
-                         (
-                             N'</ParameterList>',
-                             qpb.query_plan,
-                             pl.first_start
-                         )
-                         + LEN(N'</ParameterList>')
-                         - pl.first_start
+                         qsp.query_plan,
+                         plp.first_start,
+                         plp.first_end + LEN(N'</ParameterList>') - plp.first_start
                      ) AS xml
                  )
         END
-FROM #query_store_plan AS qsp
-CROSS APPLY
-(
-    /* Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation */
-    SELECT
-        query_plan =
-            qsp.query_plan COLLATE Latin1_General_100_BIN2
-) AS qpb
-CROSS APPLY
-(
-    SELECT
-        last_start =
-            DATALENGTH(qpb.query_plan) / 2 -
-            CHARINDEX(REVERSE(N'<ParameterList>'), REVERSE(qpb.query_plan)) -
-            LEN(N'<ParameterList>') + 2,
-        first_start =
-            CHARINDEX(N'<ParameterList>', qpb.query_plan)
-    WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
-) AS pl
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
 OPTION(RECOMPILE);
 
 INSERT
