@@ -4759,6 +4759,11 @@ carry a ParameterList of their own earlier in the plan, and reading the
 first one picked up that decoy: it holds no parameters, so the real ones
 were lost and the repro fell back to ? values. Read the last ParameterList,
 and only for plans where it holds no parameters, the first one.
+
+A document can hold more than one statement, such as a multi-statement plan
+passed in @query_plan_xml. The repro uses the first statement's text, so both
+lists are the ones found before the first closing QueryPlan tag, not the last
+ParameterList of the whole document, which belongs to the last statement.
 */
 SELECT
     @current_table = N'extracting parameters from query plans';
@@ -4791,10 +4796,26 @@ SELECT
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
-    /* Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation */
+    /*
+    Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation.
+    Only the text up to the first closing QueryPlan tag is searched: that is the first statement's plan, and the
+    statement text is the first statement's too.
+    */
     SELECT
         query_plan =
-            qsp.query_plan COLLATE Latin1_General_100_BIN2
+            LEFT
+            (
+                qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(N'</QueryPlan>', qsp.query_plan COLLATE Latin1_General_100_BIN2),
+                        0
+                    ) + LEN(N'</QueryPlan>') - 1,
+                    DATALENGTH(qsp.query_plan) / 2
+                )
+            )
 ) AS qpb
 WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
 OPTION(RECOMPILE);

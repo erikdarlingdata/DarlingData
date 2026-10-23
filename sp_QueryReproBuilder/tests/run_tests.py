@@ -560,6 +560,22 @@ def build_cases():
         {"echo_expect": {"a": "555", "s": "q", "b": "555"}}, echo=True,
         note="decoy ParameterList precedes query's -> last ParameterList read, 555 binds")
 
+    # A multi-statement document: the repro uses the first statement's text,
+    # so it has to bind the first statement's ParameterList, not the last
+    # one in the document (the second statement's, here @other).
+    second_stmt = (
+        '<StmtSimple StatementText="(@other int)SELECT c = @other">'
+        '<QueryPlan><RelOp NodeId="0" PhysicalOp="Constant Scan" LogicalOp="Constant Scan">'
+        '<ParameterList><ColumnReference Column="@other" ParameterDataType="int" '
+        'ParameterCompiledValue="(888)"/></ParameterList>'
+        '</RelOp></QueryPlan></StmtSimple>')
+    add("multistmt:first_statement_binds_its_own_list",
+        make_plan("(@id int)SELECT col_a = @id, col_s = N'q', col_b = @id",
+                  params=[("@id", "int", "(555)")],
+                  statements_extra=second_stmt),
+        {"echo_expect": {"a": "555", "s": "q", "b": "555"}}, echo=True,
+        note="the last ParameterList of the document belongs to the second statement")
+
     # ---------- Echo cases: assert the ACTUAL bound values -----------------
     # These execute the repro and read back what was really bound, catching
     # silent value/parameter reordering that would still run.
