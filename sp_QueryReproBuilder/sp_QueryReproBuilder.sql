@@ -7016,6 +7016,52 @@ BEGIN
         ec.plan_id,
         ec.constant_value
     OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#all_plan_ids',
+        ap.*
+    FROM #all_plan_ids AS ap
+    ORDER BY
+        ap.query_id,
+        ap.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_plan_xml',
+        qpx.*
+    FROM #query_plan_xml AS qpx
+    ORDER BY
+        qpx.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_text_normalized',
+        qtn.*
+    FROM #query_text_normalized AS qtn
+    ORDER BY
+        qtn.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#psp_hint_starts',
+        phs.*
+    FROM #psp_hint_starts AS phs
+    ORDER BY
+        phs.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#parameter_declarations',
+        pd.*
+    FROM #parameter_declarations AS pd
+    ORDER BY
+        pd.plan_id
+    OPTION(RECOMPILE);
 END;
 
 END; /*Final end*/
