@@ -71,7 +71,7 @@ ALTER PROCEDURE
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
-    @top bigint = NULL, /*the number of plans to build repros for, most recently executed first; NULL for all*/
+    @top bigint = 10, /*the number of plans you want to pull back, most recently executed first; NULL for every plan in the window*/
     @query_plan_xml xml = NULL, /*a single query plan XML to process directly, bypassing Query Store*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
@@ -132,7 +132,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@query_text_search_not' THEN 'query text to exclude'
-                WHEN N'@top' THEN 'the number of plans to build repros for, most recently executed first'
+                WHEN N'@top' THEN 'the number of plans you want to pull back, most recently executed first'
                 WHEN N'@query_plan_xml' THEN 'a single query plan XML to process directly, bypassing Query Store'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values'
@@ -160,7 +160,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
-                WHEN N'@top' THEN 'a positive integer, or NULL for every plan in the window'
+                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807, or NULL for every plan in the window'
                 WHEN N'@query_plan_xml' THEN 'a valid ShowPlanXML document; when supplied, all Query Store filters are ignored'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
@@ -188,7 +188,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@query_text_search_not' THEN 'NULL'
-                WHEN N'@top' THEN 'NULL; every plan in the window'
+                WHEN N'@top' THEN '10'
                 WHEN N'@query_plan_xml' THEN 'NULL'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
@@ -645,9 +645,10 @@ BEGIN
 END;
 
 /*
-@top limits the run to the most recently executed plans. Without it, a
-default run on a busy database builds a repro for every plan of the last
-seven days (4,098 repros, 129 MB of output, two minutes, on one test
+@top limits the run to the most recently executed plans. It defaults to
+10, as in sp_QuickieStore. NULL still builds a repro for every plan in the
+window, which on a busy database is thousands of repros and hundreds of
+MB of output (14,930 repros, 797 MB, more than two minutes, on one test
 database).
 */
 IF @top < 1
