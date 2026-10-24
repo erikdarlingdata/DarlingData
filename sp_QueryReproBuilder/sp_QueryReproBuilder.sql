@@ -4059,8 +4059,7 @@ EXECUTE sys.sp_executesql
     @sql;
 
 /*
-The plan ids are listed in the order the DISTINCT of the old subquery
-gave them, sorted as text
+The plan ids are listed in numeric order, as sp_QuickieStore lists them
 */
 SELECT
     @current_table = N'updating all_plan_ids in #query_store_plan';
@@ -4078,8 +4077,7 @@ SET
                 FROM #all_plan_ids AS ap
                 WHERE ap.query_id = qsp.query_id
                 ORDER BY
-                    ', ' +
-                    RTRIM(ap.plan_id)
+                    ap.plan_id
                 FOR XML
                     PATH(''),
                     TYPE
