@@ -1557,7 +1557,8 @@ AND   ca.utc_timestamp < @end_date';
     CREATE TABLE
         #sp_server_diagnostics_component_result
     (
-        sp_server_diagnostics_component_result xml NOT NULL
+        sp_server_diagnostics_component_result xml NOT NULL,
+        component varchar(30) NULL
     );
 
     CREATE TABLE
@@ -2024,6 +2025,26 @@ AND   ca.utc_timestamp < @end_date';
 
     END; /*End Managed Instance collection*/
 
+    /*
+    Each sp_server_diagnostics_component_result event belongs to one
+    component (SYSTEM, RESOURCE, QUERY_PROCESSING, IO_SUBSYSTEM, EVENTS).
+    Tag every row once so each section below reads only its own events,
+    instead of running an exist() over all of them. component is the
+    event's first data field, so the first text in the event is its
+    name; the @name lookup is the fallback.
+    */
+    UPDATE
+        sdcr
+    SET
+        sdcr.component =
+            CASE
+                WHEN sdcr.sp_server_diagnostics_component_result.value('(/event/data/@name)[1]', 'varchar(30)') = 'component'
+                THEN sdcr.sp_server_diagnostics_component_result.value('(/event/data/text/text())[1]', 'varchar(30)')
+                ELSE sdcr.sp_server_diagnostics_component_result.value('(/event/data[@name="component"]/text/text())[1]', 'varchar(30)')
+            END
+    FROM #sp_server_diagnostics_component_result AS sdcr
+    OPTION(RECOMPILE);
+
     IF @debug = 1
     BEGIN
         SELECT TOP (100)
@@ -2347,7 +2368,7 @@ AND   ca.utc_timestamp < @end_date';
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        WHERE wi.component = 'QUERY_PROCESSING'
         /*
         Compare the wait type as a value: an exist() per ignored wait ran
         one XQuery for every wait row times every row in #ignore_waits.
@@ -2637,7 +2658,7 @@ AND   ca.utc_timestamp < @end_date';
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        WHERE wi.component = 'QUERY_PROCESSING'
         AND   w2.x2.exist('@averageWaitTime[.>= sql:variable("@wait_duration_ms")]') = 1
         /*
         Compare the wait type as a value: an exist() per ignored wait ran
@@ -2913,7 +2934,7 @@ AND   ca.utc_timestamp < @end_date';
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "IO_SUBSYSTEM"])') = 1
+        WHERE wi.component = 'IO_SUBSYSTEM'
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -3144,7 +3165,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        WHERE wi.component = 'QUERY_PROCESSING'
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         /* Threshold is honored whether or not @warnings_only is set — the
            parameter documents "minimum pending tasks to display" and the
@@ -3386,7 +3407,7 @@ AND   ca.utc_timestamp < @end_date';
            parameter. Replaced with sql:variable() binding so the user's
            value actually takes effect here too. */
         CROSS APPLY w.x.nodes('/event/data[@name="data"]/value/queryProcessing[@pendingTasks >= sql:variable("@pending_task_threshold")]/pendingTasks/entryPoint') AS ep(e)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        WHERE wi.component = 'QUERY_PROCESSING'
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -3686,7 +3707,8 @@ AND   ca.utc_timestamp < @end_date';
                 )
             ) AS p
         ) AS mr
-        WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
+        WHERE s.component = 'RESOURCE'
+        AND  (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -4646,7 +4668,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "SYSTEM"])') = 1
+        WHERE wi.component = 'SYSTEM'
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -5424,7 +5446,7 @@ AND   ca.utc_timestamp < @end_date';
             human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        WHERE wi.component = 'QUERY_PROCESSING'
         AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
