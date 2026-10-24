@@ -11769,7 +11769,11 @@ BEGIN
 
     /*
     Counts that show why each of those query hashes has so many plans,
-    over every plan of the query hash that ran in the window
+    over every plan of the query hash that ran in the window.
+    The hash join reads each view once. With few query hashes, nested
+    loops read the in-memory parts of sys.query_store_query and
+    sys.query_store_plan again for every query of the hashes, and a
+    literal-text hash can have thousands of queries.
     */
     SELECT
         @current_table = 'updating #plan_ids_with_query_hashes plan counts',
@@ -11977,7 +11981,7 @@ BEGIN
     ) AS counts
       ON counts.query_hash = hashes.query_hash
     WHERE hashes.database_id = @database_id
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
