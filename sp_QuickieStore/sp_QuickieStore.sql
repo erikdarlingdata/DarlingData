@@ -7784,6 +7784,7 @@ BEGIN
         query_plan_hash binary(8) NOT NULL,
         query_id bigint NOT NULL,
         plan_id bigint NOT NULL,
+        query_text_id bigint NOT NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash, query_id, plan_id)
     );
@@ -8648,7 +8649,8 @@ SELECT DISTINCT
     qsq.query_hash,
     qsp.query_plan_hash,
     qsp.query_id,
-    qsp.plan_id
+    qsp.plan_id,
+    qsq.query_text_id
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     ON qsq.query_id = qsp.query_id
@@ -8679,7 +8681,8 @@ OPTION(RECOMPILE);' + @nc10;
         query_hash,
         query_plan_hash,
         query_id,
-        plan_id
+        plan_id,
+        query_text_id
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -8701,7 +8704,12 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 4b: Representative query text per shape (the most-executed query_id in the window)*/
+    /*
+    Step 4b: Representative query text per shape (the most-executed query_id in the window).
+    query_text_id comes from the staging table, so this does not read
+    sys.query_store_query, whose in-memory part nested loops read again
+    for every staged row, about 14 ms each.
+    */
     SELECT
         @current_table = 'inserting #ps_representative_text',
         @sql = @isolation_level;
@@ -8728,7 +8736,7 @@ FROM
     SELECT
         s.query_hash,
         s.query_plan_hash,
-        qsq.query_text_id,
+        s.query_text_id,
         rn =
             ROW_NUMBER() OVER
             (
@@ -8739,8 +8747,6 @@ FROM
                     SUM(qsrs.count_executions) DESC
             )
     FROM #ps_id_staging AS s
-    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-        ON qsq.query_id = s.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
         ON qsrs.plan_id = s.plan_id
     WHERE EXISTS
@@ -8754,7 +8760,7 @@ FROM
     GROUP BY
         s.query_hash,
         s.query_plan_hash,
-        qsq.query_text_id
+        s.query_text_id
 ) AS ranked
 JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     ON qsqt.query_text_id = ranked.query_text_id
