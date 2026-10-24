@@ -11129,6 +11129,12 @@ collation on upper-cased text, the same way the text search does.
 Nine NOT LIKEs on every query text under the column's linguistic
 collation took most of the run time of a default run on a big
 Query Store.
+
+The patterns that only look at the start of the text test the
+first 40 characters, which is not a max type. Every LIKE against
+the upper-cased nvarchar(max) text costs about as much as the
+upper-casing itself, so only the two patterns that can match past
+the start of the text look at all of it.
 */
 SELECT
     @sql += N'
@@ -11142,18 +11148,22 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 CROSS APPLY
 (
     SELECT
-        query_sql_text_upper =
-            UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2
+        query_sql_text_start =
+            UPPER(CONVERT(nvarchar(40), qsqt.query_sql_text)) COLLATE Latin1_General_100_BIN2
 ) AS u
-WHERE u.query_sql_text_upper LIKE N''ALTER INDEX%''
-OR    u.query_sql_text_upper LIKE N''ALTER TABLE%''
-OR    u.query_sql_text_upper LIKE N''CREATE%INDEX%''
-OR    u.query_sql_text_upper LIKE N''CREATE STATISTICS%''
-OR    u.query_sql_text_upper LIKE N''UPDATE STATISTICS%''
-OR    u.query_sql_text_upper LIKE N''%SELECT STATMAN%''
-OR    u.query_sql_text_upper LIKE N''DBCC%''
-OR    u.query_sql_text_upper LIKE N''(@[_]MSPARAM%''
-OR    u.query_sql_text_upper LIKE N''WAITFOR%''
+WHERE u.query_sql_text_start LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_start LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_start LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''DBCC%''
+OR    u.query_sql_text_start LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_start LIKE N''WAITFOR%''
+OR
+(
+      u.query_sql_text_start LIKE N''CREATE%''
+  AND UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''CREATE%INDEX%''
+)
+OR    UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''%SELECT STATMAN%''
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
