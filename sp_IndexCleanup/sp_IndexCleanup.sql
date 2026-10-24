@@ -9521,6 +9521,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 FORMAT(ISNULL(irs.user_lookups, 0), 'N0') +
                 ' lookups)',
             writes = FORMAT(ISNULL(irs.total_writes, 0), 'N0'),
+            /*
+            The per-day columns divide by the table's own database usage
+            window, the same window the Unused Index rule used, because the
+            usage and operational counters restart when a database is
+            restored or created. Server uptime is the fallback.
+            */
             daily_write_ops_saved =
                 CASE
                     WHEN ISNULL(irs.unused_indexes, 0) > 0
@@ -9537,7 +9543,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -9587,7 +9597,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -9642,7 +9656,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -9686,6 +9704,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             sort_unused_size = ISNULL(irs.unused_size_gb, 0),
             sort_total_size = ISNULL(irs.total_size_gb, 0)
         FROM #index_reporting_stats AS irs
+        LEFT JOIN #databases AS d
+          ON d.database_name = irs.database_name
         WHERE irs.summary_level = 'TABLE'
     ) AS x
     ORDER BY

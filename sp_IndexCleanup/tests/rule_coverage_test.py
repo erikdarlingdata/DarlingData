@@ -1852,6 +1852,14 @@ INSERT INTO dbo.ic_win_t (id, col_a, col_b)
 SELECT TOP (2000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) %% 50, 1
 FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2 OPTION(MAXDOP 1);
 GO
+/* 120 single-row writes that touch both indexes, so the per-day columns differ between a 10 and a 12 day window */
+DECLARE @i integer = 1;
+WHILE @i <= 120
+BEGIN
+    UPDATE dbo.ic_win_t SET col_a = col_a + 1 WHERE id = 1;
+    SET @i += 1;
+END;
+GO
 USE master;
 GO
 """ % {"n": name}
@@ -2017,6 +2025,21 @@ def run_window_tests(server, password, assert_test):
                                   index_name="ix_win_never_read",
                                   consolidation_rule=label_db)) == 1,
                     str([r.get("consolidation_rule") for r in unused("ic_win_mid", rows)]))
+        # The table's per-day write count divides by the database window (10 days),
+        # not the 12 day server uptime: writes / days * removable / total indexes.
+        tbl = [r for r in summary if r["level"] == "TABLE"
+               and r["database_info"].startswith("ic_win_mid")]
+        if len(tbl) == 1:
+            writes = int(tbl[0]["writes"].replace(",", ""))
+            share = int(tbl[0]["removable_indexes"]) / int(tbl[0]["total_indexes"])
+            want10 = "{:,}".format(int(writes / 10 * share + 0.5))
+            want12 = "{:,}".format(int(writes / WINDOW_SERVER_START_DAYS * share + 0.5))
+        assert_test(grp, "TABLE row per-day writes divide by the database window, not server uptime",
+                    len(tbl) == 1 and want10 != want12
+                    and tbl[0]["daily_write_ops_saved"] == want10,
+                    "rows=%d got=%s want10=%s want12=%s" % (
+                        len(tbl), tbl[0]["daily_write_ops_saved"] if tbl else "-",
+                        want10 if len(tbl) == 1 else "-", want12 if len(tbl) == 1 else "-"))
         for name, want in (("ic_win_restored", "Database restore"),
                            ("ic_win_replaced", "Database restore"),
                            ("ic_win_fresh", "Database create")):
