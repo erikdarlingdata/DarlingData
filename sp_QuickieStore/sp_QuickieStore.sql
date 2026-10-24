@@ -11406,6 +11406,11 @@ This is similar to the sort-helping tables that you are
 about to see, but easier because we do not need to return or sort
 by the execution count.
 We just need to know that these plans have enough executions.
+
+The rows are summed per plan first, so the window sum per query
+runs over one row per plan instead of one row per interval, and
+query_id comes from sys.query_store_plan, which has it, instead of
+a join to sys.query_store_query.
 */
 IF @execution_count > 0
 BEGIN
@@ -11425,26 +11430,27 @@ BEGIN
 
     SELECT
         @sql += N'
-    SELECT DISTINCT
+    SELECT
         unfiltered_execution_counts.plan_id
     FROM
     (
        SELECT
            qsp.plan_id,
            total_executions_for_query_of_plan =
-               SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_id)
-       FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-       JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-         ON qsq.query_id = qsp.query_id
+               SUM(SUM(qsrs.count_executions)) OVER (PARTITION BY qsp.query_id)
+       FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
        JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
          ON qsp.plan_id = qsrs.plan_id
        WHERE 1 = 1
        ' + @where_clause
          + N'
+       GROUP BY
+           qsp.query_id,
+           qsp.plan_id
     ) AS unfiltered_execution_counts
     WHERE
         unfiltered_execution_counts.total_executions_for_query_of_plan >= @execution_count
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
