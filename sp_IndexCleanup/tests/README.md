@@ -27,8 +27,8 @@ python no_access_test.py --server SQL2022
 ```
 
 All take `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `58`, `30`, `110`, and `4` passed. `rule_coverage_test.py`
-asserts `107` on a server up more than 7 days, where Group A checks Rule 1
+password). Expect `58`, `30`, `111`, and `4` passed. `rule_coverage_test.py`
+asserts `108` on a server up more than 7 days, where Group A checks Rule 1
 instead of the uptime guard (see below).
 
 ### The execute check is the one that earns its keep
