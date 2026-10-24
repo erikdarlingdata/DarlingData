@@ -71,7 +71,7 @@ ALTER PROCEDURE
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
-    @top bigint = 10, /*the number of plans you want to pull back, most recently executed first; NULL for every plan in the window*/
+    @top bigint = NULL, /*the number of plans you want to pull back, most recently executed first; NULL means 10, or every matching plan when an @include_ list or @procedure_name is given*/
     @query_plan_xml xml = NULL, /*a single query plan XML to process directly, bypassing Query Store*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
@@ -160,7 +160,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
-                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807, or NULL for every plan in the window'
+                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@query_plan_xml' THEN 'a valid ShowPlanXML document; when supplied, all Query Store filters are ignored'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
@@ -188,7 +188,7 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@query_text_search_not' THEN 'NULL'
-                WHEN N'@top' THEN '10'
+                WHEN N'@top' THEN '10, or every matching plan when an @include_ list or @procedure_name is given'
                 WHEN N'@query_plan_xml' THEN 'NULL'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
@@ -645,15 +645,16 @@ BEGIN
 END;
 
 /*
-@top limits the run to the most recently executed plans. It defaults to
-10, as in sp_QuickieStore. NULL still builds a repro for every plan in the
-window, which on a busy database is thousands of repros and hundreds of
-MB of output (14,930 repros, 797 MB, more than two minutes, on one test
-database).
+@top limits the run to the most recently executed plans. Left NULL, it
+becomes 10 as in sp_QuickieStore, unless an @include_ list or
+@procedure_name names the plans or queries to build repros for: then every
+matching plan comes back (see below, after the lists are cleaned up). Without a limit, a busy database
+gives thousands of repros and hundreds of MB of output (14,930 repros,
+797 MB, more than two minutes, on one test database).
 */
 IF @top < 1
 BEGIN
-    RAISERROR('@top must be at least 1, or NULL for every plan in the window', 10, 1) WITH NOWAIT;
+    RAISERROR('@top must be at least 1. Leave it NULL for 10 plans, or for every matching plan when an @include_ list or @procedure_name is given', 10, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -716,6 +717,23 @@ SELECT
         REPLACE(REPLACE(REPLACE(@ignore_plan_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
     @ignore_sql_handles =
         REPLACE(REPLACE(REPLACE(@ignore_sql_handles, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N',');
+
+/*
+The default @top, once blank lists are NULL: 10 plans, unless an @include_
+list or @procedure_name asks for specific plans or queries, which all come
+back
+*/
+IF  @top IS NULL
+AND @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+BEGIN
+    SELECT
+        @top = 10;
+END;
 
 /*
 Check the id, hash, and handle lists before they are used, so a typo gets a
