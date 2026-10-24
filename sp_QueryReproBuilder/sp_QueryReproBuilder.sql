@@ -1362,13 +1362,28 @@ CREATE TABLE
 
 /*
 Where the last PLAN PER VALUE( hint starts in the text of a parameter
-sensitive plan variant query; only those texts have a row
+sensitive plan variant query, and the text without that hint; only those
+texts have a row
 */
 CREATE TABLE
     #psp_hint_starts
 (
     query_text_id bigint NOT NULL,
     hint_start bigint NOT NULL,
+    query_sql_text nvarchar(max) NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
+);
+
+/*
+Where the statement starts in each parameterized query text, after its
+(@...) declaration list, for the repro builder
+*/
+CREATE TABLE
+    #repro_text_starts
+(
+    query_text_id bigint NOT NULL,
+    declaration_end bigint NOT NULL,
+    text_start bigint NULL,
     INDEX query_text_id CLUSTERED (query_text_id)
 );
 
@@ -6004,6 +6019,60 @@ FROM #query_store_query_text AS qsqt
 WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
 OPTION(RECOMPILE);
 
+/*
+The text without the hint, for the repro. The hint is the last PLAN PER
+VALUE( in the text and ends at the first )) after it, where its last
+predicate_range closes. Query Store writes it either as its own clause,
+" option (PLAN PER VALUE(...))", or first in the query's own OPTION
+clause, "OPTION ( PLAN PER VALUE(...), LOOP JOIN)". This ran in the repro
+builder for every plan, and every expression there that used the text
+ran it again.
+*/
+UPDATE
+    phs
+SET
+    phs.query_sql_text =
+        CASE
+            WHEN psp_hint.hint IS NULL
+            THEN qsqt.query_sql_text
+            ELSE
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            qsqt.query_sql_text,
+                            N' option (' + psp_hint.hint + N')',
+                            N''
+                        ),
+                        psp_hint.hint + N', ',
+                        N''
+                    ),
+                    N', ' + psp_hint.hint,
+                    N''
+                )
+        END
+FROM #psp_hint_starts AS phs
+JOIN #query_store_query_text AS qsqt
+  ON qsqt.query_text_id = phs.query_text_id
+CROSS APPLY
+(
+    SELECT
+        hint =
+            CASE
+                WHEN phs.hint_start > 0
+                AND  CHARINDEX(N'))', qsqt.query_sql_text, phs.hint_start) > 0
+                THEN SUBSTRING
+                     (
+                         qsqt.query_sql_text,
+                         phs.hint_start,
+                         CHARINDEX(N'))', qsqt.query_sql_text, phs.hint_start) + 2 - phs.hint_start
+                     )
+            END
+) AS psp_hint
+OPTION(RECOMPILE);
+
 INSERT
     #reproduction_warnings
 WITH
@@ -6295,6 +6364,68 @@ AND   NOT EXISTS
 OPTION(RECOMPILE);
 
 /*
+Find where the statement starts after the (@...) declaration list in each
+parameterized text (without its PSP hint), once per text. The end of the
+list is stored first, then the start is worked out from it, because one
+expression that used the search twice ran it twice. In the repro builder
+these searches ran for every plan, and again for each use.
+*/
+SELECT
+    @current_table = N'finding where the statement starts in parameterized query text';
+
+INSERT
+    #repro_text_starts
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    declaration_end
+)
+SELECT
+    qsqt.query_text_id,
+    declaration_end =
+        PATINDEX(N'%)[^,]%', t.query_sql_text)
+FROM #query_store_query_text AS qsqt
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS t
+WHERE t.query_sql_text LIKE N'(@%'
+OPTION(RECOMPILE);
+
+UPDATE
+    rts
+SET
+    rts.text_start =
+        rts.declaration_end +
+        CASE
+            WHEN SUBSTRING
+                 (
+                     t.query_sql_text,
+                     rts.declaration_end,
+                     2
+                 ) = N'))'
+            THEN 2
+            ELSE 1
+        END
+FROM #repro_text_starts AS rts
+JOIN #query_store_query_text AS qsqt
+  ON qsqt.query_text_id = rts.query_text_id
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS t
+OPTION(RECOMPILE);
+
+/*
 Build reproduction queries with sp_executesql
 */
 SELECT
@@ -6505,85 +6636,32 @@ JOIN #query_store_query AS qsq
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
 /*
-Find the PLAN PER VALUE(...) hint of a parameter sensitive plan variant.
-It is the last one in the text and ends at the first )) after it, where
-its last predicate_range closes. Query Store writes it either as its own
-clause, " option (PLAN PER VALUE(...))", or first in the query's own
-OPTION clause, "OPTION ( PLAN PER VALUE(...), LOOP JOIN)". Where it
-starts was found once per text, in #psp_hint_starts.
+The text without its PSP hint, and where its statement starts, were found
+once per text above
 */
 LEFT JOIN #psp_hint_starts AS phs
   ON phs.query_text_id = qsqt.query_text_id
-CROSS APPLY
-(
-    SELECT
-        hint_start =
-            ISNULL(phs.hint_start, 0)
-) AS psp_start
-CROSS APPLY
-(
-    SELECT
-        hint =
-            CASE
-                WHEN psp_start.hint_start > 0
-                AND  CHARINDEX(N'))', qsqt.query_sql_text, psp_start.hint_start) > 0
-                THEN SUBSTRING
-                     (
-                         qsqt.query_sql_text,
-                         psp_start.hint_start,
-                         CHARINDEX(N'))', qsqt.query_sql_text, psp_start.hint_start) + 2 - psp_start.hint_start
-                     )
-            END
-) AS psp_hint
+LEFT JOIN #repro_text_starts AS rts
+  ON rts.query_text_id = qsqt.query_text_id
 CROSS APPLY
 (
     SELECT
         query_sql_text =
-            CASE
-                WHEN psp_hint.hint IS NULL
-                THEN qsqt.query_sql_text
-                ELSE
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            REPLACE
-                            (
-                                qsqt.query_sql_text,
-                                N' option (' + psp_hint.hint + N')',
-                                N''
-                            ),
-                            psp_hint.hint + N', ',
-                            N''
-                        ),
-                        N', ' + psp_hint.hint,
-                        N''
-                    )
-            END
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
 ) AS psp
 CROSS APPLY
 (
     SELECT
         query_text_cleaned =
             CASE
-                WHEN psp.query_sql_text LIKE N'(@%'
+                WHEN rts.query_text_id IS NOT NULL
                 THEN
                     LTRIM
                     (
                         SUBSTRING
                         (
                             psp.query_sql_text,
-                            PATINDEX(N'%)[^,]%', psp.query_sql_text) +
-                                CASE
-                                    WHEN SUBSTRING
-                                         (
-                                             psp.query_sql_text,
-                                             PATINDEX(N'%)[^,]%', psp.query_sql_text),
-                                             2
-                                         ) = N'))'
-                                    THEN 2
-                                    ELSE 1
-                                END,
+                            rts.text_start,
                             LEN(psp.query_sql_text)
                         )
                     )
@@ -7108,6 +7186,15 @@ BEGIN
     FROM #parameter_declarations AS pd
     ORDER BY
         pd.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#repro_text_starts',
+        rts.*
+    FROM #repro_text_starts AS rts
+    ORDER BY
+        rts.query_text_id
     OPTION(RECOMPILE);
 
     SELECT
