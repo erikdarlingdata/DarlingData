@@ -6447,11 +6447,26 @@ SELECT
     qsrs.last_num_physical_io_reads
 FROM
 (
-   SELECT DISTINCT
-       rq.plan_id,
-       rq.query_id,
-       rq.executable_query
-   FROM #repro_queries AS rq
+    /*
+    #repro_queries has one row per plan and query: each table it is built
+    from has one row per key. A DISTINCT here sorted the nvarchar(max)
+    repro text along with the keys; the row number works on the keys only.
+    With one row per key there is no tie for the ORDER BY to break.
+    */
+    SELECT
+        rq.plan_id,
+        rq.query_id,
+        rq.executable_query,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    rq.plan_id,
+                    rq.query_id
+                ORDER BY
+                    rq.plan_id
+            )
+    FROM #repro_queries AS rq
 ) AS rq
 CROSS APPLY
 (
@@ -6519,6 +6534,7 @@ OUTER APPLY
         PATH('waits'),
         TYPE
 ) AS qsws(waits)
+WHERE rq.n = 1
 ORDER BY
     qsrs.last_execution_time DESC
 OPTION(RECOMPILE);
