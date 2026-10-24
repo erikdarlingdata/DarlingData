@@ -5525,6 +5525,9 @@ OPTION(RECOMPILE);
 /*
 Extract embedded constants from plans with OPTION(RECOMPILE)
 For plans that can be cast to XML, use XQuery
+
+The plans are the ones the warning above just found with the same LIKE,
+so they are read from its rows instead of searching every query text again
 */
 SELECT
     @current_table = N'extracting embedded constants from plans';
@@ -5538,7 +5541,7 @@ WITH
     constant_value
 )
 SELECT DISTINCT
-    qsp.plan_id,
+    rw.plan_id,
     constant_value =
         CASE
             WHEN cv.const_value LIKE N'(%)'
@@ -5550,13 +5553,9 @@ SELECT DISTINCT
                  )
             ELSE LTRIM(RTRIM(cv.const_value))
         END
-FROM #query_store_plan AS qsp
-JOIN #query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
+FROM #reproduction_warnings AS rw
 JOIN #query_plan_xml AS x
-  ON x.plan_id = qsp.plan_id
+  ON x.plan_id = rw.plan_id
 CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c(const)
 CROSS APPLY
 (
@@ -5568,7 +5567,7 @@ CROSS APPLY
 /*
 No IS NOT NULL test on the xml here: .nodes() returns no rows for NULL.
 */
-WHERE qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
+WHERE rw.warning_type = N'parameter embedding optimization'
 OPTION(RECOMPILE);
 
 /*
