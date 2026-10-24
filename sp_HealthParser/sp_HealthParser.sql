@@ -4873,7 +4873,7 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    sm.scheduler_monitor.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             sql_cpu_utilization = v.sql_cpu_utilization,
             other_process_cpu =
@@ -4886,11 +4886,10 @@ AND   ca.utc_timestamp < @end_date';
             xml =
                 CASE
                     WHEN @debug = 1
-                    THEN w.x.query('.')
+                    THEN sm.scheduler_monitor.query('/event')
                 END
         INTO #scheduler_issues
         FROM #scheduler_monitor AS sm
-        CROSS APPLY sm.scheduler_monitor.nodes('/event') AS w(x)
         OUTER APPLY
         (
             /*
@@ -4914,7 +4913,7 @@ AND   ca.utc_timestamp < @end_date';
                 SELECT
                     name = dt.d.value('@name', 'nvarchar(60)'),
                     value = dt.d.value('(value/text())[1]', 'nvarchar(30)')
-                FROM w.x.nodes('data') AS dt(d)
+                FROM sm.scheduler_monitor.nodes('/event/data') AS dt(d)
             ) AS d
             PIVOT
             (
