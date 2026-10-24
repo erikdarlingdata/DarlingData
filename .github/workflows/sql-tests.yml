@@ -1,13 +1,75 @@
 name: SQL Tests
 
 on:
+  # The push trigger filters on paths directly: no required checks apply to
+  # pushes, so a push that touches none of these files simply does not run.
+  # The pull_request trigger must NOT have a paths filter: when a workflow does
+  # not run, its required checks never report and the PR can never merge. The
+  # changes job below decides instead, and the SQL Tests job always reports.
+  #
+  # Keep this list and the case patterns in the changes job in step. Beyond the
+  # .sql and tests/ files, the matrix reads only Install-All/Merge-All.ps1 (which
+  # builds the bundle from sp_*/sp_*.sql), .github/sql/*.sql, and this workflow.
+  # The Python harnesses use only the standard library, and go-sqlcmd is pulled
+  # from its latest release, so there is no requirements file to watch.
   push:
     branches: [dev]
+    paths:
+      - '**/*.sql'
+      - '**/tests/**'
+      - 'Install-All/**'
+      - '.github/sql/**'
+      - '.github/workflows/sql-tests.yml'
   pull_request:
     branches: [dev, main]
 
 jobs:
+  changes:
+    name: Detect SQL changes
+    runs-on: ubuntu-latest
+    outputs:
+      sql: ${{ steps.filter.outputs.sql }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check whether the pull request touches anything the SQL tests use
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            # Pushes are already limited by the paths filter on the trigger.
+            echo "sql=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Three dots: diff against the merge base, so commits that landed on
+          # the base branch after this branch was cut do not count as changes.
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > changed_files.txt
+          echo "Changed files:"
+          cat changed_files.txt
+
+          sql=false
+          while IFS= read -r f; do
+            case "$f" in
+              *.sql | tests/* | */tests/* | Install-All/* | .github/sql/* | .github/workflows/sql-tests.yml)
+                echo "Matched: $f"
+                sql=true
+                break
+                ;;
+            esac
+          done < changed_files.txt
+
+          echo "sql=$sql" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.sql == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -241,3 +303,33 @@ jobs:
           SQLCMD_CONN_ARGS: "-C -N disable"
         run: |
           python3 sp_QueryStoreCleanup/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+  # The one check the rulesets should require. It always runs, so it always
+  # reports. It fails if the changes job broke (otherwise a broken changes job
+  # would skip the matrix and still pass) or if any matrix job failed or was
+  # cancelled, and passes when the matrix succeeded or was skipped because no
+  # SQL-relevant file changed.
+  summary:
+    name: SQL Tests
+    needs: [changes, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          SQL_CHANGED: ${{ needs.changes.outputs.sql }}
+        run: |
+          echo "changes: $CHANGES_RESULT (sql=$SQL_CHANGED)"
+          echo "test:    $TEST_RESULT"
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "The changes job did not succeed."
+            exit 1
+          fi
+          if [ "$SQL_CHANGED" = "true" ]; then
+            [ "$TEST_RESULT" = "success" ] || { echo "The SQL Server matrix did not succeed."; exit 1; }
+          else
+            [ "$TEST_RESULT" = "skipped" ] || { echo "Expected the matrix to be skipped."; exit 1; }
+          fi
+          echo "OK"
