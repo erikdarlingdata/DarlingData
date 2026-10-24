@@ -1456,7 +1456,8 @@ CREATE TABLE
 );
 
 /*
-Where each plan's last and first ParameterList start and end in the plan text
+Where each plan's last and first ParameterList start and end in the plan text,
+and where the plan of its first statement ends
 */
 CREATE TABLE
     #parameter_list_positions
@@ -1466,6 +1467,7 @@ CREATE TABLE
     first_start bigint NULL,
     last_end bigint NULL,
     first_end bigint NULL,
+    plan_end bigint NULL,
     INDEX plan_id CLUSTERED (plan_id)
 );
 
@@ -4803,6 +4805,12 @@ Shredding straight from the expression ran the search of the plan text
 and the conversion again for the .nodes() call and for each .value()
 call. The positions are stored first because one statement that found
 and used them searched the plan text again for each use.
+
+Each search of the plan text is its own statement, and its result is stored
+before the next one uses it. In one statement the optimizer copied each
+search into every expression that used it, so a plan's text was scanned
+again for each use. The last list is found by reversing only the text from
+the first list to the end of the first statement, not the whole plan.
 */
 INSERT
     #parameter_list_positions
@@ -4810,42 +4818,74 @@ WITH
     (TABLOCK)
 (
     plan_id,
-    last_start,
     first_start
 )
 SELECT
     qsp.plan_id,
-    last_start =
-        DATALENGTH(qpb.query_plan) / 2 -
-        CHARINDEX(REVERSE(N'<ParameterList>'), REVERSE(qpb.query_plan)) -
-        LEN(N'<ParameterList>') + 2,
-    first_start =
-        CHARINDEX(N'<ParameterList>', qpb.query_plan)
+    fs.first_start
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
     /*
     Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation.
-    Only the text up to the first closing QueryPlan tag is searched: that is the first statement's plan, and the
-    statement text is the first statement's too.
     */
     SELECT
-        query_plan =
-            LEFT
+        first_start =
+            CHARINDEX(N'<ParameterList>', qsp.query_plan COLLATE Latin1_General_100_BIN2)
+) AS fs
+WHERE fs.first_start > 0
+OPTION(RECOMPILE);
+
+/*
+Only the text up to the first closing QueryPlan tag counts: that is the
+first statement's plan, and the statement text is the first statement's too
+*/
+UPDATE
+    plp
+SET
+    plp.plan_end =
+        ISNULL
+        (
+            NULLIF
             (
-                qsp.query_plan COLLATE Latin1_General_100_BIN2,
-                ISNULL
+                CHARINDEX(N'</QueryPlan>', qsp.query_plan COLLATE Latin1_General_100_BIN2),
+                0
+            ) + LEN(N'</QueryPlan>') - 1,
+            DATALENGTH(qsp.query_plan) / 2
+        )
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+OPTION(RECOMPILE);
+
+DELETE
+    plp
+FROM #parameter_list_positions AS plp
+WHERE plp.first_start + LEN(N'<ParameterList>') - 1 > plp.plan_end
+OPTION(RECOMPILE);
+
+UPDATE
+    plp
+SET
+    plp.last_start =
+        plp.plan_end -
+        CHARINDEX
+        (
+            REVERSE(N'<ParameterList>'),
+            REVERSE
+            (
+                SUBSTRING
                 (
-                    NULLIF
-                    (
-                        CHARINDEX(N'</QueryPlan>', qsp.query_plan COLLATE Latin1_General_100_BIN2),
-                        0
-                    ) + LEN(N'</QueryPlan>') - 1,
-                    DATALENGTH(qsp.query_plan) / 2
+                    qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                    plp.first_start,
+                    plp.plan_end - plp.first_start + 1
                 )
             )
-) AS qpb
-WHERE CHARINDEX(N'<ParameterList>', qpb.query_plan) > 0
+        ) -
+        LEN(N'<ParameterList>') + 2
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
 OPTION(RECOMPILE);
 
 UPDATE
