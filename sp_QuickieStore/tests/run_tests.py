@@ -34,12 +34,14 @@ Exits 1 if any assertion fails.
 """
 
 import argparse
+import calendar
 import math
 import os
 import re
 import shlex
 import subprocess
 import sys
+import time
 
 TEST_DB = "quickiestore_test"
 
@@ -517,8 +519,215 @@ def case_sensitive_search_tests(server, password, R):
                 completed(out) and result_rows(out) == 0,
                 "completed=%s rows=%d errors=%s"
                 % (completed(out), result_rows(out), find_sql_errors(combined)))
+
+        # With @escape_brackets = 1 the underscore in the marker is escaped, so
+        # it is a literal underscore and not a one-character wildcard. That
+        # has to hold for every escape character, including the three that
+        # are themselves special in a LIKE pattern: _ [ ].
+        for esc in ("\\", "_", "[", "]"):
+            extra = ", @escape_brackets = 1, @escape_character = '%s'" % esc
+            out, combined = run_qs(server, password,
+                                   ", @query_text_search = 'qs_case_marker'" + extra,
+                                   database_name=CS_DB)
+            R.check("Escape",
+                    "@escape_character = '%s': a_b finds qs_Case_Marker" % esc,
+                    completed(out) and result_rows(out) > 0,
+                    "completed=%s rows=%d errors=%s"
+                    % (completed(out), result_rows(out), find_sql_errors(combined)))
+
+            out, combined = run_qs(server, password,
+                                   ", @query_text_search = 'qsXcase_marker'" + extra,
+                                   database_name=CS_DB)
+            R.check("Escape",
+                    "@escape_character = '%s': the underscore is not a wildcard" % esc,
+                    completed(out) and result_rows(out) == 0,
+                    "completed=%s rows=%d errors=%s"
+                    % (completed(out), result_rows(out), find_sql_errors(combined)))
     finally:
         _sqlcmd(server, password, CS_CLEANUP_SQL)
+
+
+MD_DBS = ("quickiestore_test_md1", "quickiestore_test_md2")
+
+MD_SETUP_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db};
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL);
+"""
+
+# Both databases run the same statements in the same order, so their
+# query_id, query_text_id and plan_id values collide.
+MD_TABLE_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+CREATE TABLE dbo.t (id integer NOT NULL);
+INSERT dbo.t (id) VALUES (1), (2), (3);
+"""
+
+# The self joins keep simple parameterization from folding the four markers
+# into one parameterized query, which drops the comments and merges the
+# literals. Each marker sits before the select list because Query Store keeps
+# only the statement text, so a trailing comment is lost. Query Store can
+# report READ_WRITE a moment before it captures anything, and a plan compiled
+# in that gap is never captured and is then reused from cache, so every
+# attempt clears this database's plan cache first.
+MD_QUERIES_SQL = """
+SET NOCOUNT ON;
+ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
+SELECT /*md_q1*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id > 0;
+SELECT /*md_q2*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id > 1;
+SELECT /*md_q3*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id > 2;
+SELECT /*md_q4*/ c = COUNT_BIG(*) FROM dbo.t AS t JOIN dbo.t AS u ON u.id = t.id WHERE t.id = 1;
+EXECUTE sys.sp_query_store_flush_db;
+"""
+
+# One row per marker that has a query and runtime stats. The [_] keeps this
+# probe's own text from matching its own patterns.
+MD_PROBE_SQL = """
+SET NOCOUNT ON;
+SELECT DISTINCT
+    marker = m.marker
+FROM (VALUES (N'md_q1'), (N'md_q2'), (N'md_q3'), (N'md_q4')) AS m (marker)
+JOIN sys.query_store_query_text AS qsqt
+  ON qsqt.query_sql_text LIKE N'%/*' + REPLACE(m.marker, N'_', N'[_]') + N'*/%'
+JOIN sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+JOIN sys.query_store_runtime_stats AS qsrs
+  ON qsrs.plan_id = qsp.plan_id;
+"""
+
+MD_MARKERS = ("md_q1", "md_q2", "md_q3", "md_q4")
+
+
+def md_missing_markers(server, password, db):
+    """Markers with no captured query and runtime stats in the database."""
+    out, _ = _sqlcmd(server, password, MD_PROBE_SQL, database=db)
+    found = {line.strip() for line in out.splitlines()}
+    return [m for m in MD_MARKERS if m not in found]
+
+
+def md_build_database(server, password, db):
+    """Create one database, load it, and run the marker queries until every
+    marker is captured. Returns (errors, missing markers)."""
+    out, err = _sqlcmd(server, password, MD_SETUP_SQL.format(db=db))
+    out2, err2 = _sqlcmd(server, password, MD_TABLE_SQL, database=db, timeout=600)
+    errs = find_sql_errors(out + "\n" + err + "\n" + out2 + "\n" + err2)
+    if errs:
+        return errs, list(MD_MARKERS)
+    missing = list(MD_MARKERS)
+    for _ in range(5):
+        out, err = _sqlcmd(server, password, MD_QUERIES_SQL, database=db,
+                           timeout=600)
+        errs = find_sql_errors(out + "\n" + err)
+        if errs:
+            return errs, missing
+        missing = md_missing_markers(server, password, db)
+        if not missing:
+            break
+        time.sleep(2)
+    return [], missing
+
+
+def multi_database_tests(server, password, R):
+    """Two databases whose Query Store ids collide, read in one
+    @get_all_databases run: expert mode has to return the compilation stats
+    row of every query, not one per colliding id."""
+    try:
+        for db in MD_DBS:
+            errs, missing = md_build_database(server, password, db)
+            R.check("MultiDb", "%s created and loaded" % db, not errs, str(errs))
+            if errs:
+                return
+            R.check("MultiDb", "%s captured every marker query" % db,
+                    not missing, "missing from Query Store: %s" % ", ".join(missing))
+            if missing:
+                return
+
+        out, err = _sqlcmd(
+            server, password,
+            "SET NOCOUNT ON; EXECUTE dbo.sp_QuickieStore @get_all_databases = 1, "
+            "@include_databases = N'%s', @expert_mode = 1, @top = 50;"
+            % ",".join(MD_DBS))
+        combined = out + "\n" + err
+        runtime = sum(1 for line in out.splitlines()
+                      if line.startswith("runtime_stats"))
+        compile_rows = sum(1 for line in out.splitlines()
+                           if line.startswith("compilation_stats"))
+        R.check("MultiDb", "@get_all_databases runs cleanly",
+                completed(out) and not find_sql_errors(combined),
+                str(find_sql_errors(combined)))
+        R.check("MultiDb", "both databases return their queries",
+                runtime >= 8, "runtime_stats rows=%d" % runtime)
+        R.check("MultiDb",
+                "expert mode returns one compilation_stats row per query "
+                "when ids collide across databases",
+                compile_rows == runtime,
+                "runtime_stats=%d compilation_stats=%d" % (runtime, compile_rows))
+    finally:
+        for db in MD_DBS:
+            _sqlcmd(server, password, CLEANUP_SQL.replace(TEST_DB, db))
+
+
+def id_list_tests(server, password, R):
+    """Id lists split on commas, spaces and line breaks, and may run past 4000
+    characters once the splitter has expanded them."""
+    out, err = _sqlcmd(server, password,
+                       "SET NOCOUNT ON; SELECT TOP (2) 'PID:' + CONVERT(varchar(20), "
+                       "qsrs.plan_id) FROM sys.query_store_runtime_stats AS qsrs "
+                       "GROUP BY qsrs.plan_id ORDER BY qsrs.plan_id;",
+                       database=TEST_DB)
+    ids = re.findall(r"PID:(\d+)", out)
+    R.check("IdList", "two real plan ids found", len(ids) == 2, out[:200])
+    if len(ids) != 2:
+        return
+
+    def rows_for(list_expr):
+        sql = ("SET NOCOUNT ON; DECLARE @ids nvarchar(4000) = %s; "
+               "EXECUTE dbo.sp_QuickieStore @database_name = '%s', "
+               "@include_plan_ids = @ids;" % (list_expr, TEST_DB))
+        o, e = _sqlcmd(server, password, sql)
+        return o, o + "\n" + e
+
+    out, combined = rows_for("N'%s,%s'" % tuple(ids))
+    baseline = result_rows(out)
+    R.check("IdList", "comma separated plan ids return rows",
+            completed(out) and baseline > 0,
+            "rows=%d errors=%s" % (baseline, find_sql_errors(combined)))
+
+    # CR and LF in a pasted list separate ids. Deleting them used to glue
+    # the two ids into one number that matched nothing.
+    for name, sep in (("CRLF", "CHAR(13) + CHAR(10)"), ("LF", "CHAR(10)"),
+                      ("CR", "CHAR(13)")):
+        out, combined = rows_for("N'%s' + %s + N'%s'" % (ids[0], sep, ids[1]))
+        R.check("IdList", "plan ids separated by %s return the same rows" % name,
+                completed(out) and result_rows(out) == baseline,
+                "rows=%d expected=%d errors=%s"
+                % (result_rows(out), baseline, find_sql_errors(combined)))
+
+    # About 380 ids is 3,400 characters; the splitter adds six per comma, so
+    # the expanded list passes 4,000 and used to fail with Msg 9400.
+    filler = ",".join(str(900000 + i) for i in range(380))
+    out, combined = rows_for("N'%s,%s,%s'" % (filler, ids[0], ids[1]))
+    R.check("IdList", "a list of 380 plan ids is split without Msg 9400",
+            completed(out) and not find_sql_errors(combined)
+            and result_rows(out) == baseline,
+            "rows=%d expected=%d errors=%s"
+            % (result_rows(out), baseline, find_sql_errors(combined)))
 
 
 PS_SUMMARY_MARKER = "multi_shape_query_hashes"
@@ -959,6 +1168,26 @@ CROSS APPLY
 WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'),
                         OBJECT_ID(N'dbo.rm_q3'))
 GROUP BY qsws.plan_id, qsq.object_id, p.period, qsws.wait_category_desc;
+SELECT
+    gt = 'GT|wexec|' + CONVERT(varchar(20), qsws.plan_id) + '|' +
+         OBJECT_NAME(qsq.object_id) + '|' + p.period + '|' +
+         qsws.wait_category_desc + '|' +
+         CONVERT(varchar(40), SUM(qsws.total_query_wait_time_ms / NULLIF(qsws.avg_query_wait_time_ms, 0)))
+FROM sys.query_store_wait_stats AS qsws
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsws.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+CROSS APPLY
+(
+    SELECT period = CASE WHEN MAX(qsrs.last_execution_time) >= @split THEN 'No' ELSE 'Yes' END
+    FROM sys.query_store_runtime_stats AS qsrs
+    WHERE qsrs.plan_id = qsws.plan_id
+    AND   qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+    AND   qsrs.execution_type = qsws.execution_type
+) AS p
+WHERE qsq.object_id IN (OBJECT_ID(N'dbo.rm_q1'), OBJECT_ID(N'dbo.rm_q2'),
+                        OBJECT_ID(N'dbo.rm_q3'))
+AND   qsws.total_query_wait_time_ms > 0
+GROUP BY qsws.plan_id, qsq.object_id, p.period, qsws.wait_category_desc;
 """
 
 # WaitStatsByQuery and WaitStatsTotal log tables in the shape the procedure
@@ -1225,6 +1454,14 @@ def regression_window_tests(server, password, R, state):
     for plan, obj, period, cat, ms in re.findall(
             r"GT\|waits\|(\d+)\|(\w+)\|(Yes|No)\|([^|\r\n]+)\|(\d+)", out):
         waits[(plan, period, cat)] = int(ms)
+    # The executions behind each wait average, from Query Store's own total
+    # and average: its avg_query_wait_time_ms is the total over an execution
+    # count. On SQL Server 2025 the count is the executions that had the wait,
+    # not the interval's count_executions.
+    wait_execs = {}
+    for plan, obj, period, cat, n in re.findall(
+            r"GT\|wexec\|(\d+)\|(\w+)\|(Yes|No)\|([^|\r\n]+)\|([\d.]+)", out):
+        wait_execs[(plan, period, cat)] = float(n)
     q1_plans = sorted({p for (p, _), (o, _) in runs.items() if o == "rm_q1"})
     q2_plans = sorted({p for (p, _), (o, _) in runs.items() if o == "rm_q2"},
                       key=int)
@@ -1243,6 +1480,10 @@ def regression_window_tests(server, password, R, state):
 
     def lock_ms(period=None, plan=None):
         return sum(ms for (p, per, cat), ms in waits.items()
+                   if p == (plan or q1) and cat == "Lock" and period in (None, per))
+
+    def lock_execs(period=None, plan=None):
+        return sum(n for (p, per, cat), n in wait_execs.items()
                    if p == (plan or q1) and cat == "Lock" and period in (None, per))
 
     def one_per_query(stdout, group):
@@ -1275,7 +1516,26 @@ def regression_window_tests(server, password, R, state):
         R.check(group, "wait stats total Lock covers rm_q1 and rm_q3, matching "
                 "Query Store", all(got.get(p) == [str(n)] for p, n in expected.items()),
                 "got=%s expected=%s" % (got, expected))
-        rules = {"sum": sum, "avg": lambda v: sum(v) / len(v), "min": min, "max": max}
+        # Lock's average is the wait over the executions that had it, from
+        # Query Store, not a mean of per-interval or per-plan averages.
+        bad = []
+        for p in latest:
+            execs = lock_execs(p, q1) + lock_execs(p, q3)
+            got_avg = [number(r.get("avg_query_wait_time_ms")) for r in lock.get(p, [])]
+            want_avg = expected[p] / execs if execs else None
+            if (want_avg is None or len(got_avg) != 1 or got_avg[0] is None
+                    or not math.isclose(got_avg[0], want_avg, rel_tol=1e-6, abs_tol=0.001)):
+                bad.append("%s: got %s, %s ms over %s executions = %s; by-query "
+                           "(plan, total, avg) %s; execs %s"
+                           % (p, got_avg, expected[p], execs, want_avg,
+                              [(r.get("plan_id"), r.get("total_query_wait_time_ms"),
+                                r.get("avg_query_wait_time_ms")) for r in by_query
+                               if r.get("wait_category_desc") == "Lock"
+                               and r.get(period_col) == p],
+                              {k: v for k, v in wait_execs.items() if k[1:] == (p, "Lock")}))
+        R.check(group, "wait stats total Lock average is the wait per execution "
+                "from Query Store", not bad, "; ".join(bad[:3]))
+        rules = {"sum": sum, "min": min, "max": max}
         bad = []
         for t in totals:
             key = (t.get("wait_category_desc"), t.get(period_col))
@@ -1284,11 +1544,27 @@ def regression_window_tests(server, password, R, state):
             if not rows:
                 bad.append("%s: no by-query rows" % (key,))
                 continue
+            # The averages are weighted by executions: a by-query row's total
+            # divided by its average is its executions, so the total row's
+            # average is the sum of the totals over the sum of the executions.
+            # A plain mean of the by-query averages is what it used to be.
+            for column, total in (("avg_query_wait_time_ms", "total_query_wait_time_ms"),
+                                  ("avg_query_duration_ms", "total_query_duration_ms")):
+                totals_v = [number(r.get(total)) for r in rows]
+                avgs = [number(r.get(column)) for r in rows]
+                value = number(t.get(column))
+                if None in totals_v or None in avgs or 0 in avgs:
+                    expected_avg = None
+                else:
+                    expected_avg = sum(totals_v) / sum(a_t / a for a_t, a in zip(totals_v, avgs))
+                if (value is None or expected_avg is None or not math.isclose(
+                        value, expected_avg, rel_tol=1e-6, abs_tol=0.001)):
+                    bad.append("%s %s: got %s, executions-weighted %s of %s"
+                               % (key, column, t.get(column), expected_avg,
+                                  [(r.get(total), r.get(column)) for r in rows]))
             for column, rule in (
                     ("total_query_wait_time_ms", "sum"),
                     ("total_query_duration_ms", "sum"),
-                    ("avg_query_wait_time_ms", "avg"),
-                    ("avg_query_duration_ms", "avg"),
                     ("min_query_wait_time_ms", "min"),
                     ("min_query_duration_ms", "min"),
                     ("max_query_wait_time_ms", "max"),
@@ -1300,8 +1576,8 @@ def regression_window_tests(server, password, R, state):
                     bad.append("%s %s: got %s, %s of %s"
                                % (key, column, t.get(column), rule,
                                   [r.get(column) for r in rows]))
-        R.check(group, "wait stats total adds up, averages, and takes the min "
-                "and max of the by-query rows", bool(totals) and not bad,
+        R.check(group, "wait stats total adds up, weights the averages by "
+                "executions, and takes the min and max of the by-query rows", bool(totals) and not bad,
                 "; ".join(bad[:3]) or "no wait stats total rows")
         bad = []
         for period, plan in latest.items():
@@ -1404,6 +1680,31 @@ def regression_window_tests(server, password, R, state):
     R.check("WaitWindow", "count_executions per plan match Query Store",
             all(got.get(p) == str(n) for p, n in totals.items()),
             "got=%s expected=%s" % (got, totals))
+    # executions_per_second is a fraction below one execution per second: it
+    # is count_executions over the whole seconds between the first and last
+    # execution, and it is NULL when they fall in the same second.
+    def whole_seconds(first, last):
+        def secs(v):
+            m = re.match(r"(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)", v)
+            return calendar.timegm(tuple(int(g) for g in m.groups()) + (0, 0, 0))
+        return secs(last) - secs(first)
+    eps_bad = []
+    eps_slow = 0
+    for r in main_rows:
+        gap = whole_seconds(r["first_execution_time"], r["last_execution_time"])
+        want = int(r["count_executions"]) / gap if gap > 0 else None
+        have = r.get("executions_per_second")
+        have = float(have) if have not in (None, "", "NULL") else None
+        if want is None:
+            ok = have is None or have == 0
+        else:
+            ok = have is not None and abs(have - want) < 1e-6
+            eps_slow += 1 if want < 1 else 0
+        if not ok:
+            eps_bad.append((r.get("plan_id"), r["count_executions"], gap, have))
+    R.check("WaitWindow", "executions_per_second is a fraction below one per second",
+            not eps_bad and eps_slow > 0,
+            "bad=%s slow rows=%d" % (eps_bad, eps_slow))
     by_plan = {r.get("plan_id"): r for r in main_rows}
     R.check("WaitWindow", "top_waits shows Lock for rm_q1",
             "Lock" in by_plan.get(q1, {}).get("top_waits", ""),
@@ -1496,6 +1797,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="SQL2022")
     ap.add_argument("--password", default="L!nt0044")
+    ap.add_argument("--only", choices=["multidb"],
+                    help="run one group by itself (multidb: the MultiDb group)")
     args = ap.parse_args()
 
     print("Running sp_QuickieStore assertion tests against %s..." % args.server)
@@ -1511,11 +1814,22 @@ def main():
         sys.exit(1)
 
     R = Results()
+    if args.only == "multidb":
+        try:
+            multi_database_tests(args.server, args.password, R)
+        finally:
+            for db in MD_DBS:
+                _sqlcmd(args.server, args.password, CLEANUP_SQL.replace(TEST_DB, db))
+        for item in R.items:
+            print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",
+                                           item["group"], item["name"], item["detail"]))
+        sys.exit(1 if R.failed else 0)
     try:
         # Slot A of the regression fixture runs first, so the other tests
         # put time between it and slot B.
         rm_state = regression_window_setup(args.server, args.password, R)
-        if build_fixture(args.server, args.password, R):
+        build_ok = build_fixture(args.server, args.password, R)
+        if build_ok:
             smoke_tests(args.server, args.password, R)
             sort_order_matrix(args.server, args.password, R)
             mode_matrix(args.server, args.password, R)
@@ -1527,6 +1841,11 @@ def main():
             high_impact_tests(args.server, args.password, R)
         if rm_state:
             regression_window_tests(args.server, args.password, R, rm_state)
+        # These create databases and run many procedure calls, so they go after
+        # the regression window tests, which read plan cache data.
+        if build_ok:
+            multi_database_tests(args.server, args.password, R)
+            id_list_tests(args.server, args.password, R)
     finally:
         out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL + RM_CLEANUP_SQL)
         R.check("Fixture", "scratch databases dropped",

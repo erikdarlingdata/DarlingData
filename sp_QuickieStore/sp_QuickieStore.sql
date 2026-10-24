@@ -57,8 +57,8 @@ ALTER PROCEDURE
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
     @sort_order varchar(50) = 'cpu', /*the runtime metric you want to prioritize results by; varchar(50) so the documented 'average '/'avg ' prefix forms (e.g. 'average buffer latches waits') aren't truncated before normalization and silently fall back to cpu*/
     @top bigint = 10, /*the number of queries you want to pull back*/
-    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
-    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @timezone sysname = NULL, /*user specified time zone to override dates displayed in results*/
     @execution_count bigint = NULL, /*the minimum number of executions a query must have*/
     @duration_ms bigint = NULL, /*the minimum duration a query must have to show up in results*/
@@ -95,8 +95,8 @@ ALTER PROCEDURE
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
     @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
     @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
-    @regression_baseline_start_date datetimeoffset(7) = NULL, /*the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
-    @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
+    @regression_baseline_start_date datetimeoffset(7) = NULL, /*the begin date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
     @include_query_hash_totals bit = 0, /*will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
@@ -161,8 +161,8 @@ BEGIN
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
                 WHEN N'@sort_order' THEN 'the runtime metric you want to prioritize results by'
                 WHEN N'@top' THEN 'the number of queries you want to pull back'
-                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
-                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
+                WHEN N'@start_date' THEN 'the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@timezone' THEN 'user specified time zone to override dates displayed in results'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN N'@duration_ms' THEN 'the minimum duration a query must have to show up in results'
@@ -199,8 +199,8 @@ BEGIN
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
                 WHEN N'@work_start' THEN 'use this to set a specific start of your work days'
                 WHEN N'@work_end' THEN 'use this to set a specific end of your work days'
-                WHEN N'@regression_baseline_start_date' THEN 'the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
-                WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
+                WHEN N'@regression_baseline_start_date' THEN 'the begin date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
                 WHEN N'@include_query_hash_totals' THEN N'will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
@@ -406,7 +406,7 @@ BEGIN
     SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits Total (2017+, expert mode only): total wait stats for the chosen date range only' UNION ALL
+    SELECT 'Query Store Waits Total (2017+, expert mode only): wait stats totals for the queries in the results above, in the chosen date range' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -560,6 +560,45 @@ BEGIN
     SELECT 'multi_shape_query_hashes: how many query_hashes compiled to more than one plan shape in the window' UNION ALL
     SELECT 'wait_stats: whether the per-shape top_waits column is available, and why not when it is not' UNION ALL
     SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order (work-weighted)';
+
+    /*
+    Plan count by hashes guide
+    */
+    SELECT
+        plan_count_by_hashes_columns =
+           'when using @sort_order = ''plan count by hashes'', results are one row per query hash:' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'the top @top query hashes by how many plan hashes (plan shapes) they have in the time window.' UNION ALL
+    SELECT '    each row shows one representative plan: the plan with the most executions in the window for that' UNION ALL
+    SELECT '    query hash, then the most recently run one. The runtime columns, query text, and query_plan are for' UNION ALL
+    SELECT '    that plan.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'query_hash_from_hash_counting: the query hash' UNION ALL
+    SELECT 'plan_hash_count_for_query_hash: distinct plan hashes (plan shapes). The results are ranked on this.' UNION ALL
+    SELECT 'the columns below count over every plan of the query hash that ran in the window, to show why it has' UNION ALL
+    SELECT '    so many plans:' UNION ALL
+    SELECT 'plan_count_reasons: the counts below in words, one sentence for each rule that applies, joined by | .' UNION ALL
+    SELECT '    NULL when no rule applies. The rules:' UNION ALL
+    SELECT '    more than one query text, and at least half as many texts as query_ids, not counting Parameter' UNION ALL
+    SELECT '        Sensitive Plan variants: the texts differ only in literal values' UNION ALL
+    SELECT '    more than one batch, and at least half as many batches as query_ids: the statement uses a temp' UNION ALL
+    SELECT '        table or table variable and runs in batches whose text changes' UNION ALL
+    SELECT '    more than one context setting: it compiled under different SET options, with the ones that differ' UNION ALL
+    SELECT '    more than one module: the same statement is in several modules' UNION ALL
+    SELECT '    more plan hashes than query_ids: queries compiled more than one plan shape each' UNION ALL
+    SELECT '    any Parameter Sensitive Plan variants (2022+)' UNION ALL
+    SELECT '    more than one compatibility level' UNION ALL
+    SELECT 'plan_id_count_for_query_hash: distinct plans. Many plans but few shapes means the same plan compiled again.' UNION ALL
+    SELECT 'query_id_count_for_query_hash: distinct query_ids. Query Store makes a new query_id for each different' UNION ALL
+    SELECT '    combination of query text, context settings, parent object, and, for some queries, batch.' UNION ALL
+    SELECT 'query_text_id_count_for_query_hash: distinct query texts' UNION ALL
+    SELECT 'batch_sql_handle_count_for_query_hash: distinct batches. Query Store fills batch_sql_handle only for' UNION ALL
+    SELECT '    queries that use a temp table or table variable, and gives the same statement in each batch its own query_id.' UNION ALL
+    SELECT 'object_id_count_for_query_hash: distinct modules (ad hoc statements are not counted)' UNION ALL
+    SELECT 'compatibility_level_count_for_query_hash: distinct compatibility levels the plans compiled under' UNION ALL
+    SELECT 'context_settings_count_for_query_hash: distinct context settings (SET options, language, date format, and so on)' UNION ALL
+    SELECT 'context_settings_that_differ_for_query_hash: the settings that differ across those context settings' UNION ALL
+    SELECT 'variant_query_count_for_query_hash (2022+): query_ids that are Parameter Sensitive Plan variants';
 
     /*
     Limitations
@@ -936,6 +975,15 @@ BEGIN
 END;
 
 /*
+A negative @top would fail later as a TOP with a negative row count
+*/
+IF @top < 0
+BEGIN
+    RAISERROR('@top must be 0 or greater. You supplied %I64d.', 11, 1, @top) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
 These are the tables that we'll use to grab data from query store
 It will be fun
 You'll love it
@@ -1061,7 +1109,9 @@ is done after the point where we would truncate.
 */
 
 /*
-Holds plan_id with the count of the number of query hashes they have.
+Holds one row per query hash, with one representative plan_id,
+the count of plan hashes the query hash has, and counts that
+show why it has so many plans.
 Only used when we're sorting by how many plan hashes each
 query hash has.
 */
@@ -1072,6 +1122,16 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     plan_hash_count_for_query_hash integer NOT NULL,
+    plan_count_reasons nvarchar(2000) NULL,
+    plan_id_count_for_query_hash bigint NULL,
+    query_id_count_for_query_hash bigint NULL,
+    query_text_id_count_for_query_hash bigint NULL,
+    batch_sql_handle_count_for_query_hash bigint NULL,
+    object_id_count_for_query_hash bigint NULL,
+    compatibility_level_count_for_query_hash bigint NULL,
+    context_settings_count_for_query_hash bigint NULL,
+    context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+    variant_query_count_for_query_hash bigint NULL,
     PRIMARY KEY CLUSTERED (database_id, plan_id, query_hash)
 );
 
@@ -1374,11 +1434,25 @@ CREATE TABLE
     last_compile_start_time datetimeoffset(7) NULL,
     last_execution_time datetimeoffset(7) NULL,
     avg_compile_duration_ms float NULL,
-    last_compile_duration_ms bigint NULL,
+    last_compile_duration_ms float NULL,
     plan_forcing_type_desc nvarchar(60) NULL,
     has_compile_replay_script bit NULL,
     is_optimized_plan_forcing_disabled bit NULL,
-    plan_type_desc nvarchar(120) NULL
+    plan_type_desc nvarchar(120) NULL,
+    /* Later steps join on these keys once per plan or query, so they need an index */
+    PRIMARY KEY CLUSTERED (database_id, plan_id)
+);
+
+/*
+Every plan for the queries in #query_store_plan,
+to build all_plan_ids in one pass
+*/
+CREATE TABLE
+    #all_plan_ids
+(
+    query_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    PRIMARY KEY CLUSTERED (query_id, plan_id)
 );
 
 /*
@@ -1433,29 +1507,30 @@ CREATE TABLE
     avg_compile_duration_ms float NULL,
     total_compile_duration_ms AS
         (count_compiles * avg_compile_duration_ms),
-    last_compile_duration_ms bigint NULL,
+    last_compile_duration_ms float NULL,
     avg_bind_duration_ms float NULL,
     total_bind_duration_ms AS
         (count_compiles * avg_bind_duration_ms),
-    last_bind_duration_ms bigint NULL,
+    last_bind_duration_ms float NULL,
     avg_bind_cpu_time_ms float NULL,
     total_bind_cpu_time_ms AS
         (count_compiles * avg_bind_cpu_time_ms),
-    last_bind_cpu_time_ms bigint NULL,
+    last_bind_cpu_time_ms float NULL,
     avg_optimize_duration_ms float NULL,
     total_optimize_duration_ms AS
         (count_compiles * avg_optimize_duration_ms),
-    last_optimize_duration_ms bigint NULL,
+    last_optimize_duration_ms float NULL,
     avg_optimize_cpu_time_ms float NULL,
     total_optimize_cpu_time_ms AS
         (count_compiles * avg_optimize_cpu_time_ms),
-    last_optimize_cpu_time_ms bigint NULL,
+    last_optimize_cpu_time_ms float NULL,
     avg_compile_memory_mb float NULL,
     total_compile_memory_mb AS
         (count_compiles * avg_compile_memory_mb),
-    last_compile_memory_mb bigint NULL,
-    max_compile_memory_mb bigint NULL,
-    is_clouddb_internal_query bit NULL
+    last_compile_memory_mb float NULL,
+    max_compile_memory_mb float NULL,
+    is_clouddb_internal_query bit NULL,
+    PRIMARY KEY CLUSTERED (database_id, query_id)
 );
 
 /*
@@ -1470,18 +1545,18 @@ CREATE TABLE
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL,
-    total_grant_mb bigint NULL,
-    last_grant_mb bigint NULL,
-    min_grant_mb bigint NULL,
-    max_grant_mb bigint NULL,
-    total_used_grant_mb bigint NULL,
-    last_used_grant_mb bigint NULL,
-    min_used_grant_mb bigint NULL,
-    max_used_grant_mb bigint NULL,
-    total_ideal_grant_mb bigint NULL,
-    last_ideal_grant_mb bigint NULL,
-    min_ideal_grant_mb bigint NULL,
-    max_ideal_grant_mb bigint NULL,
+    total_grant_mb float NULL,
+    last_grant_mb float NULL,
+    min_grant_mb float NULL,
+    max_grant_mb float NULL,
+    total_used_grant_mb float NULL,
+    last_used_grant_mb float NULL,
+    min_used_grant_mb float NULL,
+    max_used_grant_mb float NULL,
+    total_ideal_grant_mb float NULL,
+    last_ideal_grant_mb float NULL,
+    min_ideal_grant_mb float NULL,
+    max_ideal_grant_mb float NULL,
     total_reserved_threads bigint NULL,
     last_reserved_threads bigint NULL,
     min_reserved_threads bigint NULL,
@@ -1489,7 +1564,8 @@ CREATE TABLE
     total_used_threads bigint NULL,
     last_used_threads bigint NULL,
     min_used_threads bigint NULL,
-    max_used_threads bigint NULL
+    max_used_threads bigint NULL,
+    PRIMARY KEY CLUSTERED (database_id, query_text_id)
 );
 
 /*
@@ -1499,18 +1575,18 @@ CREATE TABLE
     #dm_exec_query_stats
 (
     statement_sql_handle varbinary(64) NOT NULL,
-    total_grant_mb bigint NULL,
-    last_grant_mb bigint NULL,
-    min_grant_mb bigint NULL,
-    max_grant_mb bigint NULL,
-    total_used_grant_mb bigint NULL,
-    last_used_grant_mb bigint NULL,
-    min_used_grant_mb bigint NULL,
-    max_used_grant_mb bigint NULL,
-    total_ideal_grant_mb bigint NULL,
-    last_ideal_grant_mb bigint NULL,
-    min_ideal_grant_mb bigint NULL,
-    max_ideal_grant_mb bigint NULL,
+    total_grant_mb float NULL,
+    last_grant_mb float NULL,
+    min_grant_mb float NULL,
+    max_grant_mb float NULL,
+    total_used_grant_mb float NULL,
+    last_used_grant_mb float NULL,
+    min_used_grant_mb float NULL,
+    max_used_grant_mb float NULL,
+    total_ideal_grant_mb float NULL,
+    last_ideal_grant_mb float NULL,
+    min_ideal_grant_mb float NULL,
+    max_ideal_grant_mb float NULL,
     total_reserved_threads bigint NULL,
     last_reserved_threads bigint NULL,
     min_reserved_threads bigint NULL,
@@ -1538,7 +1614,7 @@ CREATE TABLE
     executions_per_second AS
         ISNULL
         (
-            count_executions /
+            count_executions * 1. /
                 NULLIF
                 (
                     DATEDIFF
@@ -1552,48 +1628,48 @@ CREATE TABLE
             0
         ),
     avg_duration_ms float NULL,
-    last_duration_ms bigint NOT NULL,
-    min_duration_ms bigint NOT NULL,
-    max_duration_ms bigint NOT NULL,
+    last_duration_ms float NOT NULL,
+    min_duration_ms float NOT NULL,
+    max_duration_ms float NOT NULL,
     total_duration_ms AS
         (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
-    last_cpu_time_ms bigint NOT NULL,
-    min_cpu_time_ms bigint NOT NULL,
-    max_cpu_time_ms bigint NOT NULL,
+    last_cpu_time_ms float NOT NULL,
+    min_cpu_time_ms float NOT NULL,
+    max_cpu_time_ms float NOT NULL,
     total_cpu_time_ms AS
         (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
-    last_logical_io_reads_mb bigint NOT NULL,
-    min_logical_io_reads_mb bigint NOT NULL,
-    max_logical_io_reads_mb bigint NOT NULL,
+    last_logical_io_reads_mb float NOT NULL,
+    min_logical_io_reads_mb float NOT NULL,
+    max_logical_io_reads_mb float NOT NULL,
     total_logical_io_reads_mb AS
         (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
-    last_logical_io_writes_mb bigint NOT NULL,
-    min_logical_io_writes_mb bigint NOT NULL,
-    max_logical_io_writes_mb bigint NOT NULL,
+    last_logical_io_writes_mb float NOT NULL,
+    min_logical_io_writes_mb float NOT NULL,
+    max_logical_io_writes_mb float NOT NULL,
     total_logical_io_writes_mb AS
         (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
-    last_physical_io_reads_mb bigint NOT NULL,
-    min_physical_io_reads_mb bigint NOT NULL,
-    max_physical_io_reads_mb bigint NOT NULL,
+    last_physical_io_reads_mb float NOT NULL,
+    min_physical_io_reads_mb float NOT NULL,
+    max_physical_io_reads_mb float NOT NULL,
     total_physical_io_reads_mb AS
         (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
-    last_clr_time_ms bigint NOT NULL,
-    min_clr_time_ms bigint NOT NULL,
-    max_clr_time_ms bigint NOT NULL,
+    last_clr_time_ms float NOT NULL,
+    min_clr_time_ms float NOT NULL,
+    max_clr_time_ms float NOT NULL,
     total_clr_time_ms AS
         (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
     avg_query_max_used_memory_mb float NULL,
-    last_query_max_used_memory_mb bigint NOT NULL,
-    min_query_max_used_memory_mb bigint NOT NULL,
-    max_query_max_used_memory_mb bigint NOT NULL,
+    last_query_max_used_memory_mb float NOT NULL,
+    min_query_max_used_memory_mb float NOT NULL,
+    max_query_max_used_memory_mb float NOT NULL,
     total_query_max_used_memory_mb AS
         (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
@@ -1602,22 +1678,22 @@ CREATE TABLE
     max_rowcount bigint NOT NULL,
     total_rowcount AS
         (avg_rowcount * count_executions),
-    avg_num_physical_io_reads_mb float NULL,
-    last_num_physical_io_reads_mb bigint NULL,
-    min_num_physical_io_reads_mb bigint NULL,
-    max_num_physical_io_reads_mb bigint NULL,
-    total_num_physical_io_reads_mb AS
-        (avg_num_physical_io_reads_mb * count_executions),
+    avg_num_physical_io_reads float NULL,
+    last_num_physical_io_reads bigint NULL,
+    min_num_physical_io_reads bigint NULL,
+    max_num_physical_io_reads bigint NULL,
+    total_num_physical_io_reads AS
+        (avg_num_physical_io_reads * count_executions),
     avg_log_bytes_used_mb float NULL,
-    last_log_bytes_used_mb bigint NULL,
-    min_log_bytes_used_mb bigint NULL,
-    max_log_bytes_used_mb bigint NULL,
+    last_log_bytes_used_mb float NULL,
+    min_log_bytes_used_mb float NULL,
+    max_log_bytes_used_mb float NULL,
     total_log_bytes_used_mb AS
         (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
-    last_tempdb_space_used_mb bigint NULL,
-    min_tempdb_space_used_mb bigint NULL,
-    max_tempdb_space_used_mb bigint NULL,
+    last_tempdb_space_used_mb float NULL,
+    min_tempdb_space_used_mb float NULL,
+    max_tempdb_space_used_mb float NULL,
     total_tempdb_space_used_mb AS
         (avg_tempdb_space_used_mb * count_executions),
     from_regression_baseline varchar(3) NULL,
@@ -1886,7 +1962,7 @@ VALUES
     (150, 'regression', 'hash', 'query_hash_from_regression_checking', 'regression.query_hash', 1, 'regression_mode', 1, 0, NULL),
     /* Execution columns */
     (200, 'executions', 'count', 'count_executions', 'qsrs.count_executions', 0, NULL, NULL, 0, 'N0'),
-    (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N0'),
+    (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N2'),
     /* Hash totals - conditionally added */
     (215, 'executions', 'count_hash', 'count_executions_by_query_hash', 'qht.total_executions', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Duration metrics (group together avg, total, last, min, max) */
@@ -1958,14 +2034,14 @@ VALUES
     /* Hash totals for row counts */
     (1115, 'rowcount', 'total_hash', 'total_rowcount_by_query_hash', 'qht.total_rowcount', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* New metrics for newer versions */
-    /* Physical IO Reads (for newer versions) */
-    (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads_mb', 'qsrs.avg_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1210, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads_mb', 'qsrs.last_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1220, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1230, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1240, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads_mb', 'qsrs.total_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
+    /* Physical IO Reads (for newer versions). These count read operations, not pages, so there is no MB conversion */
+    (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads', 'qsrs.avg_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
+    (1210, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads', 'qsrs.last_num_physical_io_reads', 1, 'new', 1, 1, 'N0'),
+    (1220, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads', 'qsrs.min_num_physical_io_reads', 1, 'new', 1, 1, 'N0'),
+    (1230, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads', 'qsrs.max_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
+    (1240, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads', 'qsrs.total_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for new physical IO reads */
-    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
+    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Finish adding the remaining columns (log bytes and tempdb usage) */
     /* Log bytes used */
     (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -1995,7 +2071,18 @@ BEGIN
     VALUES
         /* 230, so just before avg_query_duration_ms. */
         (230, 'sort_order', 'query_hash', 'query_hash_from_hash_counting', 'hashes.query_hash', 0, NULL, NULL, 0, NULL),
-        (231, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0');
+        (231, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        /* Why the query hash has so many plans, counted over the window */
+        (232, 'sort_order', 'reasons', 'plan_count_reasons', 'hashes.plan_count_reasons', 0, NULL, NULL, 0, NULL),
+        (250, 'sort_order', 'plan_ids', 'plan_id_count_for_query_hash', 'hashes.plan_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (251, 'sort_order', 'query_ids', 'query_id_count_for_query_hash', 'hashes.query_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (252, 'sort_order', 'query_texts', 'query_text_id_count_for_query_hash', 'hashes.query_text_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (253, 'sort_order', 'batches', 'batch_sql_handle_count_for_query_hash', 'hashes.batch_sql_handle_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (254, 'sort_order', 'modules', 'object_id_count_for_query_hash', 'hashes.object_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (255, 'sort_order', 'compat_levels', 'compatibility_level_count_for_query_hash', 'hashes.compatibility_level_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (256, 'sort_order', 'contexts', 'context_settings_count_for_query_hash', 'hashes.context_settings_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (257, 'sort_order', 'context_diffs', 'context_settings_that_differ_for_query_hash', 'hashes.context_settings_that_differ_for_query_hash', 0, NULL, NULL, 0, NULL),
+        (258, 'sort_order', 'variants', 'variant_query_count_for_query_hash', 'hashes.variant_query_count_for_query_hash', 1, 'sql_2022_views', 1, 0, 'N0');
 END;
 
 /* Dynamic regression change column based on formatting and comparator */
@@ -2028,7 +2115,7 @@ BEGIN
         (240, 'sort_order', 'wait_time', 'total_wait_time_from_sort_order_ms', 'waits.total_query_wait_time_ms', 0, NULL, NULL, 0, 'N0');
 END;
 
-/* ROW_NUMBER window function for sorting */
+/* ROW_NUMBER window function for sorting. plan_id repeats across databases, so partition by both */
 INSERT INTO
     @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
 VALUES
@@ -2037,7 +2124,7 @@ VALUES
         'metadata',
         'n',
         'n',
-        'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY ' +
+        'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY ' +
         CASE WHEN @regression_mode = 1 THEN
              /* As seen when populating #regression_changes */
              CASE @regression_direction
@@ -2309,6 +2396,8 @@ BEGIN
     SELECT
         @log_database_name = ISNULL(@log_database_name, DB_NAME()),
         @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+        /* A NULL prefix makes every log table name NULL, and nothing gets logged */
+        @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'QuickieStore'),
         @log_retention_days =
             CASE
                 WHEN @log_retention_days < 0
@@ -2443,18 +2532,18 @@ BEGIN
                 query_hash_from_regression_checking binary(8) NULL,
                 change_in_average_for_query_hash_since_regression_time_period float NULL,
                 count_executions bigint NULL,
-                executions_per_second bigint NULL,
+                executions_per_second decimal(38,6) NULL,
                 count_executions_by_query_hash bigint NULL,
                 avg_duration_ms float NULL,
-                last_duration_ms bigint NULL,
-                min_duration_ms bigint NULL,
-                max_duration_ms bigint NULL,
+                last_duration_ms float NULL,
+                min_duration_ms float NULL,
+                max_duration_ms float NULL,
                 total_duration_ms float NULL,
                 total_duration_ms_by_query_hash float NULL,
                 avg_cpu_time_ms float NULL,
-                last_cpu_time_ms bigint NULL,
-                min_cpu_time_ms bigint NULL,
-                max_cpu_time_ms bigint NULL,
+                last_cpu_time_ms float NULL,
+                min_cpu_time_ms float NULL,
+                max_cpu_time_ms float NULL,
                 total_cpu_time_ms float NULL,
                 total_cpu_time_ms_by_query_hash float NULL,
                 avg_logical_io_reads_mb float NULL,
@@ -2496,12 +2585,12 @@ BEGIN
                 max_rowcount float NULL,
                 total_rowcount float NULL,
                 total_rowcount_by_query_hash float NULL,
-                avg_num_physical_io_reads_mb float NULL,
-                last_num_physical_io_reads_mb float NULL,
-                min_num_physical_io_reads_mb float NULL,
-                max_num_physical_io_reads_mb float NULL,
-                total_num_physical_io_reads_mb float NULL,
-                total_num_physical_io_reads_mb_by_query_hash float NULL,
+                avg_num_physical_io_reads float NULL,
+                last_num_physical_io_reads float NULL,
+                min_num_physical_io_reads float NULL,
+                max_num_physical_io_reads float NULL,
+                total_num_physical_io_reads float NULL,
+                total_num_physical_io_reads_by_query_hash float NULL,
                 avg_log_bytes_used_mb float NULL,
                 last_log_bytes_used_mb float NULL,
                 min_log_bytes_used_mb float NULL,
@@ -2516,10 +2605,102 @@ BEGIN
                 total_tempdb_space_used_mb_by_query_hash float NULL,
                 query_hash_from_hash_counting binary(8) NULL,
                 plan_hash_count_for_query_hash bigint NULL,
+                plan_count_reasons nvarchar(2000) NULL,
+                plan_id_count_for_query_hash bigint NULL,
+                query_id_count_for_query_hash bigint NULL,
+                query_text_id_count_for_query_hash bigint NULL,
+                batch_sql_handle_count_for_query_hash bigint NULL,
+                object_id_count_for_query_hash bigint NULL,
+                compatibility_level_count_for_query_hash bigint NULL,
+                context_settings_count_for_query_hash bigint NULL,
+                context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+                variant_query_count_for_query_hash bigint NULL,
                 total_wait_time_from_sort_order_ms bigint NULL,
                 context_settings nvarchar(256) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _RuntimeStats tables created before the
+    num_physical_io_reads columns lost their _mb suffix need the
+    new columns added, or the insert fails. The old _mb columns
+    stay, with the rows logged before
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_RuntimeStats''
+            AND   s.name = @schema_name
+            AND   c.name = N''avg_num_physical_io_reads''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_runtime_stats + N' ADD
+                avg_num_physical_io_reads float NULL,
+                last_num_physical_io_reads float NULL,
+                min_num_physical_io_reads float NULL,
+                max_num_physical_io_reads float NULL,
+                total_num_physical_io_reads float NULL,
+                total_num_physical_io_reads_by_query_hash float NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added num_physical_io_reads columns to %s for runtime stats logging.'', 0, 1, ''' + REPLACE(@log_table_runtime_stats, N'''', N'''''') + N''') WITH NOWAIT; END;
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _RuntimeStats tables created before 'plan count by hashes'
+    explained its plan counts need those columns, or the insert fails
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_RuntimeStats''
+            AND   s.name = @schema_name
+            AND   c.name = N''plan_count_reasons''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_runtime_stats + N' ADD
+                plan_count_reasons nvarchar(2000) NULL,
+                plan_id_count_for_query_hash bigint NULL,
+                query_id_count_for_query_hash bigint NULL,
+                query_text_id_count_for_query_hash bigint NULL,
+                batch_sql_handle_count_for_query_hash bigint NULL,
+                object_id_count_for_query_hash bigint NULL,
+                compatibility_level_count_for_query_hash bigint NULL,
+                context_settings_count_for_query_hash bigint NULL,
+                context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+                variant_query_count_for_query_hash bigint NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added plan count by hashes columns to %s for runtime stats logging.'', 0, 1, ''' + REPLACE(@log_table_runtime_stats, N'''', N'''''') + N''') WITH NOWAIT; END;
         END';
 
     EXECUTE sys.sp_executesql
@@ -2563,23 +2744,23 @@ BEGIN
                 count_compiles bigint NULL,
                 avg_compile_duration_ms float NULL,
                 total_compile_duration_ms float NULL,
-                last_compile_duration_ms bigint NULL,
+                last_compile_duration_ms float NULL,
                 avg_bind_duration_ms float NULL,
                 total_bind_duration_ms float NULL,
-                last_bind_duration_ms bigint NULL,
+                last_bind_duration_ms float NULL,
                 avg_bind_cpu_time_ms float NULL,
                 total_bind_cpu_time_ms float NULL,
-                last_bind_cpu_time_ms bigint NULL,
+                last_bind_cpu_time_ms float NULL,
                 avg_optimize_duration_ms float NULL,
                 total_optimize_duration_ms float NULL,
-                last_optimize_duration_ms bigint NULL,
+                last_optimize_duration_ms float NULL,
                 avg_optimize_cpu_time_ms float NULL,
                 total_optimize_cpu_time_ms float NULL,
-                last_optimize_cpu_time_ms bigint NULL,
+                last_optimize_cpu_time_ms float NULL,
                 avg_compile_memory_mb float NULL,
                 total_compile_memory_mb float NULL,
-                last_compile_memory_mb bigint NULL,
-                max_compile_memory_mb bigint NULL,
+                last_compile_memory_mb float NULL,
+                max_compile_memory_mb float NULL,
                 query_hash binary(8) NULL,
                 batch_sql_handle varbinary(64) NULL,
                 statement_sql_handle varbinary(64) NULL,
@@ -2620,18 +2801,18 @@ BEGIN
                 database_name sysname NULL,
                 query_id bigint NULL,
                 object_name nvarchar(257) NULL,
-                total_grant_mb bigint NULL,
-                last_grant_mb bigint NULL,
-                min_grant_mb bigint NULL,
-                max_grant_mb bigint NULL,
-                total_used_grant_mb bigint NULL,
-                last_used_grant_mb bigint NULL,
-                min_used_grant_mb bigint NULL,
-                max_used_grant_mb bigint NULL,
-                total_ideal_grant_mb bigint NULL,
-                last_ideal_grant_mb bigint NULL,
-                min_ideal_grant_mb bigint NULL,
-                max_ideal_grant_mb bigint NULL,
+                total_grant_mb float NULL,
+                last_grant_mb float NULL,
+                min_grant_mb float NULL,
+                max_grant_mb float NULL,
+                total_used_grant_mb float NULL,
+                last_used_grant_mb float NULL,
+                min_used_grant_mb float NULL,
+                max_used_grant_mb float NULL,
+                total_ideal_grant_mb float NULL,
+                last_ideal_grant_mb float NULL,
+                min_ideal_grant_mb float NULL,
+                max_ideal_grant_mb float NULL,
                 total_reserved_threads bigint NULL,
                 last_reserved_threads bigint NULL,
                 min_reserved_threads bigint NULL,
@@ -2676,15 +2857,15 @@ BEGIN
                 object_name nvarchar(257) NULL,
                 wait_category_desc nvarchar(60) NULL,
                 total_query_wait_time_ms bigint NULL,
-                total_query_duration_ms bigint NULL,
-                avg_query_wait_time_ms bigint NULL,
-                avg_query_duration_ms bigint NULL,
+                total_query_duration_ms float NULL,
+                avg_query_wait_time_ms float NULL,
+                avg_query_duration_ms float NULL,
                 last_query_wait_time_ms bigint NULL,
-                last_query_duration_ms bigint NULL,
+                last_query_duration_ms float NULL,
                 min_query_wait_time_ms bigint NULL,
-                min_query_duration_ms bigint NULL,
+                min_query_duration_ms float NULL,
                 max_query_wait_time_ms bigint NULL,
-                max_query_duration_ms bigint NULL,
+                max_query_duration_ms float NULL,
                 from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
@@ -2753,15 +2934,15 @@ BEGIN
                 database_name sysname NULL,
                 wait_category_desc nvarchar(60) NULL,
                 total_query_wait_time_ms bigint NULL,
-                total_query_duration_ms bigint NULL,
-                avg_query_wait_time_ms bigint NULL,
-                avg_query_duration_ms bigint NULL,
+                total_query_duration_ms float NULL,
+                avg_query_wait_time_ms float NULL,
+                avg_query_duration_ms float NULL,
                 last_query_wait_time_ms bigint NULL,
-                last_query_duration_ms bigint NULL,
+                last_query_duration_ms float NULL,
                 min_query_wait_time_ms bigint NULL,
-                min_query_duration_ms bigint NULL,
+                min_query_duration_ms float NULL,
                 max_query_wait_time_ms bigint NULL,
-                max_query_duration_ms bigint NULL,
+                max_query_duration_ms float NULL,
                 from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
@@ -3246,8 +3427,8 @@ BEGIN
             /* If we found any conflicts, raise an error */
             IF LEN(@conflict_list) > 0
             BEGIN
-                /* Remove trailing comma and space */
-                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+                /* Remove trailing comma and space. LEN does not count the trailing space, so take off one character */
+                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 1);
 
                 SET @error_msg =
                     N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' +
@@ -3559,6 +3740,9 @@ TRUNCATE TABLE
 TRUNCATE TABLE
     #query_hash_totals;
 
+TRUNCATE TABLE
+    #all_plan_ids;
+
 
 /*
 Some variable assignment, because why not?
@@ -3678,6 +3862,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     produces an empty <x></x> node whose value is NULL, which otherwise flows
     into the NOT NULL primary-key id/hash/handle columns and aborts the whole
     procedure with Msg 515. The @include_databases splitter already guarded this.
+    Spaces separate values the same as commas, so '50 51' is two ids, not 5051,
+    and the empty node that '50, 51' leaves between them is dropped the same way.
     */
     @string_split_ints = N'
         SELECT DISTINCT
@@ -3710,12 +3896,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             (
                                 REPLACE
                                 (
-                                    @ids,
+                                    CONVERT(nvarchar(max), @ids),
                                     '','',
                                     ''</x><x>''
                                 ),
                                 '' '',
-                                ''''
+                                ''</x><x>''
                             ) +
                             ''</x>''
                         )
@@ -3756,12 +3942,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             (
                                 REPLACE
                                 (
-                                    @ids,
+                                    CONVERT(nvarchar(max), @ids),
                                     '','',
                                     ''</x><x>''
                                 ),
                                 '' '',
-                                ''''
+                                ''</x><x>''
                             ) +
                             ''</x>''
                         )
@@ -3891,6 +4077,8 @@ SELECT
         ISNULL(@only_queries_with_forced_plan_failures, 0),
     @escape_brackets =
         ISNULL(@escape_brackets, 0),
+    @escape_character =
+        ISNULL(@escape_character, N'\'),
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @query_type =
@@ -3916,6 +4104,10 @@ SELECT
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
+
+        a date with a non-zero offset already says which instant it means,
+        so it only gets switched to UTC. a date without an offset arrives
+        here as +00:00 and is read as server local time.
     */
     @start_date =
         CASE
@@ -3931,6 +4123,14 @@ SELECT
                         '19000101',
                         SYSUTCDATETIME()
                     )
+                )
+            WHEN @start_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @start_date_original) <> 0
+            THEN
+                SWITCHOFFSET
+                (
+                    @start_date_original,
+                    '+00:00'
                 )
             WHEN @start_date IS NOT NULL
             THEN
@@ -3960,6 +4160,14 @@ SELECT
                             SYSUTCDATETIME()
                         )
                     )
+                )
+            WHEN @end_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @end_date_original) <> 0
+            THEN
+                SWITCHOFFSET
+                (
+                    @end_date_original,
+                    '+00:00'
                 )
             WHEN @end_date IS NOT NULL
             THEN
@@ -4006,22 +4214,43 @@ IF @regression_mode = 1
 BEGIN
 /*
 We set both _date_original variables earlier.
+Offsets work the same way as for @start_date and @end_date.
 */
     SELECT
         @regression_baseline_start_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_start_date_original
-            ),
+            CASE
+                WHEN DATEPART(TZOFFSET, @regression_baseline_start_date_original) <> 0
+                THEN
+                    SWITCHOFFSET
+                    (
+                        @regression_baseline_start_date_original,
+                        '+00:00'
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        @utc_minutes_difference,
+                        @regression_baseline_start_date_original
+                    )
+            END,
         @regression_baseline_end_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_end_date_original
-            );
+            CASE
+                WHEN DATEPART(TZOFFSET, @regression_baseline_end_date_original) <> 0
+                THEN
+                    SWITCHOFFSET
+                    (
+                        @regression_baseline_end_date_original,
+                        '+00:00'
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        @utc_minutes_difference,
+                        @regression_baseline_end_date_original
+                    )
+            END;
 END;
 
 /*
@@ -4053,6 +4282,26 @@ BEGIN
 
     IF @get_all_databases = 1
     BEGIN
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Database does not exist'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -4172,6 +4421,26 @@ BEGIN
 
     IF @get_all_databases = 1
     BEGIN
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Query Store not enabled'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -4357,7 +4626,13 @@ OPTION(RECOMPILE);' + @nc10;
             @procedure_schema,
             @procedure_name;
 
-        IF ROWCOUNT_BIG() = 0
+        /*
+        With @get_all_databases = 1, a database without a match is
+        skipped by the procedure existence check below, the same as
+        an exact name, rather than ending the whole run
+        */
+        IF  ROWCOUNT_BIG() = 0
+        AND @get_all_databases = 0
         BEGIN
             RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_name, @procedure_schema) WITH NOWAIT;
             RETURN;
@@ -4528,6 +4803,26 @@ OPTION(RECOMPILE);' + @nc10;
 Check that you spelled everything correctly and you''re in the right database
 We will skip this database and continue',
                        10, 1, @procedure_name, @database_name) WITH NOWAIT;
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Procedure not in Query Store'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -4738,7 +5033,7 @@ BEGIN
    UPDATE
        @ColumnDefinitions
    SET
-       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
    WHERE metric_type = N'n';
 END;
 
@@ -4837,6 +5132,26 @@ BEGIN
     IF @get_all_databases = 1
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s, but you have requested them. We are skipping this database and continuing with any that remain.', 10, 1, @database_name_quoted) WITH NOWAIT;
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Query Store wait stats not enabled'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -4859,7 +5174,7 @@ BEGIN
         UPDATE
             @ColumnDefinitions
         SET
-            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
         WHERE metric_type = N'n';
     END;
 END;
@@ -5158,13 +5473,13 @@ BEGIN
             @include_query_hashes =
                 REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
             @ignore_query_hashes =
                 REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -7537,23 +7852,23 @@ BEGIN
             @include_query_hashes =
                 REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
             @ignore_query_hashes =
                 REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
             @include_plan_hashes =
                 REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_plan_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
             @ignore_plan_hashes =
                 REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_plan_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -9440,13 +9755,37 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    Parameter Sensitive Plan variants are queries of their own, with
+    object_id 0. Their runtime stats are on the variant plans, so
+    the variants of the procedure's queries come along here.
+    */
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+CROSS APPLY
+(
+    SELECT
+        query_id = qsq.query_id
+
+    UNION ALL
+
+    SELECT
+        query_id = qsqv.query_variant_query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    WHERE qsqv.parent_query_id = qsq.query_id
+) AS q
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-   ON qsq.query_id = qsp.query_id
+  ON qsp.query_id = q.query_id'
+        ELSE N'
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+   ON qsq.query_id = qsp.query_id'
+    END + N'
 WHERE ';
 
 IF CHARINDEX(N'%', @procedure_name) = 0
@@ -9537,14 +9876,28 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    Parameter Sensitive Plan variants have object_id 0, so they
+    take the object_id of their parent query
+    */
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-  ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id ' +
+  ON qsq.query_id = qsp.query_id' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id
+LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+  ON qsq_parent.query_id = qsqv.parent_query_id
+WHERE ISNULL(qsq_parent.object_id, qsq.object_id) '
+        ELSE N'
+WHERE qsq.object_id '
+    END +
 CASE
     WHEN LOWER(@query_type) LIKE 'a%'
     THEN N'= 0'
@@ -9651,8 +10004,8 @@ BEGIN
             @param_value =
                 REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@param_value)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' ');
 
         /* Log current operation if debugging */
         IF @debug = 1
@@ -9704,6 +10057,20 @@ BEGIN
         IF @debug = 1
         BEGIN
             PRINT @dynamic_sql;
+        END;
+
+        /* The error handler prints @sql, so point it at this statement and the list it splits */
+        SELECT
+            @sql =
+                N'/* @' + @param_name + N' = ' + @param_value + N' */' +
+                @split_sql;
+
+        /* Id lists hold numbers only, so name the bad value here rather than fail a conversion later */
+        IF  @data_type = N'bigint'
+        AND @param_value LIKE N'%[^0-9, ]%'
+        BEGIN
+            RAISERROR('@%s takes numbers separated by commas or spaces. You supplied: %s', 11, 1, @param_name, @param_value) WITH NOWAIT;
+            RETURN;
         END;
 
         EXECUTE sys.sp_executesql
@@ -9876,6 +10243,9 @@ BEGIN
                 BEGIN
                     PRINT @secondary_sql;
                 END;
+
+                SELECT
+                    @sql = @secondary_sql;
 
                 /* Insert into the correct target table based on include/ignore */
                 IF @is_include = 1
@@ -10306,9 +10676,10 @@ BEGIN
         @text_search_close =
             N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2' +
             CASE
+                /* A single quote as the escape character has to be doubled inside the literal */
                 WHEN @escape_brackets = 1
                 THEN N' ESCAPE ''' +
-                     UPPER(@escape_character COLLATE SQL_Latin1_General_CP1_CI_AS) +
+                     REPLACE(UPPER(@escape_character COLLATE SQL_Latin1_General_CP1_CI_AS), N'''', N'''''') +
                      N''''
                 ELSE N''
             END;
@@ -10348,15 +10719,17 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character. When it is [, ] or _ the doubling already escapes that character, so it is not escaped again */
     IF @escape_brackets = 1
     BEGIN
         SELECT
             @query_text_search =
-                REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search,
-                N'[', @escape_character + N'['),
-                N']', @escape_character + N']'),
-                N'_', @escape_character + N'_');
+                @escape_character, @escape_character + @escape_character),
+                N'[', CASE WHEN @escape_character = N'[' THEN N'[' ELSE @escape_character + N'[' END),
+                N']', CASE WHEN @escape_character = N']' THEN N']' ELSE @escape_character + N']' END),
+                N'_', CASE WHEN @escape_character = N'_' THEN N'_' ELSE @escape_character + N'_' END);
     END;
 
     SELECT
@@ -10497,15 +10870,17 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character. When it is [, ] or _ the doubling already escapes that character, so it is not escaped again */
     IF @escape_brackets = 1
     BEGIN
         SELECT
             @query_text_search_not =
-                REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search_not,
-                N'[', @escape_character + N'['),
-                N']', @escape_character + N']'),
-                N'_', @escape_character + N'_');
+                @escape_character, @escape_character + @escape_character),
+                N'[', CASE WHEN @escape_character = N'[' THEN N'[' ELSE @escape_character + N'[' END),
+                N']', CASE WHEN @escape_character = N']' THEN N']' ELSE @escape_character + N']' END),
+                N'_', CASE WHEN @escape_character = N'_' THEN N'_' ELSE @escape_character + N'_' END);
     END;
 
     SELECT
@@ -10632,18 +11007,22 @@ BEGIN
             SET STATISTICS XML ON;
         END;
 
+        /*
+        No TOP here: this is a filter, and @top applies after all of
+        the filters. A TOP here kept only the plans with the most of
+        this wait, so other filters could leave nothing behind.
+        */
         SELECT
             @sql += N'
-SELECT TOP (@top)
+SELECT
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 /*
 Restricting waits to the runtime stats rows the date range
 qualifies keeps the filter from matching queries whose waits
-of this category happened entirely outside of it, and keeps
-the TOP ranked by in-range wait totals rather than
-all-history ones. Matches the date semantics of the main
-where clause and the wait sort order joins.
+of this category happened entirely outside of it. Matches the
+date semantics of the main where clause and the wait sort
+order joins.
 */
 JOIN  ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
   ON  qsws.plan_id = qsrs.plan_id
@@ -10675,9 +11054,7 @@ GROUP BY
     qsws.plan_id
 HAVING
     SUM(qsws.avg_query_wait_time_ms) > 0
-ORDER BY
-    SUM(qsws.avg_query_wait_time_ms) DESC
-OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+OPTION(RECOMPILE);' + @nc10;
     END;
 
     IF @debug = 1
@@ -10695,10 +11072,8 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@top bigint,
-        @start_date datetimeoffset(7),
+      N'@start_date datetimeoffset(7),
         @end_date datetimeoffset(7)',
-        @top,
         @start_date,
         @end_date;
 
@@ -10748,29 +11123,37 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
+/*
+This matches the maintenance patterns directly, under a binary
+collation on upper-cased text, the same way the text search does.
+Nine NOT LIKEs on every query text under the column's linguistic
+collation took most of the run time of a default run on a big
+Query Store.
+*/
 SELECT
     @sql += N'
 SELECT DISTINCT
    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE NOT EXISTS
-      (
-          SELECT
-             1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-            ON qsqt.query_text_id = qsq.query_text_id
-          WHERE qsq.query_id = qsp.query_id
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER TABLE%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''%SELECT StatMan%''
-          AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
-          AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
-          AND   qsqt.query_sql_text NOT LIKE N''WAITFOR%''
-      )
+FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text_upper =
+            UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2
+) AS u
+WHERE u.query_sql_text_upper LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_upper LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_upper LIKE N''CREATE%INDEX%''
+OR    u.query_sql_text_upper LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_upper LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_upper LIKE N''%SELECT STATMAN%''
+OR    u.query_sql_text_upper LIKE N''DBCC%''
+OR    u.query_sql_text_upper LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_upper LIKE N''WAITFOR%''
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -11053,63 +11436,88 @@ BEGIN
 
     SELECT
     /*
-    This sort order is useless if we don't show the
-    ties, so only DENSE_RANK() makes sense to use.
-    This is why this is not SELECT TOP.
+    One row per query hash: the top @top query hashes by how many
+    plan hashes they have, each with one representative plan. That
+    is the plan with the most executions in the window, then the most
+    recently run one, then the highest plan_id. Returning every plan of
+    each query hash made a hash with tens of thousands of query_ids
+    bring all of their plans along, when the count is the point.
     */
         @sql += N'
     SELECT
         @database_id,
-        ranked_plans.plan_id,
-        ranked_plans.query_hash,
-        ranked_plans.plan_hash_count_for_query_hash
+        hashes.plan_id,
+        hashes.query_hash,
+        hashes.plan_hash_count_for_query_hash
     FROM
     (
         SELECT
-            QueryHashesWithIds.plan_id,
-            QueryHashesWithCounts.query_hash,
-            QueryHashesWithCounts.plan_hash_count_for_query_hash,
+            plans.plan_id,
+            plans.query_hash,
+            plans.plan_hash_count_for_query_hash,
             ranking =
                 DENSE_RANK() OVER
                 (
                     ORDER BY
-                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC,
-                        QueryHashesWithCounts.query_hash DESC
+                        plans.plan_hash_count_for_query_hash DESC,
+                        plans.query_hash DESC
                 )
         FROM
         (
-           SELECT
-               qsq.query_hash,
-               plan_hash_count_for_query_hash =
-                   COUNT_BIG(DISTINCT qsp.query_plan_hash)
-           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-             ON qsq.query_id = qsp.query_id
-           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-             ON qsp.plan_id = qsrs.plan_id
-           WHERE 1 = 1
-           ' + @where_clause
-             + N'
-           GROUP
-               BY qsq.query_hash
-        ) AS QueryHashesWithCounts
-        JOIN
-        (
-           SELECT DISTINCT
-               qsq.query_hash,
-               qsp.plan_id
-           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
-           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-             ON qsp.plan_id = qsrs.plan_id
-            WHERE 1 = 1
-           ' + @where_clause
-             + N'
-        ) AS QueryHashesWithIds
-          ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
-    ) AS ranked_plans
-    WHERE ranked_plans.ranking <= @top
+            SELECT
+                plan_hashes.plan_id,
+                plan_hashes.query_hash,
+                plan_hash_count_for_query_hash =
+                    MAX(plan_hashes.plan_hash_number) OVER
+                    (
+                        PARTITION BY
+                            plan_hashes.query_hash
+                    ),
+                plan_rank =
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            plan_hashes.query_hash
+                        ORDER BY
+                            plan_hashes.count_executions DESC,
+                            plan_hashes.last_execution_time DESC,
+                            plan_hashes.plan_id DESC
+                    )
+            FROM
+            (
+                SELECT
+                    qsp.plan_id,
+                    qsq.query_hash,
+                    count_executions =
+                        SUM(qsrs.count_executions),
+                    last_execution_time =
+                        MAX(qsrs.last_execution_time),
+                    /* The highest number per query hash is its count of distinct plan hashes */
+                    plan_hash_number =
+                        DENSE_RANK() OVER
+                        (
+                            PARTITION BY
+                                qsq.query_hash
+                            ORDER BY
+                                qsp.query_plan_hash
+                        )
+                FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+                  ON qsq.query_id = qsp.query_id
+                JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                  ON qsp.plan_id = qsrs.plan_id
+                WHERE 1 = 1
+                ' + @where_clause
+                  + N'
+                GROUP BY
+                    qsq.query_hash,
+                    qsp.query_plan_hash,
+                    qsp.plan_id
+            ) AS plan_hashes
+        ) AS plans
+        WHERE plans.plan_rank = 1
+    ) AS hashes
+    WHERE hashes.ranking <= @top
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -11160,6 +11568,345 @@ BEGIN
             @sql,
             @current_table;
     END;
+
+    /*
+    Counts that show why each of those query hashes has so many plans,
+    over every plan of the query hash that ran in the window
+    */
+    SELECT
+        @current_table = 'updating #plan_ids_with_query_hashes plan counts',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    UPDATE
+        hashes
+    SET
+        hashes.plan_id_count_for_query_hash = counts.plan_id_count,
+        hashes.query_id_count_for_query_hash = counts.query_id_count,
+        hashes.query_text_id_count_for_query_hash = counts.query_text_id_count,
+        hashes.batch_sql_handle_count_for_query_hash = counts.batch_sql_handle_count,
+        hashes.object_id_count_for_query_hash = counts.object_id_count,
+        hashes.compatibility_level_count_for_query_hash = counts.compatibility_level_count,
+        hashes.context_settings_count_for_query_hash = counts.context_settings_count,
+        hashes.context_settings_that_differ_for_query_hash = counts.context_settings_that_differ,
+        hashes.variant_query_count_for_query_hash = counts.variant_query_count
+    FROM #plan_ids_with_query_hashes AS hashes
+    JOIN
+    (
+        SELECT
+            p.query_hash,
+            plan_id_count =
+                COUNT_BIG(*),
+            query_id_count =
+                COUNT_BIG(DISTINCT p.query_id),
+            query_text_id_count =
+                COUNT_BIG(DISTINCT p.query_text_id),
+            /* Subtracting the flag takes the stand-in value back out, see below */
+            batch_sql_handle_count =
+                COUNT_BIG(DISTINCT p.batch_sql_handle) -
+                MAX(p.no_batch_sql_handle),
+            object_id_count =
+                COUNT_BIG(DISTINCT p.object_id) -
+                MAX(p.is_ad_hoc),
+            compatibility_level_count =
+                COUNT_BIG(DISTINCT p.compatibility_level),
+            context_settings_count =
+                COUNT_BIG(DISTINCT p.context_settings_id),
+            /* A setting differs when its lowest and highest values differ */
+            context_settings_that_differ =
+                STUFF
+                (
+                    CASE
+                        WHEN MIN(p.set_options & 1) < MAX(p.set_options & 1)
+                        THEN N'', ANSI_PADDING''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 8) < MAX(p.set_options & 8)
+                        THEN N'', CONCAT_NULL_YIELDS_NULL''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 16) < MAX(p.set_options & 16)
+                        THEN N'', ANSI_WARNINGS''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 32) < MAX(p.set_options & 32)
+                        THEN N'', ANSI_NULLS''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 64) < MAX(p.set_options & 64)
+                        THEN N'', QUOTED_IDENTIFIER''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 4096) < MAX(p.set_options & 4096)
+                        THEN N'', ARITH_ABORT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 8192) < MAX(p.set_options & 8192)
+                        THEN N'', NUMERIC_ROUNDABORT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.language_id) < MAX(p.language_id)
+                        THEN N'', LANGUAGE''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.date_format) < MAX(p.date_format)
+                        THEN N'', DATEFORMAT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.date_first) < MAX(p.date_first)
+                        THEN N'', DATEFIRST''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.default_schema_id) < MAX(p.default_schema_id)
+                        THEN N'', default schema''
+                        ELSE N''''
+                    END,
+                    1,
+                    2,
+                    N''''
+                ),
+            variant_query_count =' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N'
+                COUNT_BIG(DISTINCT p.variant_query_id) -
+                MAX(p.not_a_variant)'
+                ELSE N'
+                CONVERT(bigint, NULL)'
+            END + N'
+        FROM
+        (
+            /*
+            One row per plan of these query hashes that ran in the window.
+            0x and 0 stand in for NULL and for ad hoc, so no aggregate above
+            drops a NULL and prints a warning. No real batch_sql_handle,
+            module, or query_id has those values.
+            */
+            SELECT
+                qsq.query_hash,
+                qsq.query_id,
+                qsq.query_text_id,
+                batch_sql_handle =
+                    ISNULL(qsq.batch_sql_handle, 0x),
+                no_batch_sql_handle =
+                    CASE
+                        WHEN qsq.batch_sql_handle IS NULL
+                        THEN 1
+                        ELSE 0
+                    END,
+                object_id =
+                    ISNULL(qsq.object_id, 0),
+                is_ad_hoc =
+                    CASE
+                        WHEN ISNULL(qsq.object_id, 0) = 0
+                        THEN 1
+                        ELSE 0
+                    END,
+                qsp.compatibility_level,
+                qsq.context_settings_id,
+                set_options =
+                    CONVERT(integer, ISNULL(qcs.set_options, 0x)),
+                qcs.language_id,
+                qcs.date_format,
+                qcs.date_first,
+                qcs.default_schema_id' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N',
+                variant_query_id =
+                    ISNULL(qsqv.query_variant_query_id, 0),
+                not_a_variant =
+                    CASE
+                        WHEN qsqv.query_variant_query_id IS NULL
+                        THEN 1
+                        ELSE 0
+                    END'
+                ELSE N''
+            END + N'
+            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsp.query_id = qsq.query_id
+            JOIN ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
+              ON qcs.context_settings_id = qsq.context_settings_id' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N'
+            LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+              ON qsqv.query_variant_query_id = qsq.query_id'
+                ELSE N''
+            END + N'
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #plan_ids_with_query_hashes AS hashes
+                WHERE hashes.query_hash = qsq.query_hash
+                AND   hashes.database_id = @database_id
+            )
+            AND   EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                WHERE qsrs.plan_id = qsp.plan_id
+                ' + @where_clause
+                  + N'
+            )
+        ) AS p
+        GROUP BY
+            p.query_hash
+    ) AS counts
+      ON counts.query_hash = hashes.query_hash
+    WHERE hashes.database_id = @database_id
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*
+    Put the counts into words, one sentence for each rule that applies.
+    When no rule applies, plan_count_reasons stays NULL.
+    */
+    UPDATE
+        hashes
+    SET
+        hashes.plan_count_reasons =
+            STUFF
+            (
+                /* Parameter Sensitive Plan variants have texts of their own, so they do not count as literal values */
+                CASE
+                    WHEN hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0) > 1
+                    AND  (hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0)) * 2 >=
+                         hashes.query_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0)
+                    THEN N' | ' +
+                         FORMAT(hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0), 'N0') +
+                         N' query texts differ only in literal values. Parameterize them, or use forced parameterization.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.batch_sql_handle_count_for_query_hash > 1
+                    AND  hashes.batch_sql_handle_count_for_query_hash * 2 >= hashes.query_id_count_for_query_hash
+                    THEN N' | The statement uses a temporary table or table variable and ran in ' +
+                         FORMAT(hashes.batch_sql_handle_count_for_query_hash, 'N0') +
+                         N' different batches. Query Store gives it a new query_id in each batch. Send the batch with parameters, or move it into a stored procedure, so the batch text stays the same.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.context_settings_count_for_query_hash > 1
+                    THEN N' | Compiled under ' +
+                         FORMAT(hashes.context_settings_count_for_query_hash, 'N0') +
+                         N' different sets of SET options' +
+                         CASE
+                             WHEN hashes.context_settings_that_differ_for_query_hash LIKE N'%,%'
+                             THEN N' (' + hashes.context_settings_that_differ_for_query_hash + N' differ)'
+                             WHEN hashes.context_settings_that_differ_for_query_hash IS NOT NULL
+                             THEN N' (' + hashes.context_settings_that_differ_for_query_hash + N' differs)'
+                             ELSE N''
+                         END +
+                         N'.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.object_id_count_for_query_hash > 1
+                    THEN N' | The same statement is in ' +
+                         FORMAT(hashes.object_id_count_for_query_hash, 'N0') +
+                         N' modules.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.plan_hash_count_for_query_hash > hashes.query_id_count_for_query_hash
+                    AND  hashes.query_id_count_for_query_hash = 1
+                    THEN N' | One query compiled ' +
+                         FORMAT(hashes.plan_hash_count_for_query_hash, 'N0') +
+                         N' different plan shapes. Look at recompiles, parameter sensitivity, and statistics changes.'
+                    WHEN hashes.plan_hash_count_for_query_hash > hashes.query_id_count_for_query_hash
+                    THEN N' | ' +
+                         FORMAT(hashes.query_id_count_for_query_hash, 'N0') +
+                         N' queries compiled ' +
+                         FORMAT(hashes.plan_hash_count_for_query_hash, 'N0') +
+                         N' different plan shapes. Look at recompiles, parameter sensitivity, and statistics changes.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.variant_query_count_for_query_hash = 1
+                    THEN N' | Parameter Sensitive Plan optimization made 1 variant.'
+                    WHEN hashes.variant_query_count_for_query_hash > 1
+                    THEN N' | Parameter Sensitive Plan optimization made ' +
+                         FORMAT(hashes.variant_query_count_for_query_hash, 'N0') +
+                         N' variants.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.compatibility_level_count_for_query_hash > 1
+                    THEN N' | Compiled under ' +
+                         FORMAT(hashes.compatibility_level_count_for_query_hash, 'N0') +
+                         N' compatibility levels.'
+                    ELSE N''
+                END,
+                1,
+                3,
+                N''
+            )
+    FROM #plan_ids_with_query_hashes AS hashes
+    WHERE hashes.database_id = @database_id
+    OPTION(RECOMPILE);
 END;
 IF @sort_order = 'total waits'
 BEGIN
@@ -11291,8 +12038,8 @@ OR
     END;
 END;
 /*
-'total waits' is special. It's a sum, not a max, so
-we cover it above rather than here.
+'total waits' is special. It sums every wait category,
+so we cover it above rather than here.
 */
 
 IF  @sort_order_is_a_wait = 1
@@ -11325,12 +12072,13 @@ BEGIN
                 ELSE ''Yes''
             END,
         total_query_wait_time_ms =
-            MAX(qsws.total_query_wait_time_ms)
+            SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     /*
-    Joining on plan_id alone would take the max wait across
-    all of Query Store history rather than the requested
-    time window.
+    Joining on plan_id alone would sum waits across all of
+    Query Store history rather than the requested time window.
+    The sum covers every interval in the window, the same as
+    the total waits sort. A max would be one interval.
     */
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
       ON  qsrs.plan_id = qsws.plan_id
@@ -11382,7 +12130,7 @@ BEGIN
             ELSE ''Yes''
         END
     ORDER BY
-        MAX(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
@@ -11512,7 +12260,13 @@ BEGIN
                      WHEN 'total log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)'
                      WHEN 'total tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)'
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
-                     /* Waits and the fallback path — waits are per-interval totals so AVG is correct; fallback mirrors cpu path. */
+                     /*
+                     Waits: waits.total_query_wait_time_ms is each plan's wait total over the
+                     whole period, summed across its intervals, and the join repeats it on
+                     every runtime stats row of the plan. So this is a mean of period totals,
+                     not of per-interval waits, and like the "total ..." sorts it grows with
+                     the length of the period. The fallback path mirrors cpu.
+                     */
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                 END
                 + N'
@@ -11772,7 +12526,8 @@ BEGIN
                      WHEN 'total log' THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.'
                      WHEN 'total tempdb' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'total rows' THEN N'hashes_with_changes.change_since_regression_time_period'
-                     ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.'
+                     /* Wait times are already in milliseconds */
+                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'hashes_with_changes.change_since_regression_time_period' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                 END
             ELSE N'hashes_with_changes.change_since_regression_time_period' END
         + N'
@@ -11970,7 +12725,21 @@ BEGIN
     GROUP BY
         qsrs.plan_id
     ORDER BY
-        MAX(' +
+        ' +
+    /*
+    Executions and totals add up across intervals, so rank by the sum.
+    The max of one interval misses plans that run steadily. Averages
+    rank by the average over the window, weighted by executions, which
+    is the number the results show.
+    */
+    CASE
+        WHEN @sort_order = 'executions'
+        OR   @sort_order LIKE 'total %'
+        THEN N'SUM('
+        WHEN @sort_order = 'recent'
+        THEN N'MAX('
+        ELSE N'SUM('
+    END +
     CASE @sort_order
          WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
          WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -11994,7 +12763,14 @@ BEGIN
          WHEN 'total rows' THEN N'qsrs.avg_rowcount * qsrs.count_executions'
          ELSE N'qsrs.avg_cpu_time'
     END +
-    N') DESC
+    CASE
+        WHEN @sort_order = 'executions'
+        OR   @sort_order LIKE 'total %'
+        OR   @sort_order = 'recent'
+        THEN N')'
+        ELSE N' * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
+    END +
+    N' DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END;
 
@@ -12053,6 +12829,12 @@ In regression mode, a plan's rows from both time periods
 go through the same LAST_VALUE windows, so each window is
 also partitioned by time period. Otherwise, the baseline
 row's last_ values would come from the current period.
+
+Query Store's avg_ columns are averages per interval, so the
+averages here are weighted by count_executions. A plain AVG
+gives an interval with one execution the same pull as an
+interval with thousands, and the total_ columns, which are
+avg_ * count_executions, would be wrong too.
 */
 SELECT
     @current_table = 'inserting #query_store_runtime_stats',
@@ -12087,42 +12869,51 @@ SELECT
     MAX(qsrs_with_lasts.runtime_stats_id),
     qsrs_with_lasts.plan_id,
     MAX(qsrs_with_lasts.runtime_stats_interval_id),
-    MAX(qsrs_with_lasts.execution_type_desc),
+    /* A plan can have regular, aborted, and exception rows, so list each type it has */
+    STUFF
+    (
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 0 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 3 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 4 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END),
+        1,
+        2,
+        N''''
+    ),
     MIN(qsrs_with_lasts.first_execution_time),
     MAX(qsrs_with_lasts.partitioned_last_execution_time),
     SUM(qsrs_with_lasts.count_executions),
-    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    (SUM(qsrs_with_lasts.avg_duration * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
     MIN((qsrs_with_lasts.min_duration / 1000.)),
     MAX((qsrs_with_lasts.max_duration / 1000.)),
-    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    (SUM(qsrs_with_lasts.avg_cpu_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
     MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
     MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
-    AVG(((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_logical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.)),
-    AVG(((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_logical_io_writes * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.)),
-    AVG(((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    (SUM(qsrs_with_lasts.avg_clr_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
     MIN((qsrs_with_lasts.min_clr_time / 1000.)),
     MAX((qsrs_with_lasts.max_clr_time / 1000.)),
     MAX(qsrs_with_lasts.partitioned_last_dop),
     MIN(qsrs_with_lasts.min_dop),
     MAX(qsrs_with_lasts.max_dop),
-    AVG(((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_query_max_used_memory * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.)),
-    AVG(qsrs_with_lasts.avg_rowcount),
+    SUM(qsrs_with_lasts.avg_rowcount * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0),
     MAX(qsrs_with_lasts.partitioned_last_rowcount),
     MIN(qsrs_with_lasts.min_rowcount),
     MAX(qsrs_with_lasts.max_rowcount),';
@@ -12131,15 +12922,15 @@ IF @new = 1
 BEGIN
     SELECT
         @sql += N'
-    AVG(((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
-    MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_log_bytes_used / 1048576.)),
+    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0),
+    MAX(qsrs_with_lasts.partitioned_last_num_physical_io_reads),
+    MIN(qsrs_with_lasts.min_num_physical_io_reads),
+    MAX(qsrs_with_lasts.max_num_physical_io_reads),
+    (SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1048576.,
     MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 1048576.)),
     MIN((qsrs_with_lasts.min_log_bytes_used / 1048576.)),
     MAX((qsrs_with_lasts.max_log_bytes_used / 1048576.)),
-    AVG(((qsrs_with_lasts.avg_tempdb_space_used * 8) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_tempdb_space_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8) / 1024.)),
     MIN(((qsrs_with_lasts.min_tempdb_space_used * 8) / 1024.)),
     MAX(((qsrs_with_lasts.max_tempdb_space_used * 8) / 1024.)),';
@@ -12516,7 +13307,7 @@ WITH
     last_dop, min_dop, max_dop,
     avg_query_max_used_memory_mb, last_query_max_used_memory_mb, min_query_max_used_memory_mb, max_query_max_used_memory_mb,
     avg_rowcount, last_rowcount, min_rowcount, max_rowcount,
-    avg_num_physical_io_reads_mb, last_num_physical_io_reads_mb, min_num_physical_io_reads_mb, max_num_physical_io_reads_mb,
+    avg_num_physical_io_reads, last_num_physical_io_reads, min_num_physical_io_reads, max_num_physical_io_reads,
     avg_log_bytes_used_mb, last_log_bytes_used_mb, min_log_bytes_used_mb, max_log_bytes_used_mb,
     avg_tempdb_space_used_mb, last_tempdb_space_used_mb, min_tempdb_space_used_mb, max_tempdb_space_used_mb,
     from_regression_baseline,
@@ -12578,24 +13369,8 @@ SELECT
     @database_id,
     qsp.plan_id,
     qsp.query_id,
-    all_plan_ids =
-        STUFF
-        (
-            (
-                SELECT DISTINCT
-                    '', '' +
-                    RTRIM
-                        (qsp_plans.plan_id)
-                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML
-                    PATH(''''),
-                    TYPE
-            ).value(''./text()[1]'', ''varchar(max)''),
-            1,
-            2,
-            ''''
-        ),
+    /* Filled in below, in one pass over sys.query_store_plan */
+    all_plan_ids = NULL,
     qsp.plan_group_id,
     qsp.engine_version,
     qsp.compatibility_level,
@@ -12755,6 +13530,110 @@ BEGIN
 END; /*End getting query plans*/
 
 /*
+all_plan_ids lists every plan of each query. A subquery per plan
+in the insert above read sys.query_store_plan once per plan, about
+20 ms each on a big Query Store, so read it once here instead.
+The hash join keeps it to one read: with few plans in
+#query_store_plan, a nested loops join reads the in-memory part
+of sys.query_store_plan again for every plan it finds.
+*/
+SELECT
+    @current_table = 'inserting #all_plan_ids',
+    @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    EXECUTE sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    SET STATISTICS XML ON;
+END;
+
+SELECT
+    @sql += N'
+SELECT
+    qsp.query_id,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp2
+    WHERE qsp2.query_id = qsp.query_id
+    AND   qsp2.database_id = @database_id
+)
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #all_plan_ids
+WITH
+    (TABLOCK)
+(
+    query_id,
+    plan_id
+)
+EXECUTE sys.sp_executesql
+    @sql,
+  N'@database_id integer',
+    @database_id;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    SET STATISTICS XML OFF;
+
+    EXECUTE sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXECUTE sys.sp_executesql
+        @troubleshoot_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+END;
+
+SELECT
+    @current_table = 'updating #query_store_plan all_plan_ids';
+
+UPDATE
+    qsp
+SET
+    qsp.all_plan_ids =
+        STUFF
+        (
+            (
+                SELECT
+                    ', ' +
+                    RTRIM(ap.plan_id)
+                FROM #all_plan_ids AS ap
+                WHERE ap.query_id = qsp.query_id
+                ORDER BY
+                    ap.plan_id
+                FOR
+                    XML
+                    PATH(''),
+                    TYPE
+            ).value('./text()[1]', 'varchar(max)'),
+            1,
+            2,
+            ''
+        )
+FROM #query_store_plan AS qsp
+WHERE qsp.database_id = @database_id
+OPTION(RECOMPILE); /*End getting all plan ids*/
+
+/*
 This gets some query information
 */
 SELECT
@@ -12771,14 +13650,36 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
+/*
+Parameter Sensitive Plan variants have object_id 0, so they show
+the object of their parent query instead of Adhoc
+*/
 SELECT
     @sql += N'
 SELECT
     @database_id,
     qsq.query_id,
     qsq.query_text_id,
-    qsq.context_settings_id,
-    qsq.object_id,
+    qsq.context_settings_id,' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+    object_id =
+        ISNULL
+        (
+            (
+                SELECT TOP (1)
+                    qsq_parent.object_id
+                FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+                JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+                  ON qsq_parent.query_id = qsqv.parent_query_id
+                WHERE qsqv.query_variant_query_id = qsq.query_id
+            ),
+            qsq.object_id
+        ),'
+        ELSE N'
+    qsq.object_id,'
+    END + N'
     qsq.batch_sql_handle,
     qsq.query_hash,
     qsq.is_internal_query,
@@ -12924,7 +13825,7 @@ BEGIN
       @new
       WHEN 1
       THEN N',
-        SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
+        SUM(qsrs.count_executions * qsrs.avg_num_physical_io_reads),
         SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 1048576.,
         SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
       ELSE N',
@@ -13525,8 +14426,24 @@ SELECT
     qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
+    /*
+    Weighted like the runtime stats averages. Query Store computes
+    avg_query_wait_time_ms as the total of the interval divided by some number
+    of executions, so total / avg recovers the count Query Store itself
+    averaged over in that interval. That is not always all the
+    executions in the interval: it can be 1, or only the
+    executions that had this wait.
+    SUM(total) / SUM(total / avg) combines the averages Query Store computed.
+    AVG() of the interval averages gave a quiet interval the same weight
+    as a busy one.
+    */
     avg_query_wait_time_ms =
-        AVG(qsws_with_lasts.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms) /
+        NULLIF
+        (
+            SUM(qsws_with_lasts.total_query_wait_time_ms / NULLIF(qsws_with_lasts.avg_query_wait_time_ms, 0)),
+            0
+        ),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
@@ -14606,9 +15523,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS xml)
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
+                 WHEN qpx.query_plan_xml IS NOT NULL
+                 THEN qpx.query_plan_xml
+                 WHEN qpx.query_plan_xml IS NULL
                  THEN
                      (
                          SELECT
@@ -14790,6 +15707,13 @@ SELECT
         ) AS x
         WHERE x.pn = 1
     ) AS qsp
+    CROSS APPLY
+    (
+        /* One xml conversion per plan; the query_plan CASE reuses it, not a TRY_CAST in each branch */
+        SELECT
+            query_plan_xml =
+                TRY_CAST(qsp.query_plan AS xml)
+    ) AS qpx
     CROSS APPLY
     (
         SELECT TOP (1)
@@ -15663,6 +16587,7 @@ BEGIN
                     ROW_NUMBER() OVER
                     (
                         PARTITION BY
+                            qsq.database_id,
                             qsq.query_id,
                             qsq.query_text_id
                         ORDER BY
@@ -16235,16 +17160,16 @@ BEGIN
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_query_wait_time_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_query_wait_time_ms)'
+                        THEN N'FORMAT(SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0), ''N0'')'
+                        ELSE N'SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0)'
                     END
                     + N',
                     avg_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_duration_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_duration_ms)'
+                        THEN N'FORMAT(SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0), ''N0'')'
+                        ELSE N'SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0)'
                     END
                     + N',
                     last_query_wait_time_ms = '
@@ -16299,8 +17224,13 @@ BEGIN
                 (
                     /*
                     One row per plan and wait category, with the plan''s
-                    runtime stats. Totals add up, averages average, and
-                    minimums and maximums take the lowest and highest.
+                    runtime stats. Totals add up, and averages are weighted
+                    by executions: the wait average is total wait divided by
+                    the executions behind it (total / avg, since the average
+                    wait is the total over an execution count), and the
+                    duration average is total duration divided by
+                    executions. Minimums and maximums take the lowest and
+                    highest.
                     Last values come from the plan with the latest wait
                     in the category. The windows run before GROUP BY,
                     so they see each plan''s row.
@@ -16314,7 +17244,7 @@ BEGIN
                         qsws.min_query_wait_time_ms,
                         qsws.max_query_wait_time_ms,
                         x.total_duration_ms,
-                        x.avg_duration_ms,
+                        x.count_executions,
                         x.min_duration_ms,
                         x.max_duration_ms,
                         latest_last_query_wait_time_ms =
@@ -16366,6 +17296,7 @@ BEGIN
                             qsrs.min_duration_ms,
                             qsrs.max_duration_ms,
                             qsrs.total_duration_ms,
+                            qsrs.count_executions,
                             qsrs.last_execution_time
                         FROM #query_store_runtime_stats AS qsrs
                         JOIN #query_store_plan AS qsp
@@ -16695,6 +17626,13 @@ BEGIN
                                         N', ' +
                                         d.database_name
                                     FROM #databases AS d
+                                    WHERE NOT EXISTS
+                                    (
+                                        SELECT
+                                            1/0
+                                        FROM #requested_but_skipped_databases AS rbs
+                                        WHERE rbs.database_name = d.database_name
+                                    )
                                     ORDER BY
                                         d.database_name
                                     FOR
@@ -17302,6 +18240,29 @@ BEGIN
         SELECT
             result =
                 '#include_plan_ids is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #all_plan_ids AS api
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#all_plan_ids',
+            api.*
+        FROM #all_plan_ids AS api
+        ORDER BY
+            api.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#all_plan_ids is empty';
     END;
 
     IF EXISTS

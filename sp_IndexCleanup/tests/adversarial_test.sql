@@ -51,6 +51,7 @@ DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
 DROP TABLE IF EXISTS dbo.test_ic_uc_solo;
 DROP TABLE IF EXISTS dbo.test_ic_uc_pair;
 DROP TABLE IF EXISTS dbo.test_ic_filt_sub;
+DROP TABLE IF EXISTS dbo.test_ic_filt_merge;
 DROP TABLE IF EXISTS dbo.test_ic_ks_narrow_first;
 DROP TABLE IF EXISTS dbo.test_ic_ks_wide_first;
 DROP TABLE IF EXISTS dbo.test_ic_ks_same_1;
@@ -183,6 +184,16 @@ CREATE TABLE dbo.test_ic_filt_sub
     id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
     site_id integer NOT NULL,
     qty integer NULL
+);
+
+/* Group 15: filtered key duplicates, where the merge and the disable change what the finder sees */
+CREATE TABLE dbo.test_ic_filt_merge
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    k integer NOT NULL,
+    status integer NOT NULL,
+    flag integer NOT NULL,
+    wide_col integer NULL
 );
 
 /* Group 16: Same Keys Different Order, which needs one table per index pair (issue #908) */
@@ -360,6 +371,11 @@ SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns
 INSERT INTO dbo.test_ic_uc_pair (code)
 SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
 
+INSERT INTO dbo.test_ic_filt_merge (k, status, flag, wide_col)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 3,
+    ABS(CHECKSUM(NEWID())) % 2, ABS(CHECKSUM(NEWID())) % 50
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
 INSERT INTO dbo.test_ic_filt_sub (site_id, qty)
 SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 10, ABS(CHECKSUM(NEWID())) % 20
 FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
@@ -536,6 +552,15 @@ ALTER INDEX ALL ON dbo.test_ic_uc_pair REBUILD WITH (DATA_COMPRESSION = PAGE);
 CREATE INDEX ix_fs_site ON dbo.test_ic_filt_sub (site_id) INCLUDE (qty) WHERE site_id = 1;
 CREATE INDEX ix_fs_qty ON dbo.test_ic_filt_sub (site_id) WHERE qty = 5;
 CREATE INDEX ix_fs_site_qty ON dbo.test_ic_filt_sub (site_id) WHERE site_id = 1 AND qty > 0;
+
+/* Group 15: two filtered key duplicates on the same filter
+   - fx_fm_a wins on name and absorbs fx_fm_b's include, status. After the merge
+     only flag is missing, so status may not be reported or scripted again: the
+     finder used to read the index from before the merge and listed status twice.
+   - fx_fm_b is disabled, so it gets no finding: its DROP_EXISTING script would
+     rebuild it, and a rebuild re-enables a disabled index. */
+CREATE INDEX fx_fm_a ON dbo.test_ic_filt_merge (k) INCLUDE (wide_col) WHERE status = 1 AND flag = 1;
+CREATE INDEX fx_fm_b ON dbo.test_ic_filt_merge (k) INCLUDE (status) WHERE status = 1 AND flag = 1;
 
 /* Group 16: Same Keys Different Order, Rule 8 (issue #908)
    Rule 8 only checked that every key of the FIRST index is a key of the second,
@@ -718,6 +743,7 @@ DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
 DROP TABLE IF EXISTS dbo.test_ic_uc_solo;
 DROP TABLE IF EXISTS dbo.test_ic_uc_pair;
 DROP TABLE IF EXISTS dbo.test_ic_filt_sub;
+DROP TABLE IF EXISTS dbo.test_ic_filt_merge;
 DROP TABLE IF EXISTS dbo.test_ic_ks_narrow_first;
 DROP TABLE IF EXISTS dbo.test_ic_ks_wide_first;
 DROP TABLE IF EXISTS dbo.test_ic_ks_same_1;

@@ -383,35 +383,154 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @find_single_use_plans = 1
     BEGIN
+        /*
+        One row per single-use plan.
+
+        This used to read sys.dm_exec_query_stats and keep the rows with
+        execution_count = 1. Those rows are statements, not plans: an ad
+        hoc batch of 24 statements that ran once came back as 24 rows with
+        the same plan_handle, size, and text, so @top = 50 could show two
+        plans. A plan is single-use when sys.dm_exec_cached_plans has
+        usecounts = 1 for it, which is also what the single-use health
+        check counts, so the plans come from there. Each DMV is read once:
+        the statements of those plans only supply the compile and
+        execution times and the hashes of the first statement.
+        */
+        CREATE TABLE
+            #single_use_plans
+        (
+            plan_handle varbinary(64) NOT NULL PRIMARY KEY,
+            database_id integer NULL,
+            size_in_bytes integer NOT NULL
+        );
+
+        CREATE TABLE
+            #single_use_statements
+        (
+            plan_handle varbinary(64) NOT NULL PRIMARY KEY,
+            sql_handle varbinary(64) NULL,
+            query_hash binary(8) NULL,
+            query_plan_hash binary(8) NULL,
+            creation_time datetime NULL,
+            last_execution_time datetime NULL
+        );
+
+        INSERT
+            #single_use_plans
+        WITH
+            (TABLOCK)
+        (
+            plan_handle,
+            database_id,
+            size_in_bytes
+        )
+        SELECT
+            cp.plan_handle,
+            database_id =
+                CONVERT(integer, pa.value),
+            cp.size_in_bytes
+        FROM sys.dm_exec_cached_plans AS cp
+        CROSS APPLY
+        (
+            SELECT TOP (1)
+                value = pa.value
+            FROM sys.dm_exec_plan_attributes(cp.plan_handle) AS pa
+            WHERE pa.attribute = N'dbid'
+        ) AS pa
+        WHERE cp.cacheobjtype = N'Compiled Plan'
+        AND   cp.usecounts = 1
+        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
+        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
+        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        INSERT
+            #single_use_statements
+        WITH
+            (TABLOCK)
+        (
+            plan_handle,
+            sql_handle,
+            query_hash,
+            query_plan_hash,
+            creation_time,
+            last_execution_time
+        )
+        SELECT
+            x.plan_handle,
+            x.sql_handle,
+            x.query_hash,
+            x.query_plan_hash,
+            x.creation_time,
+            x.last_execution_time
+        FROM
+        (
+            SELECT
+                qs.plan_handle,
+                qs.sql_handle,
+                qs.query_hash,
+                qs.query_plan_hash,
+                creation_time =
+                    MIN(qs.creation_time) OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                    ),
+                last_execution_time =
+                    MAX(qs.last_execution_time) OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                    ),
+                n =
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                        ORDER BY
+                            qs.statement_start_offset
+                    )
+            FROM sys.dm_exec_query_stats AS qs
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #single_use_plans AS sup
+                WHERE sup.plan_handle = qs.plan_handle
+            )
+        ) AS x
+        WHERE x.n = 1
+        OPTION(RECOMPILE, MAXDOP 1);
+
         SELECT TOP (@top)
             database_name =
-                DB_NAME(CONVERT(integer, pa.value)),
-            qs.creation_time,
-            qs.last_execution_time,
+                DB_NAME(sup.database_id),
+            sus.creation_time,
+            sus.last_execution_time,
             plan_age =
                 CASE
-                    WHEN DATEDIFF(DAY, qs.creation_time, GETDATE()) > 0
-                    THEN CONVERT(varchar(10), DATEDIFF(DAY, qs.creation_time, GETDATE())) + 'd '
+                    WHEN DATEDIFF(DAY, sus.creation_time, GETDATE()) > 0
+                    THEN CONVERT(varchar(10), DATEDIFF(DAY, sus.creation_time, GETDATE())) + 'd '
                     ELSE N''
                 END +
-                CONVERT(varchar(10), DATEDIFF(HOUR, qs.creation_time, GETDATE()) % 24) + 'h ' +
-                CONVERT(varchar(10), DATEDIFF(MINUTE, qs.creation_time, GETDATE()) % 60) + 'm',
+                CONVERT(varchar(10), DATEDIFF(HOUR, sus.creation_time, GETDATE()) % 24) + 'h ' +
+                CONVERT(varchar(10), DATEDIFF(MINUTE, sus.creation_time, GETDATE()) % 60) + 'm',
             time_since_last_execution =
                 CASE
-                    WHEN DATEDIFF(DAY, qs.last_execution_time, GETDATE()) > 0
-                    THEN CONVERT(varchar(10), DATEDIFF(DAY, qs.last_execution_time, GETDATE())) + 'd '
+                    WHEN DATEDIFF(DAY, sus.last_execution_time, GETDATE()) > 0
+                    THEN CONVERT(varchar(10), DATEDIFF(DAY, sus.last_execution_time, GETDATE())) + 'd '
                     ELSE N''
                 END +
-                CONVERT(varchar(10), DATEDIFF(HOUR, qs.last_execution_time, GETDATE()) % 24) + 'h ' +
-                CONVERT(varchar(10), DATEDIFF(MINUTE, qs.last_execution_time, GETDATE()) % 60) + 'm',
+                CONVERT(varchar(10), DATEDIFF(HOUR, sus.last_execution_time, GETDATE()) % 24) + 'h ' +
+                CONVERT(varchar(10), DATEDIFF(MINUTE, sus.last_execution_time, GETDATE()) % 60) + 'm',
             cached_plan_size_kb =
-                cp.size_in_bytes / 1024,
+                sup.size_in_bytes / 1024,
             clear_plan_command =
                 N'DBCC FREEPROCCACHE (' +
                 CONVERT
                 (
                     nvarchar(max),
-                    qs.plan_handle,
+                    sup.plan_handle,
                     1
                 ) + N');',
             query_text =
@@ -451,39 +570,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             TYPE
                     )
                 END,
-            qs.query_hash,
-            qs.query_plan_hash,
-            qs.sql_handle,
-            qs.plan_handle
-        FROM sys.dm_exec_query_stats AS qs
-        JOIN sys.dm_exec_cached_plans AS cp
-          ON cp.plan_handle = qs.plan_handle
-        CROSS APPLY
-        (
-            SELECT TOP (1)
-                value = pa.value
-            FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
-            WHERE pa.attribute = N'dbid'
-        ) AS pa
-        CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+            sus.query_hash,
+            sus.query_plan_hash,
+            sus.sql_handle,
+            sup.plan_handle
+        FROM #single_use_plans AS sup
+        JOIN #single_use_statements AS sus
+          ON sus.plan_handle = sup.plan_handle
+        CROSS APPLY sys.dm_exec_sql_text(sus.sql_handle) AS st
         OUTER APPLY sys.dm_exec_text_query_plan
         (
-            qs.plan_handle,
-            qs.statement_start_offset,
-            qs.statement_end_offset
+            sup.plan_handle,
+            0,
+            -1
         ) AS qp
-        WHERE qs.execution_count = 1
-        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
-        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
-        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
         /* Honor @start_date / @end_date the same as the statement /
            procedure / function / trigger paths below — the filters
            were documented as applying to all modes, but this
            @find_single_use_plans branch silently ignored them before. */
-        AND   (@start_date IS NULL OR qs.creation_time >= @start_date)
-        AND   (@end_date   IS NULL OR qs.creation_time <  @end_date)
+        WHERE (@start_date IS NULL OR sus.creation_time >= @start_date)
+        AND   (@end_date   IS NULL OR sus.creation_time <  @end_date)
         ORDER BY
-            cp.size_in_bytes DESC
+            sup.size_in_bytes DESC
         OPTION(RECOMPILE, MAXDOP 1);
 
         RETURN;
@@ -568,8 +676,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     MIN(qs.creation_time),
                 newest_plan =
                     MAX(qs.creation_time),
+                /*
+                The statement, not the batch: MAX(st.text) gave every hash
+                from the same multi-statement batch the same sample text.
+                */
                 sample_query_text =
-                    MAX(st.text),
+                    MAX
+                    (
+                        SUBSTRING
+                        (
+                            st.text,
+                            (qs.statement_start_offset / 2) + 1,
+                            (
+                                CASE qs.statement_end_offset
+                                    WHEN -1
+                                    THEN DATALENGTH(st.text)
+                                    ELSE qs.statement_end_offset
+                                END - qs.statement_start_offset
+                            ) / 2 + 1
+                        )
+                    ),
                 sort_plan_count =
                     COUNT_BIG(DISTINCT qs.plan_handle),
                 sort_cpu =
@@ -677,6 +803,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         min_elapsed_time bigint NULL,
         max_elapsed_time bigint NULL,
         max_dop bigint NULL,
+        total_grant_kb bigint NULL,
+        total_used_grant_kb bigint NULL,
         max_grant_kb bigint NULL,
         max_used_grant_kb bigint NULL,
         total_spills bigint NULL,
@@ -714,6 +842,8 @@ WITH
     min_elapsed_time,
     max_elapsed_time,
     max_dop,
+    total_grant_kb,
+    total_used_grant_kb,
     max_grant_kb,
     max_used_grant_kb,
     total_spills,
@@ -748,9 +878,13 @@ SELECT
     CASE
         WHEN @has_memory_grants = 1
         THEN N'
+    total_grant_kb = ISNULL(qs.total_grant_kb, 0),
+    total_used_grant_kb = ISNULL(qs.total_used_grant_kb, 0),
     max_grant_kb = ISNULL(qs.max_grant_kb, 0),
     max_used_grant_kb = ISNULL(qs.max_used_grant_kb, 0),'
         ELSE N'
+    total_grant_kb = NULL,
+    total_used_grant_kb = NULL,
     max_grant_kb = NULL,
     max_used_grant_kb = NULL,'
     END +
@@ -1133,6 +1267,18 @@ OPTION(RECOMPILE, MAXDOP 1);';
     Duplicate plan hashes:
     Same query_hash compiled into multiple plans suggests
     SET option differences or parameterization issues.
+
+    @duplicate_plans counts each plan once. It used to add up the plan
+    count of every qualifying hash, and a plan holds one hash per
+    statement, so a batch of 120 statements counted 120 times. Against
+    the distinct-plan denominator that went past 999.99%, and the
+    decimal(5, 2) assignment failed with Msg 8115.
+
+    A hash qualifies when it has more than 5 plans in one database, the
+    same (database, query_hash) grain as @find_duplicate_plans. The same
+    statement hashes the same in every database, so counting its plans
+    across databases let a hash with one plan in each of six databases
+    qualify, and every database was then reported with its single plan.
     */
     DECLARE
         @duplicate_hashes bigint = 0,
@@ -1140,19 +1286,40 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @pct_duplicate decimal(5, 2) = 0;
 
     SELECT
-        @duplicate_hashes = COUNT_BIG(*),
-        @duplicate_plans = SUM(x.plan_count)
+        @duplicate_hashes = COUNT_BIG(*)
     FROM
     (
         SELECT
-            plan_count = COUNT_BIG(DISTINCT s.plan_handle)
+            s.database_id,
+            s.query_hash
         FROM #dm_exec_query_stats AS s
         WHERE s.query_hash <> 0x0000000000000000
         GROUP BY
+            s.database_id,
             s.query_hash
         HAVING
             COUNT_BIG(DISTINCT s.plan_handle) > 5
     ) AS x
+    OPTION(RECOMPILE);
+
+    SELECT
+        @duplicate_plans = COUNT_BIG(DISTINCT s.plan_handle)
+    FROM
+    (
+        SELECT
+            s.database_id,
+            s.query_hash
+        FROM #dm_exec_query_stats AS s
+        WHERE s.query_hash <> 0x0000000000000000
+        GROUP BY
+            s.database_id,
+            s.query_hash
+        HAVING
+            COUNT_BIG(DISTINCT s.plan_handle) > 5
+    ) AS x
+    JOIN #dm_exec_query_stats AS s
+      ON  s.database_id = x.database_id
+      AND s.query_hash = x.query_hash
     OPTION(RECOMPILE);
 
     IF @total_plans > 0
@@ -1195,7 +1362,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
                 END,
             details =
                 FORMAT(COUNT_BIG(DISTINCT s2.query_hash), N'N0') +
-                N' query hashes with 5+ plans, totaling ' +
+                N' query hashes with more than 5 plans, totaling ' +
                 FORMAT(COUNT_BIG(DISTINCT s2.plan_handle), N'N0') + N' plans. ' +
                 N'Most likely unparameterized queries. SET option differences between sessions can also cause this. Consider Forced Parameterization.'
         /*
@@ -1209,16 +1376,19 @@ OPTION(RECOMPILE, MAXDOP 1);';
         FROM
         (
             SELECT
+                s.database_id,
                 s.query_hash
             FROM #dm_exec_query_stats AS s
             WHERE s.query_hash <> 0x0000000000000000
             GROUP BY
+                s.database_id,
                 s.query_hash
             HAVING
                 COUNT_BIG(DISTINCT s.plan_handle) > 5
         ) AS x
         JOIN #dm_exec_query_stats AS s2
-          ON s2.query_hash = x.query_hash
+          ON  s2.database_id = x.database_id
+          AND s2.query_hash = x.query_hash
         WHERE s2.database_id IS NOT NULL
         GROUP BY
             s2.database_id
@@ -1321,8 +1491,8 @@ OPTION(RECOMPILE, MAXDOP 1);';
     ╚══════════════════════════════════════════════════╝
 
     All four stat DMVs feed into this single table.
-    Statements group by query_hash; procedures, functions,
-    and triggers group by database_id + object_id.
+    Statements group by database_id + query_hash; procedures,
+    functions, and triggers group by database_id + object_id.
 
     object_name holds [schema].[object], which can be longer
     than a sysname: each QUOTENAME can return 258 characters.
@@ -1372,6 +1542,13 @@ OPTION(RECOMPILE, MAXDOP 1);';
     ║  Step 1a: Collect statement-level stats          ║
     ║  (#dm_exec_query_stats, grouped by hash)         ║
     ╚══════════════════════════════════════════════════╝
+
+    A group is one query_hash in one database. The same statement text
+    hashes the same in every database it runs in, so grouping on
+    query_hash alone added up, say, the same query in three regional
+    databases into one row, labeled with whichever database had the
+    most executed plan, and reported one plan per database as plan
+    instability. @find_duplicate_plans groups the same way.
 
     Two things happen here, and they are deliberately kept apart.
 
@@ -1447,7 +1624,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
     )
     SELECT
         query_type = 'Statement',
-        database_name = DB_NAME(winner.database_id),
+        database_name = DB_NAME(totals.database_id),
         query_hash = totals.query_hash,
         plan_count = totals.plan_count,
         total_executions = totals.total_executions,
@@ -1482,6 +1659,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
     FROM
     (
         SELECT
+            s.database_id,
             s.query_hash,
             plan_count = COUNT_BIG(DISTINCT s.plan_handle),
             total_executions = SUM(s.execution_count),
@@ -1503,17 +1681,22 @@ OPTION(RECOMPILE, MAXDOP 1);';
             SQL Server would warn about it on every run. Feeding them
             zeros keeps them quiet, and the CASE — not the aggregate —
             decides whether the answer is a value or a NULL.
+
+            The totals add up total_grant_kb and total_used_grant_kb.
+            They used to add up max_grant_kb, the largest single grant of
+            each plan, which is not a total of anything: the grant total,
+            the average grant, and the memory share all came out low.
             */
             total_grant_mb =
                 CASE
                     WHEN @has_memory_grants = 1
-                    THEN SUM(ISNULL(s.max_grant_kb, 0)) / 1024.0
+                    THEN SUM(ISNULL(s.total_grant_kb, 0)) / 1024.0
                     ELSE 0
                 END,
             total_used_grant_mb =
                 CASE
                     WHEN @has_memory_grants = 1
-                    THEN SUM(ISNULL(s.max_used_grant_kb, 0)) / 1024.0
+                    THEN SUM(ISNULL(s.total_used_grant_kb, 0)) / 1024.0
                     ELSE 0
                 END,
             total_spills =
@@ -1563,6 +1746,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
         AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
         AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
         GROUP BY
+            s.database_id,
             s.query_hash
         HAVING
             SUM(s.execution_count) >= @minimum_execution_count
@@ -1587,6 +1771,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
+                        s.database_id,
                         s.query_hash
                     ORDER BY
                         s.execution_count DESC
@@ -1596,7 +1781,8 @@ OPTION(RECOMPILE, MAXDOP 1);';
         AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
         AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
     ) AS winner
-      ON  winner.query_hash = totals.query_hash
+      ON  winner.database_id = totals.database_id
+      AND winner.query_hash = totals.query_hash
       AND winner.n = 1
     OPTION(RECOMPILE, MAXDOP 1);
 
@@ -1993,19 +2179,48 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @total_grant_mb decimal(38, 2) = 0,
         @total_spills bigint = 0,
         @total_executions bigint = 0,
-        @total_entries bigint = 0;
+        @total_entries bigint = 0,
+        @statement_entries bigint = 0;
 
+    /*
+    The workload totals come from the statement rows only.
+
+    The statements of a procedure, function, or trigger are cached as
+    statement rows too, so an object row and its statement rows hold
+    the same work. Adding up every row counted that work twice, so the
+    totals were too big and every share too small: in one test, a
+    procedure that used 59% of the CPU showed 37% on its own row and
+    37% again on the row for its one statement.
+
+    When there are no statement rows at all, the totals fall back to
+    every row, so the object rows still get shares that mean something.
+    */
     SELECT
-        @total_cpu_ms = SUM(qs.total_cpu_ms),
-        @total_duration_ms = SUM(qs.total_duration_ms),
-        @total_physical_reads = SUM(qs.total_physical_reads),
-        @total_logical_writes = SUM(qs.total_logical_writes),
-        @total_grant_mb = SUM(qs.total_grant_mb),
-        @total_spills = SUM(qs.total_spills),
-        @total_executions = SUM(qs.total_executions),
-        @total_entries = COUNT_BIG(*)
+        @total_cpu_ms = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_cpu_ms ELSE 0 END),
+        @total_duration_ms = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_duration_ms ELSE 0 END),
+        @total_physical_reads = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_physical_reads ELSE 0 END),
+        @total_logical_writes = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_logical_writes ELSE 0 END),
+        @total_grant_mb = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_grant_mb ELSE 0 END),
+        @total_spills = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_spills ELSE 0 END),
+        @total_executions = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_executions ELSE 0 END),
+        @total_entries = COUNT_BIG(*),
+        @statement_entries = SUM(CASE WHEN qs.query_type = 'Statement' THEN 1 ELSE 0 END)
     FROM #query_stats AS qs
     OPTION(RECOMPILE);
+
+    IF @statement_entries = 0
+    BEGIN
+        SELECT
+            @total_cpu_ms = SUM(qs.total_cpu_ms),
+            @total_duration_ms = SUM(qs.total_duration_ms),
+            @total_physical_reads = SUM(qs.total_physical_reads),
+            @total_logical_writes = SUM(qs.total_logical_writes),
+            @total_grant_mb = SUM(qs.total_grant_mb),
+            @total_spills = SUM(qs.total_spills),
+            @total_executions = SUM(qs.total_executions)
+        FROM #query_stats AS qs
+        OPTION(RECOMPILE);
+    END;
 
     IF @debug = 1
     BEGIN
@@ -2362,9 +2577,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         min_duration_ms = r.min_duration_ms,
         max_duration_ms = r.max_duration_ms,
 
-        /* resource shares (% of total workload) */
+        /*
+        Resource shares, as a % of the statement-level workload totals.
+        An object row is measured against those totals too, and an
+        object can call into a database the filters left out, so a
+        share is held at 100 rather than overflowing decimal(5, 2).
+        */
         cpu_share =
             CASE
+                WHEN @total_cpu_ms > 0
+                AND  r.total_cpu_ms >= @total_cpu_ms
+                THEN 100.00
                 WHEN @total_cpu_ms > 0
                 THEN CONVERT(decimal(5, 2), r.total_cpu_ms * 100.0 / @total_cpu_ms)
                 ELSE 0
@@ -2372,11 +2595,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         duration_share =
             CASE
                 WHEN @total_duration_ms > 0
+                AND  r.total_duration_ms >= @total_duration_ms
+                THEN 100.00
+                WHEN @total_duration_ms > 0
                 THEN CONVERT(decimal(5, 2), r.total_duration_ms * 100.0 / @total_duration_ms)
                 ELSE 0
             END,
         reads_share =
             CASE
+                WHEN @total_physical_reads > 0
+                AND  r.total_physical_reads >= @total_physical_reads
+                THEN 100.00
                 WHEN @total_physical_reads > 0
                 THEN CONVERT(decimal(5, 2), r.total_physical_reads * 100.0 / @total_physical_reads)
                 ELSE 0
@@ -2384,11 +2613,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         writes_share =
             CASE
                 WHEN @total_logical_writes > 0
+                AND  r.total_logical_writes >= @total_logical_writes
+                THEN 100.00
+                WHEN @total_logical_writes > 0
                 THEN CONVERT(decimal(5, 2), r.total_logical_writes * 100.0 / @total_logical_writes)
                 ELSE 0
             END,
         grant_share =
             CASE
+                WHEN @total_grant_mb > 0
+                AND  r.total_grant_mb >= @total_grant_mb
+                THEN 100.00
                 WHEN @total_grant_mb > 0
                 THEN CONVERT(decimal(5, 2), r.total_grant_mb * 100.0 / @total_grant_mb)
                 ELSE 0
@@ -2396,11 +2631,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         spills_share =
             CASE
                 WHEN @total_spills > 0
+                AND  r.total_spills >= @total_spills
+                THEN 100.00
+                WHEN @total_spills > 0
                 THEN CONVERT(decimal(5, 2), r.total_spills * 100.0 / @total_spills)
                 ELSE 0
             END,
         executions_share =
             CASE
+                WHEN @total_executions > 0
+                AND  r.total_executions >= @total_executions
+                THEN 100.00
                 WHEN @total_executions > 0
                 THEN CONVERT(decimal(5, 2), r.total_executions * 100.0 / @total_executions)
                 ELSE 0
@@ -2739,14 +2980,69 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @surfaced_duration_pct decimal(5, 2) = 0,
         @surfaced_grant_pct decimal(5, 2) = 0;
 
+    /*
+    A surfaced statement that belongs to a surfaced procedure is the
+    same work as the procedure row, so only the procedure row is added
+    in. Function and trigger statements carry no link to their object,
+    so the sums are held at 100.
+    */
     SELECT
-        @surfaced_count = COUNT_BIG(*),
-        @surfaced_cpu_pct = ISNULL(SUM(s.cpu_share), 0),
-        @surfaced_reads_pct = ISNULL(SUM(s.reads_share), 0),
-        @surfaced_duration_pct = ISNULL(SUM(s.duration_share), 0),
-        @surfaced_grant_pct = ISNULL(SUM(s.grant_share), 0)
-    FROM #scored AS s
-    WHERE s.impact_score >= @impact_threshold
+        @surfaced_count = x.surfaced_count,
+        @surfaced_cpu_pct =
+            CASE
+                WHEN x.cpu_pct > 100
+                THEN 100
+                ELSE x.cpu_pct
+            END,
+        @surfaced_reads_pct =
+            CASE
+                WHEN x.reads_pct > 100
+                THEN 100
+                ELSE x.reads_pct
+            END,
+        @surfaced_duration_pct =
+            CASE
+                WHEN x.duration_pct > 100
+                THEN 100
+                ELSE x.duration_pct
+            END,
+        @surfaced_grant_pct =
+            CASE
+                WHEN x.grant_pct > 100
+                THEN 100
+                ELSE x.grant_pct
+            END
+    FROM
+    (
+        SELECT
+            surfaced_count = COUNT_BIG(*),
+            cpu_pct = ISNULL(SUM(c.counted * s.cpu_share), 0),
+            reads_pct = ISNULL(SUM(c.counted * s.reads_share), 0),
+            duration_pct = ISNULL(SUM(c.counted * s.duration_share), 0),
+            grant_pct = ISNULL(SUM(c.counted * s.grant_share), 0)
+        FROM #scored AS s
+        CROSS APPLY
+        (
+            SELECT
+                counted =
+                    CASE
+                        WHEN s.query_type = 'Statement'
+                        AND  EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #scored AS p
+                                 WHERE p.query_type = 'Procedure'
+                                 AND   p.database_name = s.database_name
+                                 AND   p.object_name = s.object_name
+                                 AND   p.impact_score >= @impact_threshold
+                             )
+                        THEN 0
+                        ELSE 1
+                    END
+        ) AS c
+        WHERE s.impact_score >= @impact_threshold
+    ) AS x
     OPTION(RECOMPILE);
 
     SELECT

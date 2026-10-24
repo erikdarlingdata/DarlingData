@@ -12,7 +12,7 @@ script at all -- the paired `DISABLE` still runs.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Runs `adversarial_test.sql`, parses the output, asserts 28 expectations across 12 rule groups. |
+| `run_tests.py` | Runs `adversarial_test.sql`, parses the output, asserts 58 expectations across 17 rule groups. |
 | `adversarial_test.sql` | Builds synthetic `test_ic_*` tables covering unique constraints, sort directions, filters, include merges, indexed views, heaps, and rule interactions. Self-cleaning. Driven by `run_tests.py`; run it directly only to eyeball output. |
 | `fixture_cases_test.py` | Drives `fixtures_more_dupe_indexes.sql` and asserts the `Expected:` comments in it -- cases 1 through 8d -- against the real `Users` table. **Also executes every generated MERGE/DISABLE script** inside a rolled-back transaction. ~2 minutes. |
 | `rule_coverage_test.py` | Small synthetic fixture in `Crap`. Covers unused-index detection (or the uptime guard, see below) and the `@min_reads`/`@min_writes` index-level screen. Fast. |
@@ -27,7 +27,9 @@ python no_access_test.py --server SQL2022
 ```
 
 All take `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `28`, `31`, `11`, and `4` passed.
+password). Expect `58`, `30`, `111`, and `4` passed. `rule_coverage_test.py`
+asserts `108` on a server up more than 7 days, where Group A checks Rule 1
+instead of the uptime guard (see below).
 
 ### The execute check is the one that earns its keep
 

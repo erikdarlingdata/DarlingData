@@ -105,8 +105,8 @@ BEGIN
                 CASE
                     ap.name
                     WHEN N'@what_to_check' THEN N'areas of system health to check'
-                    WHEN N'@start_date' THEN N'earliest date to show data for, will be internally converted to UTC'
-                    WHEN N'@end_date' THEN N'latest date to show data for, will be internally converted to UTC'
+                    WHEN N'@start_date' THEN N'earliest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
+                    WHEN N'@end_date' THEN N'latest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
                     WHEN N'@warnings_only' THEN N'only show rows where a warning was reported'
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
@@ -128,7 +128,7 @@ BEGIN
             valid_inputs =
                 CASE
                     ap.name
-                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking'
+                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking (also accepts wait, blocking, blocks, deadlock, deadlocks, lock, locks)'
                     WHEN N'@start_date' THEN N'a reasonable date'
                     WHEN N'@end_date' THEN N'a reasonable date'
                     WHEN N'@warnings_only' THEN N'NULL, 0, 1'
@@ -291,6 +291,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @insert_sql nvarchar(max) = N'',
         @log_database_schema nvarchar(1024),
         @max_event_time datetime2(7),
+        @fallback_date datetime2(7),
         @dsql nvarchar(max) = N'',
         @mdsql_template nvarchar(max) = N'',
         @mdsql_execute nvarchar(max) = N'',
@@ -309,10 +310,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
-    Normalize dates to UTC offset for comparison with system_health events
-    When dates are NULL, use SYSUTCDATETIME() which is already UTC
-    When dates are provided, SWITCHOFFSET converts from any timezone to UTC
-    This matches sp_QuickieStore pattern for handling date conversions
+    Normalize dates to UTC offset for comparison with system_health events.
+    When dates are NULL, use SYSUTCDATETIME(), which is already UTC.
+
+    The results show event times in server local time, so a date passed
+    without an offset is read as server local time too, the same way
+    sp_QuickieStore and sp_HumanEventsBlockViewer read plain dates.
+    It used to be read as UTC, so a window copied from the output missed
+    its own events by the UTC offset. A plain value converts to
+    datetimeoffset with an offset of +00:00, so an explicit +00:00 also
+    reads as local; pass any other offset to give an exact instant.
+    SWITCHOFFSET then converts to UTC.
     */
     SELECT
         @start_date =
@@ -320,7 +328,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @start_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @start_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @start_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @start_date
+                    END,
                     '+00:00'
                 ),
                 DATEADD
@@ -335,7 +352,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @end_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @end_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @end_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @end_date
+                    END,
                     '+00:00'
                 ),
                 SYSUTCDATETIME()
@@ -417,6 +443,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         placeholder gets the quote-doubled value at every substitution
         site, and they cannot share a placeholder.
         */
+        /*
+        @fallback_date covers the first logging run against empty
+        tables. It used to be UTC now minus one day, which ignored
+        @start_date and was compared with event_time columns stored in
+        server local time, so a first run west of UTC logged only the
+        last 19 hours or so. It is now the start of the requested
+        window, in server local time (set below).
+        */
         @mdsql_template = N'
     IF OBJECT_ID(''{table_check_literal}'', ''U'') IS NOT NULL
     BEGIN
@@ -425,22 +459,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     MAX({date_column}),
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        DATEADD
-                        (
-                            DAY,
-                            -1,
-                            SYSDATETIME()
-                        )
-                    )
+                    @fallback_date
                 )
         FROM {table_check};
     END;
@@ -448,7 +467,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         @start_date_debug = @start_date,
-        @end_date_debug = @end_date;
+        @end_date_debug = @end_date,
+        @fallback_date =
+            CONVERT
+            (
+                datetime2(7),
+                SWITCHOFFSET
+                (
+                    @start_date,
+                    DATENAME(TZOFFSET, SYSDATETIMEOFFSET())
+                )
+            );
 
     IF @timestamp_utc_mode = 0
     BEGIN
@@ -529,8 +558,27 @@ AND   ca.utc_timestamp < @end_date';
                            'lock', 'locks'
                          )
                     THEN 'locking'
-                    ELSE 'all'
+                    ELSE @what_to_check
                 END;
+    END;
+
+    /*
+    Anything else used to fall back to 'all' without a word, which ran
+    the full (and slowest) check for a typo. Say what is valid instead.
+    */
+    IF @what_to_check NOT IN
+        (
+            'all',
+            'cpu',
+            'disk',
+            'locking',
+            'memory',
+            'system',
+            'waits'
+        )
+    BEGIN
+        RAISERROR('@what_to_check = ''%s'' is not valid. Use all, waits, disk, cpu, memory, system, or locking (wait, blocking, blocks, deadlock, deadlocks, lock, and locks also work).', 11, 1, @what_to_check) WITH NOWAIT;
+        RETURN;
     END;
 
     /* Validate logging parameters */
@@ -2204,8 +2252,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE wq.event_time > @max_event_time';
@@ -2484,8 +2534,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2745,8 +2797,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2962,8 +3016,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE i.event_time > @max_event_time';
@@ -3166,8 +3222,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE sd.event_time > @max_event_time';
@@ -3397,8 +3455,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE ptd.event_time > @max_event_time';
@@ -3627,8 +3687,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE m.event_time > @max_event_time';
@@ -3932,8 +3994,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mbi.event_time > @max_event_time';
@@ -4332,8 +4396,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mnoi.event_time > @max_event_time';
@@ -4552,8 +4618,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE h.event_time > @max_event_time';
@@ -4794,8 +4862,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE si.event_time > @max_event_time';
@@ -4890,9 +4960,11 @@ AND   ca.utc_timestamp < @end_date';
             data element — reading the data axis returns NULL for every
             event, which blanked these two columns for all severe
             errors. session_id further up reads the action axis the
-            same way.
+            same way. DB_NAME(0) returns the current database, so
+            errors raised outside any database (database_id 0) were
+            labeled with the caller's database; NULLIF leaves them NULL.
             */
-            database_name = DB_NAME(w.x.value('(action[@name="database_id"]/value)[1]', 'integer')),
+            database_name = DB_NAME(NULLIF(w.x.value('(action[@name="database_id"]/value)[1]', 'integer'), 0)),
             database_id = w.x.value('(action[@name="database_id"]/value)[1]', 'integer'),
             xml = w.x.query('.')
         INTO #error_info
@@ -4999,8 +5071,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE ei.event_time > @max_event_time';
@@ -5620,8 +5694,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE b.event_time > @max_event_time';
@@ -6112,8 +6188,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE dp.event_date > @max_event_time';
@@ -6222,17 +6300,26 @@ AND   ca.utc_timestamp < @end_date';
             stmtstart,
             stmtend
         )
-        SELECT
+        /*
+        #deadlocks_parsed has one row per process per deadlock, so the
+        same frame repeats. DISTINCT matches the blocking branch.
+        */
+        SELECT DISTINCT
             finding =
                 'available plans for deadlocks',
             dp.database_name,
             dp.query_text,
             sql_handle =
                 CONVERT(varbinary(64), e.x.value('@sqlhandle', 'varchar(130)'), 1),
+            /*
+            The plan lookup joins on these offsets, so hard-coded zeros
+            never matched a cached statement. Read them from the frame,
+            with the same defaults as the blocking branch.
+            */
             stmtstart =
-                0,
+                ISNULL(e.x.value('@stmtstart', 'integer'), 0),
             stmtend =
-                0
+                ISNULL(e.x.value('@stmtend', 'integer'), -1)
         FROM #deadlocks_parsed AS dp
         CROSS APPLY dp.process_xml.nodes('//executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS e(x)
         OPTION(RECOMPILE);
@@ -6266,21 +6353,26 @@ AND   ca.utc_timestamp < @end_date';
                 deqs.total_elapsed_time / 1000.,
             avg_elapsed_time =
                 CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+            /* * 1.0 forces decimal division; bigint / integer truncates */
             executions_per_second =
                 ISNULL
                 (
-                    deqs.execution_count /
-                        NULLIF
-                        (
-                            DATEDIFF
+                    CONVERT
+                    (
+                        decimal(38,2),
+                        deqs.execution_count * 1.0 /
+                            NULLIF
                             (
-                                SECOND,
-                                deqs.creation_time,
-                                NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
-                            ),
-                            0
-                        ),
-                        0
+                                DATEDIFF
+                                (
+                                    SECOND,
+                                    deqs.creation_time,
+                                    NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
+                                ),
+                                0
+                            )
+                    ),
+                    0
                 ),
             total_physical_reads_mb =
                 deqs.total_physical_reads * 8. / 1024.,

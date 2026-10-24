@@ -781,6 +781,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         wait_type
     )
     VALUES
+        (N'BROKER_EVENTHANDLER'),
+        (N'BROKER_RECEIVE_WAITFOR'),
         (N'BROKER_TASK_STOP'),
         (N'BROKER_TO_FLUSH'),
         (N'BROKER_TRANSMITTER'),
@@ -799,7 +801,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'LAZYWRITER_SLEEP'),
         (N'LOGMGR_QUEUE'),
         (N'MEMORY_ALLOCATION_EXT'),
+        (N'ONDEMAND_TASK_QUEUE'),
+        (N'PARALLEL_REDO_DRAIN_WORKER'),
+        (N'PARALLEL_REDO_WORKER_WAIT_WORK'),
         (N'PREEMPTIVE_XE_GETTARGETSTATE'),
+        (N'PVS_PREALLOCATE'),
+        (N'PWAIT_DIRECTLOGCONSUMER_GETNEXT'),
+        (N'PWAIT_EXTENSIBILITY_CLEANUP_TASK'),
+        (N'QDS_ASYNC_QUEUE'),
         (N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP'),
         (N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP'),
         (N'REQUEST_FOR_DEADLOCK_SEARCH'),
@@ -814,6 +823,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'SLEEP_SYSTEMTASK'),
         (N'SLEEP_TEMPDBSTARTUP'),
         (N'SNI_HTTP_ACCEPT'),
+        (N'SOS_WORK_DISPATCHER'),
         (N'SP_SERVER_DIAGNOSTICS_SLEEP'),
         (N'SQLTRACE_BUFFER_FLUSH'),
         (N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP'),
@@ -828,7 +838,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'XE_DISPATCHER_JOIN'),
         (N'XE_DISPATCHER_WAIT'),
         (N'XE_LIVE_TARGET_TVF'),
-        (N'XE_TIMER_EVENT');
+        (N'XE_TIMER_EVENT'),
+        (N'XTP_PREEMPTIVE_TASK');
 
     /* Create temp table for database I/O stalls */
     CREATE TABLE
@@ -1020,8 +1031,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'CPU',
             CONVERT(nvarchar(10), osi.cpu_count) +
             N' logical processors, ' +
-            CONVERT(nvarchar(10), osi.hyperthread_ratio) +
-            N' physical cores, ' +
+            /*
+            hyperthread_ratio is logical processors per socket, not a core
+            count. Sockets times cores per socket is the physical core count;
+            if either is not reported, leave the core count out.
+            */
+            ISNULL
+            (
+                CONVERT(nvarchar(10), NULLIF(osi.socket_count * osi.cores_per_socket, 0)) +
+                N' physical cores, ',
+                N''
+            ) +
             CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
             N' NUMA node(s)'
         FROM sys.dm_os_sys_info AS osi;
@@ -1732,7 +1752,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     event_time = t.StartTime,
                     event_class = t.EventClass,
                     event_subclass = t.EventSubClass,
-                    database_name = DB_NAME(t.DatabaseID),
+                    /*
+                    DB_NAME is NULL for a database dropped since the event was
+                    logged, and the NOT NULL database_name in #results then
+                    raises Msg 515 and ends the run. Fall back to the name the
+                    trace row carries, then to the id.
+                    */
+                    database_name =
+                        COALESCE
+                        (
+                            DB_NAME(t.DatabaseID),
+                            t.DatabaseName,
+                            N'database_id ' + CONVERT(nvarchar(11), t.DatabaseID),
+                            N'N/A'
+                        ),
                     database_id = t.DatabaseID,
                     file_name = t.FileName,
                     object_name = t.ObjectName,
@@ -1840,7 +1873,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE N'Slow File Auto Grow'
                     END,
                 database_name = te.database_name,
-                object_name = te.file_name,
+                object_name = ISNULL(te.file_name, N'N/A'),
                 details =
                     N'Auto grow operation took ' +
                     CONVERT(nvarchar(20), te.duration_ms) +
@@ -1885,7 +1918,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE N'File Auto Shrink'
                     END,
                 database_name = te.database_name,
-                object_name = te.file_name,
+                object_name = ISNULL(te.file_name, N'N/A'),
                 details =
                     N'Auto shrink operation occurred on ' +
                     CONVERT(nvarchar(30), te.event_time, 120) +
@@ -1914,6 +1947,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 5003,
                 priority =
                     CASE
+                        WHEN dbcc_cmd.dbcc_pattern = N'DBCC FREEPROCCACHE (plan handle)'
+                        THEN 50 /* Informational: evicts one plan, not the cache */
                         WHEN dbcc_cmd.dbcc_pattern LIKE N'%FREEPROCCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%FREESYSTEMCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%DROPCLEANBUFFERS%'
@@ -1927,15 +1962,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Found ' +
                 CONVERT(nvarchar(20), COUNT_BIG(*)) +
                 N' instances of "' +
-                CASE
-                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
-                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
-                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case */
-                END +
+                dbcc_cmd.dbcc_pattern +
                 N'" between ' +
                 CONVERT(nvarchar(30), MIN(te.event_time), 120) +
                 N' and ' +
@@ -1948,6 +1975,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SELECT dbcc_pattern =
                     CASE
+                        /*
+                        A plan_handle or sql_handle argument (or a variable,
+                        which in practice holds one) evicts a single plan.
+                        A quoted argument names a resource pool and flushes
+                        that pool's whole cache, so it stays with the rest.
+                        */
+                        WHEN te.text_data LIKE N'%FREEPROCCACHE%(%0x%'
+                        OR   te.text_data LIKE N'%FREEPROCCACHE%(%@%'
+                        THEN N'DBCC FREEPROCCACHE (plan handle)'
                         WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
                         WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
                         WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
@@ -1960,16 +1996,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE te.event_class = 116 /* DBCC events */
             AND   te.text_data IS NOT NULL
             GROUP BY
-                dbcc_cmd.dbcc_pattern,
-                CASE
-                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
-                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
-                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just i case*/
-                END
+                dbcc_cmd.dbcc_pattern
             ORDER BY
                 COUNT_BIG(*) DESC;
 
@@ -2244,11 +2271,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OR dows.wait_type = N'IO_RETRY'
             OR dows.wait_type = N'RESMGR_THROTTLED'
         )
-        /* Only include waits that are significant in terms of percentage of uptime or average wait time (>1 second) */
+        /*
+        Only include waits that are significant in terms of percentage of uptime,
+        or average wait time (>1 second) backed by at least 60 seconds of total
+        wait time. Without that floor, a handful of long waits (a few
+        WAIT_AT_LOW_PRIORITY lock waits from an online index rebuild) is enough.
+        */
         AND
         (
              (dows.wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0)) > @significant_wait_threshold_pct
-          OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
+          OR (
+                  (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
+              AND dows.wait_time_ms >= 60000 /* ...and at least 60 seconds in total */
+             )
         );
 
         /* Calculate wait time as percentage of uptime */
@@ -2288,10 +2323,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN
                         CASE
                             WHEN ws.wait_time_percent_of_uptime >= @wait_high_pct
-                            OR   ws.avg_wait_ms >= 1000.0
-                            THEN 20 /* High: dominates uptime, or each wait is very long */
+                            OR   (ws.avg_wait_ms >= 1000.0 AND ws.wait_time_ms >= 60000)
+                            THEN 20 /* High: dominates uptime, or each wait is very long and the total is not trivial */
                             WHEN ws.wait_time_percent_of_uptime >= @wait_medium_pct
-                            OR   ws.avg_wait_ms >= 250.0
+                            OR   (ws.avg_wait_ms >= 250.0 AND ws.wait_time_ms >= 60000)
                             THEN 30 /* Medium */
                             ELSE 40 /* Low */
                         END
@@ -2358,7 +2393,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             url = N'https://erikdarling.com/sp_perfcheck/#WaitStats'
         FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
+        /*
+        Both ways into #wait_stats: a large share of uptime, or a long
+        average wait (the priority CASE above rates those High for
+        resource waits). Filtering on the share alone dropped the second.
+        The long-average path needs at least 60 seconds of total wait time,
+        so a few long waits do not qualify or rate High on their own.
+        */
+        WHERE
+        (
+             ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
+          OR (
+                  (ws.wait_time_ms * 1.0 / NULLIF(ws.waiting_tasks_count, 0)) > 1000.0
+              AND ws.wait_time_ms >= 60000
+             )
+        )
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
@@ -2420,7 +2469,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM #benign_waits AS bw
             WHERE bw.wait_type = osw.wait_type
-        );
+        )
+        /*
+        SLEEP_TASK is mostly idle background tasks, so it stays out of the
+        ratio. It is not in #benign_waits because the wait stats check above
+        collects it, and its share of a total that left it out can reach
+        1,000% and overflow #wait_stats.percentage, a decimal(5, 2).
+        */
+        AND   osw.wait_type <> N'SLEEP_TASK';
 
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
         IF @total_wait_time_ms > 0
@@ -3232,15 +3288,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nvarchar(10), COUNT_BIG(*)) +
             N' database files with slow I/O. ' +
             N'Average overall latency: ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) +
+            /* Total stall over total I/O for the location, not an average of per-file averages */
+            CONVERT(nvarchar(10), CONVERT(decimal(10, 2), SUM(i.io_stall_ms) * 1.0 / NULLIF(SUM(i.total_io), 0))) +
             N' ms. ' +
             N'This may indicate an overloaded drive or underlying storage issue.',
         url = N'https://erikdarling.com/sp_perfcheck/#StoragePerformance'
     FROM #io_stats AS i
+    /* The same files 3001 and 3002 report: slow, and over 1000 reads or writes */
     WHERE
     (
-         i.avg_read_latency_ms > @slow_read_ms
-      OR i.avg_write_latency_ms > @slow_write_ms
+         (
+              i.avg_read_latency_ms > @slow_read_ms
+          AND i.num_of_reads > 1000
+         )
+      OR (
+              i.avg_write_latency_ms > @slow_write_ms
+          AND i.num_of_writes > 1000
+         )
     )
     AND  i.drive_location IS NOT NULL
     GROUP BY
@@ -3458,8 +3522,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHEN @azure_sql_db = 1
             THEN N'sys.database_files AS mf
         WHERE DB_NAME() = N''tempdb'';'
-            ELSE N'sys.master_files AS mf
-        WHERE mf.database_id = 2;'
+            /*
+            Current sizes. For tempdb, sys.master_files holds the sizes the
+            files are created with at startup, not what they have grown to.
+            */
+            ELSE N'tempdb.sys.database_files AS mf;'
         END;
 
         IF @debug = 1
@@ -4402,6 +4469,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     @sql,
                   N'@has_tables bit OUTPUT',
                     @has_tables OUTPUT;
+
+                /*
+                A database that AUTO_CLOSE has shut reports settings stored
+                in the database itself wrongly in sys.databases: collation,
+                delayed durability and ledger come back NULL, and ADR comes
+                back 0 even when it is on. #databases was filled from that.
+                Reading sys.databases through the database's own name opens
+                it for the statement, so re-read those columns here.
+                */
+                IF EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #databases AS d
+                    WHERE d.database_id = @current_database_id
+                    AND   d.is_auto_close_on = 1
+                )
+                BEGIN
+                    SET @sql = N'
+                    UPDATE
+                        d
+                    SET
+                        d.collation_name = sd.collation_name,
+                        d.snapshot_isolation_state_desc = ISNULL(sd.snapshot_isolation_state_desc, d.snapshot_isolation_state_desc),
+                        d.is_read_committed_snapshot_on = ISNULL(sd.is_read_committed_snapshot_on, d.is_read_committed_snapshot_on),
+                        d.delayed_durability_desc = sd.delayed_durability_desc' +
+                    CASE
+                        WHEN @has_is_accelerated_database_recovery = 1
+                        THEN N',
+                        d.is_accelerated_database_recovery_on = sd.is_accelerated_database_recovery_on'
+                        ELSE N''
+                    END +
+                    CASE
+                        WHEN @has_is_ledger = 1
+                        THEN N',
+                        d.is_ledger_on = sd.is_ledger_on'
+                        ELSE N''
+                    END + N'
+                    FROM #databases AS d
+                    JOIN ' +
+                    QUOTENAME(@current_database_name) +
+                    N'.sys.databases AS sd
+                      ON sd.database_id = d.database_id
+                    WHERE d.database_id = @current_database_id;';
+
+                    IF @debug = 1
+                    BEGIN
+                        PRINT @sql;
+                    END;
+
+                    EXECUTE sys.sp_executesql
+                        @sql,
+                      N'@current_database_id integer',
+                        @current_database_id;
+                END;
             END TRY
             BEGIN CATCH
                 /* If we can't access it, mark it */
@@ -4626,6 +4748,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_query_store_on = 0
+        /* Query Store cannot be enabled in master or tempdb */
+        AND   d.database_id NOT IN (1, 2)
         /* Skip this check for Azure SQL DB since Query Store is typically always enabled
            and Azure might be reporting is_query_store_on incorrectly */
         AND   @azure_sql_db = 0;
@@ -5215,15 +5339,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     database_name = @current_database_name,
                     object_name = mf.name,
                     details =
-                        ''Transaction log file is using a growth increment of '' +
-                        CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
-                        ''On SQL Server 2022, Azure SQL DB, or Azure MI, transaction logs can use instant file initialization when set to exactly 64 MB. '' +
-                        ''Consider changing the growth increment to 64 MB for improved performance.'',
+                        CASE
+                            WHEN mf.growth = 0
+                            THEN ''Transaction log file has auto-growth turned off. If the log fills and no other log file can grow, writes fail with error 9002. '' +
+                                 ''If that is not deliberate, use a fixed growth increment of 64 MB.''
+                            ELSE ''Transaction log file is using a growth increment of '' +
+                                 CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
+                                 ''On SQL Server 2022, Azure SQL DB, or Azure MI, log growths of up to 64 MB can use instant file initialization; larger growths are zeroed out first. '' +
+                                 ''Consider changing the growth increment to 64 MB for improved performance.''
+                        END,
                     url = N''https://erikdarling.com/sp_perfcheck/#LogGrowthSize''
                 FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
                 WHERE mf.is_percent_growth = 0
                 AND   mf.type_desc = N''LOG''
-                AND   mf.growth * 8.0 / 1024 <> 64;';
+                AND
+                (
+                     mf.growth = 0 /* auto-growth off */
+                  OR mf.growth * 8.0 / 1024 > 64 /* too large for instant file initialization */
+                );';
 
                 IF @debug = 1
                 BEGIN

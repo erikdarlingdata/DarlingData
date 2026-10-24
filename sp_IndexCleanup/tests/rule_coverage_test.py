@@ -198,6 +198,8 @@ MDB_MERGE_SUBSET = "ix_merge_sub"    # the subset it absorbs and disables
 MDB_UC_TABLE = "icg_uc"              # unique constraint + same-key index (bug 2)
 MDB_UC_CONSTRAINT = "uq_icg"         # the constraint that must not get ALTER..DISABLE
 MDB_UC_PLAIN = "ix_uc_plain"         # the index promoted to replace it
+MDB_FILT_TABLE = "icg_filt"          # a filtered index missing its filter column, in both (bug 3)
+MDB_FILT_INDEX = "fx_icg_filt"       # the index each database's finding has to name
 
 # Rows that represent a dedupe action. A COMPRESSION SCRIPT row is not one.
 DEDUPE_SCRIPT_TYPES = ("DISABLE SCRIPT", "MERGE SCRIPT", "DISABLE CONSTRAINT SCRIPT")
@@ -1027,6 +1029,34 @@ ALTER TABLE dbo.icg_uc ADD CONSTRAINT uq_icg UNIQUE (col_a, id);
 CREATE INDEX ix_uc_plain ON dbo.icg_uc (col_a, id) INCLUDE (col_c);
 GO
 
+/* Bug 3: a filtered index whose filter column it does not carry. */
+CREATE TABLE
+    dbo.icg_filt
+(
+    id integer NOT NULL,
+    k integer NOT NULL,
+    status integer NOT NULL,
+    CONSTRAINT pk_icg_filt PRIMARY KEY CLUSTERED (id)
+);
+
+INSERT INTO
+    dbo.icg_filt
+(
+    id,
+    k,
+    status
+)
+SELECT TOP (1000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    k = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    status = 1
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+CREATE INDEX fx_icg_filt ON dbo.icg_filt (k) WHERE status = 1;
+GO
+
 USE %(second)s;
 GO
 
@@ -1082,6 +1112,34 @@ OPTION(MAXDOP 1);
 
 CREATE INDEX ix_uc_b ON dbo.icg_uc (col_a);
 GO
+
+/* The same table, so each database has a finding of its own. */
+CREATE TABLE
+    dbo.icg_filt
+(
+    id integer NOT NULL,
+    k integer NOT NULL,
+    status integer NOT NULL,
+    CONSTRAINT pk_icg_filt PRIMARY KEY CLUSTERED (id)
+);
+
+INSERT INTO
+    dbo.icg_filt
+(
+    id,
+    k,
+    status
+)
+SELECT TOP (1000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    k = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    status = 1
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+CREATE INDEX fx_icg_filt ON dbo.icg_filt (k) WHERE status = 1;
+GO
 """ % {"first": MDB_DATABASE_FIRST, "second": MDB_DATABASE_SECOND}
 
 
@@ -1096,6 +1154,14 @@ GO
 #                  index that replaces it (MAKE UNIQUE).
 #   ic_sg_filt     Group I: a filtered unique index whose filter column is not in it
 #                  (SQL Server refuses IGNORE_DUP_KEY on a filtered index).
+#   ic_sg_cci      Group I: two rowstore key duplicates on a clustered columnstore
+#                  table, where a DROP_EXISTING rebuild cannot run ONLINE.
+#   ic_sg_locks    Group I: a merge target with ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS OFF.
+#   ic_sg_part     Group I: a partitioned merge target with STATISTICS_INCREMENTAL = ON.
+#                  Group N: its clustered primary key has three uncompressed
+#                  partitions, each of which gets a per-partition compression script.
+#   ic_sg_pmix     Group N: a partitioned clustered primary key with mixed compression
+#                  (partition 2 PAGE, partitions 1 and 3 uncompressed).
 #   ic_sg_sup      Group J: a superset that already has every column of its subset.
 #   ic_sg_uqnoop   Group J: a unique index that already replaces a constraint.
 #   ic_sg_real     Group J: a superset that really does absorb a column (control).
@@ -1111,21 +1177,44 @@ GO
 #                  INCLUDE (y) and ix_s_chN INCLUDE (z), one table per creation
 #                  order. A seek gives ix_s_chN the usage term, so Rule 5
 #                  disables ix_m_chN in its favor whenever it pairs the two.
+#   icm.ic_sg_mfN  Group M: a unique index a foreign key is backed by (no
+#                  includes), a plain unique index with the widest includes and
+#                  a non-unique one, under every assignment of the names a_, m_
+#                  and z_. ic_sg_mfNc is the child table of the key.
+#   icm.ic_sg_miN  Group M: the same three shapes with IGNORE_DUP_KEY on the
+#                  narrow unique index instead of the foreign key. All twelve sit
+#                  in schema icm and are analyzed in ONE run: scoped to a single
+#                  table, Rule 5 happened to pair them so that one candidate was
+#                  left, and the defect never showed.
 L_UK_ORDERS = list(itertools.permutations("uab"))
 L_CH_ORDERS = list(itertools.permutations("ums"))
 L_TABLES = tuple(
     ["ic_sg_uk%d" % n for n in range(1, len(L_UK_ORDERS) + 2)]
     + ["ic_sg_ch%d" % n for n in range(1, len(L_CH_ORDERS) + 1)]
 )
+M_NAMES = list(itertools.permutations("amz"))
+M_TABLES = tuple(
+    ["ic_sg_mf%dc" % n for n in range(1, len(M_NAMES) + 1)]
+    + ["ic_sg_mf%d" % n for n in range(1, len(M_NAMES) + 1)]
+    + ["ic_sg_mi%d" % n for n in range(1, len(M_NAMES) + 1)]
+)
 
 SCRIPTGEN_TABLES = (
     "ic_sg_c3", "ic_sg_c4", "ic_sg_c5a", "ic_sg_c5b", "ic_sg_p3", "ic_sg_p4",
-    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_sup",
+    "ic_sg_p5", "ic_sg_opt", "ic_sg_optuc", "ic_sg_filt", "ic_sg_cci", "ic_sg_locks", "ic_sg_part", "ic_sg_pmix", "ic_sg_sup",
     "ic_sg_uqnoop", "ic_sg_real",
 ) + L_TABLES
 
 SCRIPTGEN_CLEANUP_SQL = "SET NOCOUNT ON;\n" + "".join(
-    "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES)
+    "DROP TABLE IF EXISTS dbo.%s;\n" % t for t in SCRIPTGEN_TABLES) + "".join(
+    "DROP TABLE IF EXISTS icm.%s;\n" % t for t in M_TABLES) + """
+IF SCHEMA_ID(N'icm') IS NOT NULL
+    EXECUTE (N'DROP SCHEMA icm;');
+IF EXISTS (SELECT 1/0 FROM sys.partition_schemes AS ps WHERE ps.name = N'ps_ic_sg')
+    DROP PARTITION SCHEME ps_ic_sg;
+IF EXISTS (SELECT 1/0 FROM sys.partition_functions AS pf WHERE pf.name = N'pf_ic_sg')
+    DROP PARTITION FUNCTION pf_ic_sg;
+"""
 
 
 def _sg_rows(table, columns, values):
@@ -1183,6 +1272,39 @@ def _group_l_setup_sql():
     return sql
 
 
+def _group_m_setup_sql():
+    """Group M's tables. In table N the three roles get the names in M_NAMES[N - 1]:
+    the first letter goes to the foreign key (or IGNORE_DUP_KEY) index, the second
+    to the wide plain unique index, the third to the non-unique one."""
+    sql = "CREATE SCHEMA icm;\nGO\n"
+    for n, (key, wide, mid) in enumerate(M_NAMES, start=1):
+        f = "ic_sg_mf%d" % n
+        sql += (
+            "CREATE TABLE icm.%(f)s (id integer NOT NULL CONSTRAINT pk_%(f)s PRIMARY KEY, "
+            "k integer NOT NULL, x integer NULL, y integer NULL, z integer NULL);\n"
+            % {"f": f}
+        ) + _sg_rows(f, "id, k, x, y, z", ["RN", "RN", "1", "2", "3"]).replace("INSERT dbo.", "INSERT icm.") + (
+            "CREATE UNIQUE INDEX %(key)s_fk ON icm.%(f)s (k);\n"
+            "CREATE TABLE icm.%(f)sc (id integer NOT NULL CONSTRAINT pk_%(f)sc PRIMARY KEY, "
+            "k integer NOT NULL CONSTRAINT fk_%(f)sc REFERENCES icm.%(f)s (k));\n"
+            "CREATE UNIQUE INDEX %(wide)s_wide ON icm.%(f)s (k) INCLUDE (x, y, z);\n"
+            "CREATE INDEX %(mid)s_mid ON icm.%(f)s (k) INCLUDE (y);\nGO\n"
+            % {"f": f, "key": key, "wide": wide, "mid": mid}
+        )
+        i = "ic_sg_mi%d" % n
+        sql += (
+            "CREATE TABLE icm.%(i)s (id integer NOT NULL CONSTRAINT pk_%(i)s PRIMARY KEY, "
+            "k integer NOT NULL, x integer NULL, y integer NULL, z integer NULL);\n"
+            % {"i": i}
+        ) + _sg_rows(i, "id, k, x, y, z", ["RN", "RN", "1", "2", "3"]).replace("INSERT dbo.", "INSERT icm.") + (
+            "CREATE UNIQUE INDEX %(key)s_skip ON icm.%(i)s (k) INCLUDE (x) WITH (IGNORE_DUP_KEY = ON);\n"
+            "CREATE UNIQUE INDEX %(wide)s_wide ON icm.%(i)s (k) INCLUDE (x, y, z);\n"
+            "CREATE INDEX %(mid)s_mid ON icm.%(i)s (k) INCLUDE (y);\nGO\n"
+            % {"i": i, "key": key, "wide": wide, "mid": mid}
+        )
+    return sql
+
+
 SCRIPTGEN_SETUP_SQL = SCRIPTGEN_CLEANUP_SQL + "GO\n" + """
 CREATE TABLE dbo.ic_sg_opt (id integer NOT NULL CONSTRAINT pk_ic_sg_opt PRIMARY KEY, k integer NOT NULL, x integer NULL, y integer NULL);
 """ + _sg_rows("ic_sg_opt", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
@@ -1198,6 +1320,36 @@ GO
 CREATE TABLE dbo.ic_sg_filt (id integer NOT NULL CONSTRAINT pk_ic_sg_filt PRIMARY KEY, k integer NOT NULL, f integer NOT NULL);
 """ + _sg_rows("ic_sg_filt", "id, k, f", ["RN", "RN", "1"]) + """
 CREATE UNIQUE INDEX ux_sg_filt ON dbo.ic_sg_filt (k) WHERE f = 1 WITH (STATISTICS_NORECOMPUTE = ON);
+GO
+
+CREATE TABLE dbo.ic_sg_cci (id integer NOT NULL, k integer NOT NULL, x integer NULL, y integer NULL);
+""" + _sg_rows("ic_sg_cci", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
+CREATE CLUSTERED COLUMNSTORE INDEX cci_sg_cci ON dbo.ic_sg_cci;
+CREATE INDEX ix_a_sg_cci ON dbo.ic_sg_cci (k) INCLUDE (x);
+CREATE INDEX ix_b_sg_cci ON dbo.ic_sg_cci (k) INCLUDE (y);
+GO
+
+CREATE TABLE dbo.ic_sg_locks (id integer NOT NULL CONSTRAINT pk_ic_sg_locks PRIMARY KEY, k integer NOT NULL, x integer NULL, y integer NULL);
+""" + _sg_rows("ic_sg_locks", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
+CREATE INDEX ix_a_sg_locks ON dbo.ic_sg_locks (k) INCLUDE (x) WITH (ALLOW_PAGE_LOCKS = OFF, ALLOW_ROW_LOCKS = OFF);
+CREATE INDEX ix_b_sg_locks ON dbo.ic_sg_locks (k) INCLUDE (y);
+GO
+
+CREATE PARTITION FUNCTION pf_ic_sg (integer) AS RANGE RIGHT FOR VALUES (100, 200);
+GO
+CREATE PARTITION SCHEME ps_ic_sg AS PARTITION pf_ic_sg ALL TO ([PRIMARY]);
+GO
+
+CREATE TABLE dbo.ic_sg_part (id integer NOT NULL, k integer NOT NULL, x integer NULL, y integer NULL, CONSTRAINT pk_ic_sg_part PRIMARY KEY (id) ON ps_ic_sg (id)) ON ps_ic_sg (id);
+""" + _sg_rows("ic_sg_part", "id, k, x, y", ["RN", "RN", "1", "2"]) + """
+CREATE INDEX ix_a_sg_part ON dbo.ic_sg_part (k) INCLUDE (x) WITH (STATISTICS_INCREMENTAL = ON) ON ps_ic_sg (id);
+CREATE INDEX ix_b_sg_part ON dbo.ic_sg_part (k) INCLUDE (y) ON ps_ic_sg (id);
+GO
+
+/* Group N: partition 2 is PAGE compressed, partitions 1 and 3 are not */
+CREATE TABLE dbo.ic_sg_pmix (id integer NOT NULL, k integer NOT NULL, CONSTRAINT pk_ic_sg_pmix PRIMARY KEY (id) ON ps_ic_sg (id)) ON ps_ic_sg (id);
+""" + _sg_rows("ic_sg_pmix", "id, k", ["RN", "RN"]) + """
+ALTER INDEX pk_ic_sg_pmix ON dbo.ic_sg_pmix REBUILD PARTITION = 2 WITH (DATA_COMPRESSION = PAGE);
 GO
 
 CREATE TABLE dbo.ic_sg_sup (id integer NOT NULL CONSTRAINT pk_ic_sg_sup PRIMARY KEY, a integer NULL, b integer NULL, c integer NULL);
@@ -1246,7 +1398,7 @@ CREATE TABLE dbo.ic_sg_c5b (cid integer NOT NULL CONSTRAINT pk_ic_sg_c5b PRIMARY
 ALTER INDEX ux_z5_code ON dbo.ic_sg_p5 REBUILD;
 ALTER TABLE dbo.ic_sg_c5a WITH CHECK CHECK CONSTRAINT fk_ic_sg_c5a;
 GO
-""" + _group_l_setup_sql()
+""" + _group_l_setup_sql() + _group_m_setup_sql()
 
 # Reads back what a rebuilt index kept, then inserts a duplicate key. The 1000000
 # range is above the fixture's rows, so only the two new rows can collide.
@@ -1264,6 +1416,100 @@ BEGIN TRY
 END TRY
 BEGIN CATCH
     SELECT marker = N'DUP', outcome = N'error', n = ERROR_NUMBER();
+END CATCH;
+"""
+
+# Reads back the included columns of one index, for a merge whose effect is the
+# include list rather than an option.
+INCLUDES_PROBE_SQL = """
+SELECT
+    marker = N'INCL',
+    includes =
+        STUFF
+        (
+            (
+                SELECT
+                    N',' + c.name
+                FROM sys.index_columns AS ic
+                JOIN sys.columns AS c
+                  ON  c.object_id = ic.object_id
+                  AND c.column_id = ic.column_id
+                WHERE ic.object_id = i.object_id
+                AND   ic.index_id = i.index_id
+                AND   ic.is_included_column = 1
+                ORDER BY
+                    c.name
+                FOR XML PATH(N'')
+            ),
+            1,
+            1,
+            N''
+        )
+FROM sys.indexes AS i
+WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
+AND   i.name = N'%(i)s';
+"""
+
+# Reads back the lock and incremental-statistics options of one index.
+LOCKS_PROBE_SQL = """
+SELECT
+    marker = N'LOCKS',
+    allow_page_locks = i.allow_page_locks,
+    allow_row_locks = i.allow_row_locks,
+    is_incremental = s.is_incremental
+FROM sys.indexes AS i
+JOIN sys.stats AS s
+  ON  s.object_id = i.object_id
+  AND s.stats_id = i.index_id
+WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
+AND   i.name = N'%(i)s';
+"""
+
+# Reads back the compression of every partition of one index.
+PARTITION_PROBE_SQL = """
+SELECT
+    marker = N'PARTS',
+    compression =
+        STUFF
+        (
+            (
+                SELECT
+                    N',' + p.data_compression_desc
+                FROM sys.partitions AS p
+                WHERE p.object_id = i.object_id
+                AND   p.index_id = i.index_id
+                ORDER BY
+                    p.partition_number
+                FOR XML PATH(N'')
+            ),
+            1,
+            1,
+            N''
+        )
+FROM sys.indexes AS i
+WHERE i.object_id = OBJECT_ID(N'dbo.%(t)s')
+AND   i.name = N'%(i)s';
+"""
+
+# Group M's probes: an orphan child row has to fail with 547, and a duplicate key
+# has to be skipped, after the scripts have run.
+M_FK_PROBE_SQL = """
+BEGIN TRY
+    INSERT icm.%(t)sc (id, k) VALUES (1000001, 1000000);
+    SELECT marker = N'%(m)s', outcome = N'inserted', n = 0;
+END TRY
+BEGIN CATCH
+    SELECT marker = N'%(m)s', outcome = N'error', n = ERROR_NUMBER();
+END CATCH;
+"""
+
+M_IDK_PROBE_SQL = """
+BEGIN TRY
+    INSERT icm.%(t)s (id, k) VALUES (1000001, 1000000), (1000002, 1000000);
+    SELECT marker = N'%(m)s', outcome = N'inserted', n = COUNT_BIG(*) FROM icm.%(t)s WHERE k = 1000000;
+END TRY
+BEGIN CATCH
+    SELECT marker = N'%(m)s', outcome = N'error', n = ERROR_NUMBER();
 END CATCH;
 """
 
@@ -1397,6 +1643,32 @@ def parse_output(stdout):
     return rows
 
 
+def parse_findings(stdout):
+    """
+    Parse the advisory findings result sets (FILTERED INDEXES NEEDING INCLUDED
+    COLUMNS and the others) into rows. They come after the script result set
+    parse_output stops at, each with a header that starts with finding_type, and
+    each set ends at the blank line sqlcmd prints after it.
+    """
+    rows = []
+    headers = None
+
+    for line in stdout.split("\n"):
+        if not line.strip():
+            headers = None
+            continue
+        cols = [c.strip() for c in line.split("\t")]
+        if cols[0] == "finding_type" and "index_name" in cols:
+            headers = cols
+            continue
+        if headers is None or line.startswith("---"):
+            continue
+        if len(cols) >= len(headers):
+            rows.append(dict(zip(headers, cols)))
+
+    return rows
+
+
 def find_rows(rows, **filters):
     """Find rows matching all filter criteria."""
     matches = []
@@ -1470,6 +1742,17 @@ def run_proc(server, password, table_name, extra="", debug=False):
         "EXECUTE master.dbo.sp_IndexCleanup "
         "@database_name = '%s', @schema_name = 'dbo', @table_name = '%s'%s%s;"
         % (TEST_DATABASE, table_name, extra, ", @debug = 1" if debug else "")
+    )
+    stdout, _ = run_sqlcmd(server, password, database="master", query=query)
+    return parse_output(stdout), stdout
+
+
+def run_proc_schema(server, password, schema_name, extra=""):
+    """Run sp_IndexCleanup over every table of one schema and return (rows, stdout)."""
+    query = (
+        "EXECUTE master.dbo.sp_IndexCleanup "
+        "@database_name = '%s', @schema_name = '%s'%s;"
+        % (TEST_DATABASE, schema_name, extra)
     )
     stdout, _ = run_sqlcmd(server, password, database="master", query=query)
     return parse_output(stdout), stdout
@@ -1974,6 +2257,31 @@ def run_tests(server, password, uptime_days):
                 % (len(uc_disable),
                    [(r["database_name"], r["script"]) for r in uc_disable]))
 
+    # --- Bug 3: every database keeps its advisory findings ---
+    # The findings tables were reset at the top of each pass, while the findings
+    # are returned after the loop, so only the last database's survived, and none
+    # once a later database without the table was reached. The filtered-index
+    # script was also built after the loop, from per-database tables that by then
+    # held only the last database.
+    _, filt_out = run_proc_all_databases(server, password, MDB_FILT_TABLE,
+                                         extra=", @dedupe_only = 1")
+    findings = [f for f in parse_findings(filt_out)
+                if f.get("finding_type") == "FILTERED INDEXES NEEDING INCLUDED COLUMNS"
+                and f.get("index_name") == MDB_FILT_INDEX]
+    found_in = sorted(f.get("database_name") for f in findings)
+    assert_test("G-MultiDatabase",
+                "the filtered-index finding is reported for both databases",
+                found_in == sorted([MDB_DATABASE_FIRST, MDB_DATABASE_SECOND]),
+                "found for %s" % found_in)
+    wrong = [f.get("create_index_script") for f in findings
+             if "[%s].[dbo].[%s]" % (f.get("database_name"), MDB_FILT_TABLE)
+             not in (f.get("create_index_script") or "")
+             or "INCLUDE ([status])" not in (f.get("create_index_script") or "")
+             or "ON [PRIMARY]" not in (f.get("create_index_script") or "")]
+    assert_test("G-MultiDatabase",
+                "each database's script names its own table, the missing column and its filegroup",
+                len(findings) == 2 and len(wrong) == 0, "scripts: %s" % wrong)
+
     # ---- Group H: the usage floor gates every dedupe path, not just some ----
     #
     # Group B covers the screen where it always worked: an index below the floor
@@ -2209,6 +2517,87 @@ def run_tests(server, password, uptime_days):
                 "filtered-index include script carries STATISTICS_NORECOMPUTE = ON",
                 "STATISTICS_NORECOMPUTE = ON" in text, text)
 
+    # A clustered columnstore table. SQL Server refuses CREATE INDEX ... WITH
+    # (DROP_EXISTING = ON, ONLINE = ON) there with Msg 35352, while the paired
+    # DISABLE runs fine, so ix_b_sg_cci's include would be covered by nothing.
+    rows, _ = run_proc(server, password, "ic_sg_cci", extra=sg)
+    merge = find_rows(rows, index_name="ix_a_sg_cci", script_type="MERGE SCRIPT")
+    loser = find_rows(rows, index_name="ix_b_sg_cci", script_type="DISABLE SCRIPT")
+    script = merge[0]["script"] if merge else ""
+    assert_test("I-IndexOptions",
+                "positive control: ix_a_sg_cci gets a MERGE SCRIPT and ix_b_sg_cci a DISABLE",
+                len(merge) == 1 and len(loser) == 1 and "INCLUDE ([x], [y])" in script,
+                "merge=%d disable=%d" % (len(merge), len(loser)))
+    assert_test("I-IndexOptions",
+                "MERGE SCRIPT on a clustered columnstore table is not ONLINE = ON",
+                "ONLINE = ON" not in script, script)
+
+    out, errs = exec_in_rolled_back_transaction(
+        server, password, [script, loser[0]["script"] if loser else ""],
+        INCLUDES_PROBE_SQL % {"t": "ic_sg_cci", "i": "ix_a_sg_cci"})
+    incl = probe_fields(out, "INCL")
+    assert_test("I-IndexOptions",
+                "executed on the columnstore table: the merge runs and ix_a_sg_cci includes x and y",
+                incl == ["x,y"] and not errs, "includes=%s errors=%s" % (incl, errs))
+
+    # DROP_EXISTING also puts ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS back to ON and
+    # STATISTICS_INCREMENTAL back to OFF unless the WITH list names them.
+    for table, index, want, probe_want in (
+            ("ic_sg_locks", "ix_a_sg_locks",
+             ("ALLOW_PAGE_LOCKS = OFF", "ALLOW_ROW_LOCKS = OFF"), ["0", "0", "0"]),
+            ("ic_sg_part", "ix_a_sg_part",
+             ("STATISTICS_INCREMENTAL = ON",), ["1", "1", "1"])):
+        rows, _ = run_proc(server, password, table, extra=sg)
+        merge = find_rows(rows, index_name=index, script_type="MERGE SCRIPT")
+        script = merge[0]["script"] if merge else ""
+        assert_test("I-IndexOptions",
+                    "%s MERGE SCRIPT carries %s" % (index, " and ".join(want)),
+                    len(merge) == 1 and all(w in script for w in want), script or "no MERGE SCRIPT")
+        out, errs = exec_in_rolled_back_transaction(
+            server, password, [script], LOCKS_PROBE_SQL % {"t": table, "i": index})
+        opts = probe_fields(out, "LOCKS")
+        assert_test("I-IndexOptions",
+                    "executed: %s keeps allow_page_locks, allow_row_locks, is_incremental = %s"
+                    % (index, ", ".join(probe_want)),
+                    opts == probe_want and not errs, "options=%s errors=%s" % (opts, errs))
+
+    # ---- Group N: one runnable compression script per partition ----
+    #
+    # ALTER INDEX ... REBUILD PARTITION = n accepts a short list of options, and
+    # FILLFACTOR and OPTIMIZE_FOR_SEQUENTIAL_KEY are not on it (Msg 155). The final
+    # result set also kept one row per index and script type, so only one
+    # partition's script ever reached the output.
+    rows, _ = run_proc(server, password, "ic_sg_part", extra=sg)
+    parts = find_rows(rows, index_name="pk_ic_sg_part",
+                      script_type="COMPRESSION SCRIPT - PARTITION")
+    numbers = sorted(re.findall(r"REBUILD PARTITION = (\d+) ", " ".join(r["script"] for r in parts)))
+    assert_test("N-PartitionCompression",
+                "pk_ic_sg_part gets one per-partition compression script for each of its 3 partitions",
+                numbers == ["1", "2", "3"], "partitions scripted: %s" % numbers)
+    assert_test("N-PartitionCompression",
+                "no per-partition script names FILLFACTOR or OPTIMIZE_FOR_SEQUENTIAL_KEY",
+                len(parts) >= 1 and not any("FILLFACTOR" in r["script"]
+                                            or "OPTIMIZE_FOR_SEQUENTIAL_KEY" in r["script"]
+                                            for r in parts),
+                "; ".join(r["script"] for r in parts) or "no per-partition script")
+    out, errs = exec_in_rolled_back_transaction(
+        server, password, [r["script"] for r in parts],
+        PARTITION_PROBE_SQL % {"t": "ic_sg_part", "i": "pk_ic_sg_part"})
+    comp = probe_fields(out, "PARTS")
+    assert_test("N-PartitionCompression",
+                "executed: every partition of pk_ic_sg_part ends up PAGE compressed",
+                comp == ["PAGE,PAGE,PAGE"] and not errs, "compression=%s errors=%s" % (comp, errs))
+
+    # A partitioned clustered index with mixed compression came in twice (#filtered_objects
+    # keeps a row per can_compress value), so every compression row was doubled.
+    rows, _ = run_proc(server, password, "ic_sg_pmix", extra=sg)
+    pmix = find_rows(rows, index_name="pk_ic_sg_pmix")
+    pmix_scripts = [r["script"] for r in pmix if "COMPRESSION SCRIPT" in r.get("script_type", "")]
+    assert_test("N-PartitionCompression",
+                "mixed-compression pk_ic_sg_pmix gets each compression script once, not once per can_compress value",
+                len(pmix_scripts) > 0 and len(pmix_scripts) == len(set(pmix_scripts)),
+                "%d scripts, %d distinct" % (len(pmix_scripts), len(set(pmix_scripts))))
+
     # ---- Group J: no MERGE SCRIPT when the merge changes nothing ----
     #
     # A MERGE SCRIPT is a full DROP_EXISTING rebuild. It is only worth emitting
@@ -2427,6 +2816,59 @@ def run_tests(server, password, uptime_days):
     assert_test("L-KeyDuplicateWinner",
                 "L4: each winner's Supersedes text names exactly the indexes that point at it",
                 len(texts) == 0, "; ".join(texts))
+
+    # ---- Group M: three same-key indexes, one backs a foreign key or skips duplicates ----
+    #
+    # Rule 5 can leave two MERGE INCLUDES rows in such a group, and the step that
+    # picks one winner from them sorted by is_unique, include length and name. It
+    # did not read the foreign key or IGNORE_DUP_KEY terms index_priority gained in
+    # #917 and #916, so the plain wide unique index could beat the index the key is
+    # backed by, or the one that skips duplicates. The guard and the carried option
+    # kept the behaviour, but the wrong index won. Every name order must give the
+    # same winner. Measured on 2022 CU27: run over the whole schema, dev got the
+    # winner wrong in all twelve tables.
+    m_rows, _ = run_proc_schema(server, password, "icm", extra=sg)
+
+    def m_outcome(table):
+        rows = find_rows(m_rows, table_name=table)
+        return {
+            "disabled": {r["index_name"]: r.get("target_index_name")
+                         for r in find_rows(rows, script_type="DISABLE SCRIPT")},
+            "merges": sorted(r["index_name"] for r in find_rows(rows, script_type="MERGE SCRIPT")),
+            "kept_fk": sorted(r["index_name"] for r in find_rows(rows, script_type="KEPT - FOREIGN KEY")),
+            "scripts": [r["script"] for r in find_rows(rows, script_type="MERGE SCRIPT")
+                        + find_rows(rows, script_type="IGNORE_DUP_KEY SCRIPT")
+                        + find_rows(rows, script_type="DISABLE SCRIPT")],
+        }
+
+    for shape, role, label in (("mf", "fk", "M1: the index the foreign key is backed by"),
+                               ("mi", "skip", "M2: the IGNORE_DUP_KEY index")):
+        wrong, scripts, probes = [], [], ""
+        for n, (key, wide, mid) in enumerate(M_NAMES, start=1):
+            table = "ic_sg_%s%d" % (shape, n)
+            result = m_outcome(table)
+            winner = "%s_%s" % (key, role)
+            want = {"%s_wide" % wide: winner, "%s_mid" % mid: winner}
+            if result["disabled"] != want or result["merges"] != [winner] or result["kept_fk"]:
+                wrong.append("names %s: disabled %s, merged %s, kept by the guard %s"
+                             % ("".join((key, wide, mid)), result["disabled"],
+                                result["merges"], result["kept_fk"]))
+            scripts += result["scripts"]
+            probes += (M_FK_PROBE_SQL if shape == "mf" else M_IDK_PROBE_SQL) % {
+                "t": table, "m": "M%s%d" % (shape, n)}
+        assert_test("M-ThreeKeyDuplicates",
+                    "%s wins in all six name orders and both others point at it" % label,
+                    len(wrong) == 0, "; ".join(wrong))
+
+        out, errs = exec_in_rolled_back_transaction(server, password, scripts, probes)
+        outcomes = {n: probe_fields(out, "M%s%d" % (shape, n)) for n in range(1, len(M_NAMES) + 1)}
+        expect = ["error", "547"] if shape == "mf" else ["inserted", "1"]
+        bad = ["names %s: %s" % ("".join(M_NAMES[n - 1]), o) for n, o in outcomes.items() if o != expect]
+        assert_test("M-ThreeKeyDuplicates",
+                    "%s: run, the scripts keep the behaviour (%s) in all six tables"
+                    % (label.split(":")[0], "an orphan child fails with 547" if shape == "mf"
+                       else "a duplicate key is skipped"),
+                    len(bad) == 0 and not errs, "%s errors=%s" % ("; ".join(bad), errs))
 
     return results
 

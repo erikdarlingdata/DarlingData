@@ -1964,9 +1964,31 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             FORMAT(fm.total_read_count, 'N0'),
                         total_write_count =
                             FORMAT(fm.total_write_count, 'N0'),
+                        /*
+                        Total stall over total I/O, the same as the sample
+                        branch. Adding the two averages weighted a handful of
+                        slow writes the same as a million fast reads.
+                        */
                         total_avg_stall_ms =
-                            fm.avg_read_stall_ms +
-                            fm.avg_write_stall_ms
+                            CONVERT
+                            (
+                                decimal(38, 2),
+                                ISNULL
+                                (
+                                    1.0 *
+                                    (
+                                        fm.io_stall_read_ms +
+                                        fm.io_stall_write_ms
+                                    ) /
+                                    NULLIF
+                                    (
+                                        fm.total_read_count +
+                                        fm.total_write_count,
+                                        0
+                                    ),
+                                    0.
+                                )
+                            )
                     FROM @file_metrics AS fm
                     WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
                     OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
@@ -1992,7 +2014,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
                 SELECT
                     drive = N'Nothing to see here',
-                    database_name = N'By default, only >100 ms latency is reported',
+                    database_name = N'Only >' + CONVERT(nvarchar(11), @minimum_disk_latency_ms) + N' ms latency is reported',
                     database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
                     server_hours_uptime = 0,
                     file_size_gb = 0,
@@ -2149,8 +2171,50 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      f.total_read_count  > 0
                   OR f.total_write_count > 0
                 )
+                /*
+                Same latency floor as the non-sample panel
+                */
+                AND
+                (
+                     f.avg_read_stall_ms  > @minimum_disk_latency_ms
+                  OR f.avg_write_stall_ms > @minimum_disk_latency_ms
+                )
+
+                UNION ALL
+
+                SELECT
+                    drive = N'Nothing to see here',
+                    database_name = N'Only >' + CONVERT(nvarchar(11), @minimum_disk_latency_ms) + N' ms latency is reported',
+                    database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
+                    file_size_gb = 0,
+                    avg_read_stall_ms = 0,
+                    avg_write_stall_ms = 0,
+                    total_avg_stall = 0,
+                    avg_read_kb = 0,
+                    avg_write_kb = 0,
+                    total_mb_read = N'0',
+                    total_mb_written = N'0',
+                    total_read_count = N'0',
+                    total_write_count = N'0',
+                    sample_seconds = @sample_seconds
+                WHERE NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM f
+                    WHERE
+                    (
+                         f.total_read_count  > 0
+                      OR f.total_write_count > 0
+                    )
+                    AND
+                    (
+                         f.avg_read_stall_ms  > @minimum_disk_latency_ms
+                      OR f.avg_write_stall_ms > @minimum_disk_latency_ms
+                    )
+                )
                 ORDER BY
-                    f.total_avg_stall DESC
+                    total_avg_stall DESC
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
         END;
@@ -2288,7 +2352,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
             p.cntr_value,
             p.cntr_type
         FROM p
-        WHERE p.cntr_value > 0
+        /*
+        Sample mode keeps zeros: a counter that is 0 in one snapshot and
+        not in the other (Processes blocked 0 -> 1) needs both rows for
+        the comparison below to see the change.
+        */
+        WHERE
+        (
+             p.cntr_value > 0
+          OR @sample_seconds > 0
+        )
         AND   p.object_name LIKE @prefix
         AND   p.instance_name NOT IN
         (
@@ -2335,26 +2408,36 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         dopc.cntr_value,
                         total =
                             FORMAT(dopc.cntr_value, 'N0'),
+                        /*
+                        A per-second rate only means something for cumulative
+                        counters (cntr_type 272696576). Point-in-time gauges
+                        (65792) such as Total Server Memory (KB) or Processes
+                        blocked get NULL instead of value / uptime.
+                        */
                         total_per_second =
-                            FORMAT
-                            (
-                                dopc.cntr_value /
-                                ISNULL
-                                (
-                                    NULLIF
+                            CASE
+                                WHEN dopc.cntr_type = 272696576
+                                THEN
+                                    FORMAT
                                     (
-                                        DATEDIFF
+                                        dopc.cntr_value /
+                                        ISNULL
                                         (
-                                            SECOND,
-                                            dopc.sample_time,
-                                            SYSDATETIME()
+                                            NULLIF
+                                            (
+                                                DATEDIFF
+                                                (
+                                                    SECOND,
+                                                    dopc.sample_time,
+                                                    SYSDATETIME()
+                                                ),
+                                                0
+                                            ),
+                                            1
                                         ),
-                                        0
-                                    ),
-                                    1
-                                ),
-                                'N0'
-                            )
+                                        'N0'
+                                    )
+                            END
                     FROM @dm_os_performance_counters AS dopc
                 )
                 SELECT
@@ -2403,8 +2486,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         total_difference =
                             FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
                         total_difference_per_second =
-                            FORMAT((dopc2.cntr_value - dopc.cntr_value) /
-                            ISNULL(DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 1), 'N0'),
+                            CASE
+                                WHEN dopc.cntr_type = 272696576
+                                THEN
+                                    FORMAT((dopc2.cntr_value - dopc.cntr_value) /
+                                    ISNULL(DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 1), 'N0')
+                            END,
                         sample_seconds =
                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
                         first_sample_time =
@@ -2419,7 +2506,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       AND dopc.counter_name = dopc2.counter_name
                       AND dopc.instance_name = dopc2.instance_name
                       AND dopc.sample_time < dopc2.sample_time
-                    WHERE (dopc2.cntr_value - dopc.cntr_value) <> 0
+                    /*
+                    Counters that moved, plus point-in-time gauges
+                    (cntr_type 65792) that are not zero. A gauge such as
+                    Memory Grants Pending that sits at the same non-zero
+                    value for the whole sample is pressure, not "no change".
+                    */
+                    WHERE
+                    (
+                         (dopc2.cntr_value - dopc.cntr_value) <> 0
+                      OR
+                      (
+                           dopc2.cntr_type = 65792
+                       AND dopc2.cntr_value > 0
+                      )
+                    )
                 )
                 SELECT
                     p.object_name,
@@ -2527,9 +2628,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                                 osi.cpu_count
                                             FROM sys.dm_os_sys_info AS osi
                                         )
-                                FROM sys.master_files AS mf
-                                WHERE mf.database_id = 2
-                                AND   mf.type = 0
+                                /*
+                                Current sizes. sys.master_files holds the sizes
+                                tempdb is created with at startup, not what the
+                                files have grown to since.
+                                */
+                                FROM tempdb.sys.database_files AS mf
+                                WHERE mf.type = 0
                                 FOR XML
                                     PATH('tempdb_configuration'),
                                     TYPE
@@ -3412,7 +3517,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             deqmg.session_id,
             database_name =
-                DB_NAME(deqp.dbid),
+                DB_NAME(ISNULL(der.database_id, deqp.dbid)),
             [dd hh:mm:ss.mss] =
                 CASE
                     WHEN e.elapsed_time_ms < 0
@@ -4571,8 +4676,45 @@ OPTION(MAXDOP 1, RECOMPILE);',
         );
 
         /*
+        Table variable to hold who blocks whom, one row per session pair.
+        sys.sysprocesses has one row per execution context, so a parallel
+        query with two threads waiting on the same blocker shows up twice;
+        walking sysprocesses directly repeated the session once per thread
+        and counted it more than once in blocked_session_count.
+        */
+        DECLARE
+            @blocking_edges table
+        (
+            session_id smallint NOT NULL,
+            blocking_session_id smallint NOT NULL,
+            PRIMARY KEY
+                (blocking_session_id, session_id)
+        );
+
+        /*
+        blocked > 0 only: sysprocesses reports negative values for sessions that wait
+        on no session (-2 orphaned distributed transaction, -3 deferred recovery,
+        -4 latch owner not known). Kept as edges they made a lead blocker look blocked.
+        */
+        INSERT
+            @blocking_edges
+        (
+            session_id,
+            blocking_session_id
+        )
+        SELECT DISTINCT
+            session_id = sp.spid,
+            blocking_session_id = sp.blocked
+        FROM sys.sysprocesses AS sp
+        WHERE sp.blocked > 0
+        AND   sp.blocked <> sp.spid;
+
+        /*
         Find lead blockers: sessions that are blocking others
-        but not blocked themselves (includes idle sessions with open transactions)
+        but not blocked themselves (includes idle sessions with open transactions).
+        A parallel query whose main thread (blocked = 0) waits on its workers,
+        while a worker waits on another session, is blocked, so it is checked
+        against the edge list rather than its own sysprocesses rows.
         */
         INSERT
             @lead_blockers
@@ -4596,8 +4738,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
               (
                   SELECT
                       1/0
-                  FROM sys.sysprocesses AS sp2
-                  WHERE sp2.blocked = sp.spid
+                  FROM @blocking_edges AS be
+                  WHERE be.blocking_session_id = sp.spid
+              )
+        AND   NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM @blocking_edges AS be
+                  WHERE be.session_id = sp.spid
               );
 
         /*
@@ -4639,8 +4788,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             Recursive: Walk down the blocking chain
             */
             SELECT
-                session_id = sp.spid,
-                blocking_session_id = sp.blocked,
+                session_id = be.session_id,
+                blocking_session_id = be.blocking_session_id,
                 blocking_level = b.blocking_level + 1,
                 top_level_blocker = b.top_level_blocker,
                 blocking_chain =
@@ -4648,21 +4797,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     (
                         nvarchar(4000),
                         REPLICATE(N' > ', b.blocking_level + 1) +
-                        CONVERT(nvarchar(20), sp.blocked) +
+                        CONVERT(nvarchar(20), be.blocking_session_id) +
                         N' blocking ' +
-                        CONVERT(nvarchar(20), sp.spid)
+                        CONVERT(nvarchar(20), be.session_id)
                     ),
                 visited_path =
                     CONVERT
                     (
                         nvarchar(4000),
-                        b.visited_path + CONVERT(nvarchar(20), sp.spid) + N'.'
+                        b.visited_path + CONVERT(nvarchar(20), be.session_id) + N'.'
                     )
             FROM blockers AS b
-            JOIN sys.sysprocesses AS sp
-              ON sp.blocked = b.session_id
+            JOIN @blocking_edges AS be
+              ON be.blocking_session_id = b.session_id
             WHERE b.visited_path NOT LIKE
-                  N'%.' + CONVERT(nvarchar(20), sp.spid) + N'.%'
+                  N'%.' + CONVERT(nvarchar(20), be.session_id) + N'.%'
         ),
             blocking_info
         (
@@ -4705,7 +4854,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 blocked_session_count =
                 (
                     SELECT
-                        COUNT_BIG(*)
+                        COUNT_BIG(DISTINCT b2.session_id)
                     FROM blockers AS b2
                     WHERE b2.visited_path LIKE
                           N'%.' + CONVERT(nvarchar(20), b.session_id) + N'.%'
@@ -4713,9 +4862,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),
                 sp.last_batch,
                 sp.status,
-                wait_type = sp.lastwaittype,
-                wait_time = sp.waittime,
-                wait_resource = sp.waitresource,
+                wait_type = ISNULL(w.lastwaittype, sp.lastwaittype),
+                wait_time = ISNULL(w.waittime, sp.waittime),
+                wait_resource = ISNULL(w.waitresource, sp.waitresource),
                 cpu_time = sp.cpu,
                 physical_io = sp.physical_io,
                 sp.memusage,
@@ -4730,8 +4879,27 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 program_name = sp.program_name,
                 sp.login_time
             FROM blockers AS b
+            /*
+            Session details come from the main thread (ecid 0), which is the
+            only one with the sql_handle and statement offsets. The wait
+            details come from the thread that is blocked by blocking_session_id,
+            which for a parallel query is a worker thread, not ecid 0.
+            */
             JOIN sys.sysprocesses AS sp
-              ON sp.spid = b.session_id
+              ON  sp.spid = b.session_id
+              AND sp.ecid = 0
+            OUTER APPLY
+            (
+                SELECT TOP (1)
+                    spw.lastwaittype,
+                    spw.waittime,
+                    spw.waitresource
+                FROM sys.sysprocesses AS spw
+                WHERE spw.spid = b.session_id
+                AND   spw.blocked = b.blocking_session_id
+                ORDER BY
+                    spw.ecid
+            ) AS w
         )
         /*
         Final SELECT: retrieve SQL text and query plans last for performance

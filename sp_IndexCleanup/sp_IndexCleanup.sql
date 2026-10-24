@@ -382,6 +382,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* sys.stats.is_incremental (SQL 2014+, Azure SQL DB, and Managed Instance) */
+        @supports_incremental_statistics bit =
+            CASE
+                /* Azure SQL DB or Managed Instance */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
+                THEN 1
+                /* SQL Server 2014+ */
+                WHEN CONVERT
+                     (
+                         integer,
+                         SUBSTRING
+                         (
+                             CONVERT
+                             (
+                                 varchar(20),
+                                 SERVERPROPERTY('ProductVersion')
+                             ),
+                             1,
+                             2
+                         )
+                     ) >= 12
+                THEN 1
+                ELSE 0
+            END,
         @is_azure_sql_db bit =
             CASE
                 WHEN CONVERT
@@ -532,6 +556,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
+        /* sys.indexes.type, so a script can tell a table whose base is a clustered columnstore index (5) */
+        index_type tinyint NOT NULL,
         can_compress bit NOT NULL
     );
 
@@ -683,6 +709,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         */
         ignore_dup_key bit NOT NULL,
         no_recompute bit NOT NULL,
+        /*
+        Three more that DROP_EXISTING resets: ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS
+        go back to ON, and STATISTICS_INCREMENTAL (sys.stats.is_incremental) goes
+        back to OFF.
+        */
+        allow_page_locks bit NOT NULL,
+        allow_row_locks bit NOT NULL,
+        is_incremental bit NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
         user_lookups bigint NOT NULL,
@@ -981,6 +1015,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_rows bigint NULL, /* Number of rows in the index */
         index_reads bigint NULL, /* Total reads (seeks + scans + lookups) */
         index_writes bigint NULL, /* Total writes */
+        partition_number integer NULL, /* Set only on per-partition compression rows, which share everything else */
         script nvarchar(max) NULL /* Script to execute the action */
     );
 
@@ -1186,7 +1221,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
-        should_include_filter_columns bit NOT NULL
+        should_include_filter_columns bit NOT NULL,
+        /* Built inside the database loop, while that database's #index_details and the rest are loaded */
+        create_index_script nvarchar(max) NULL
     );
 
     CREATE CLUSTERED INDEX
@@ -1935,13 +1972,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         TRUNCATE TABLE
             #include_subset_dedupe;
         TRUNCATE TABLE
-            #computed_columns_analysis;
-        TRUNCATE TABLE
-            #check_constraints_analysis;
-        TRUNCATE TABLE
-            #filtered_index_columns_analysis;
-        TRUNCATE TABLE
             #merged_includes;
+
+        /*
+        #computed_columns_analysis, #check_constraints_analysis and
+        #filtered_index_columns_analysis are NOT reset here. They are the advisory
+        findings, returned after the loop like #index_analysis, and keyed by
+        database_id. Resetting them each pass left only the last database's
+        findings when @get_all_databases = 1, and none at all once a later
+        database without the @table_name object was reached.
+        */
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
@@ -2004,6 +2044,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = o.name,
             index_id = i.index_id,
             index_name = ISNULL(i.name, o.name + N''.Heap''),
+            index_type = i.type,
             can_compress =
                 CASE
                     WHEN p.index_id > 0
@@ -2164,6 +2205,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_id,
         index_name,
+        index_type,
         can_compress
     )
     EXECUTE sys.sp_executesql
@@ -2934,6 +2976,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        allow_page_locks = ISNULL(i.allow_page_locks, 1),
+        allow_row_locks = ISNULL(i.allow_row_locks, 1),' +
+        CASE
+            WHEN @supports_incremental_statistics = 1
+            THEN N'
+        is_incremental =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.stats AS st
+                         WHERE st.object_id = i.object_id
+                         AND   st.stats_id = i.index_id
+                         AND   st.is_incremental = 1
+                     )
+                THEN 1
+                ELSE 0
+            END,'
+            ELSE N'
+        is_incremental = 0,'
+        END + N'
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
         user_lookups = ISNULL(us.user_lookups, 0),
@@ -3069,6 +3133,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         optimize_for_sequential_key,
         ignore_dup_key,
         no_recompute,
+        allow_page_locks,
+        allow_row_locks,
+        is_incremental,
         user_seeks,
         user_scans,
         user_lookups,
@@ -3589,130 +3656,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#index_analysis',
             ia.*
         FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-
-        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
-    END;
-
-    /*
-    Analyze filtered indexes to identify columns used in filters that should be included.
-
-    A column is referenced by the filter when its bracketed name is in the
-    filter text, because filter_definition always stores column names in
-    brackets: ([SiteID]=(1)). Matching the bare name as a substring found [ID]
-    inside [SiteID] and recommended a column the filter never mentions. CHARINDEX
-    and not LIKE, since in a LIKE pattern the brackets are a character class.
-    */
-    SELECT
-        @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.filter_definition,
-        missing_included_columns =
-            (
-                SELECT
-                    STUFF
-                    (
-                        (
-                            /* Find column names mentioned in filter_definition that aren''t already key or included columns */
-                            SELECT
-                                N'', '' +
-                                QUOTENAME(c.name)
-                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                            WHERE c.object_id = ia.object_id
-                            AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
-                            AND   NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM #index_details AS id
-                                WHERE id.object_id = ia.object_id
-                                AND   id.index_id = ia.index_id
-                                AND   id.column_id = c.column_id
-                            )
-                            GROUP BY
-                                c.name
-                            FOR
-                                XML
-                                PATH(''''),
-                                TYPE
-                        ).value(''text()[1]'',''nvarchar(max)''),
-                        1,
-                        2,
-                        N''''
-                    )
-            ),
-        should_include_filter_columns =
-            CASE
-                WHEN EXISTS
-                (
-                    /* Check if any columns mentioned in filter_definition aren''t already in the index */
-                    SELECT
-                        1/0
-                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                    WHERE c.object_id = ia.object_id
-                    AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
-                    AND   NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id
-                        WHERE id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
-                        AND   id.column_id = c.column_id
-                    )
-                )
-                THEN 1
-                ELSE 0
-            END
-    FROM #index_analysis AS ia
-    WHERE ia.filter_definition IS NOT NULL
-    AND   ia.database_id = @current_database_id
-    OPTION(RECOMPILE);';
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
-        PRINT @sql;
-    END;
-
-    INSERT INTO
-        #filtered_index_columns_analysis
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        object_id,
-        table_name,
-        index_id,
-        index_name,
-        filter_definition,
-        missing_included_columns,
-        should_include_filter_columns
-    )
-    EXECUTE sys.sp_executesql
-        @sql,
-      N'@current_database_id integer',
-        @current_database_id;
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#filtered_index_columns_analysis',
-            fica.*
-        FROM #filtered_index_columns_analysis AS fica
         OPTION(RECOMPILE);
 
         RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
@@ -5411,7 +5354,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name = MAX(ia.table_name),
         base_key_columns = ia.key_columns,
         filter_definition = ISNULL(ia.filter_definition, N''),
-        /* Choose a unique index first, then the one with the most included columns, then the first alphabetically */
+        /* Choose a unique index first, then one a foreign key or IGNORE_DUP_KEY depends on, then the most included columns, then the first alphabetically */
         winning_index_name =
             (
                 SELECT TOP (1)
@@ -5429,6 +5372,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     the uniqueness with nothing in the output to say so (#918)
                     */
                     candidate.is_unique DESC,
+                    /*
+                    Then the index a foreign key is backed by, then the one that
+                    skips duplicate keys: the two terms index_priority gained in
+                    #917 and #916, in the same order. Rule 5 leaves this step more
+                    than one candidate when three or more indexes share a key, and
+                    without them a plain unique index with more includes won here.
+                    The guard then kept the foreign key's index and the keeper took
+                    over IGNORE_DUP_KEY, so nothing broke, but the wrong index was
+                    rebuilt and the right one was reported as a duplicate.
+                    */
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_fkb
+                            WHERE id_fkb.index_hash = candidate.index_hash
+                            AND   id_fkb.is_foreign_key_backing = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_idk
+                            WHERE id_idk.index_hash = candidate.index_hash
+                            AND   id_idk.ignore_dup_key = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
                     /* Then prefer indexes with more included columns (by length as a proxy) */
                     LEN(ISNULL(candidate.included_columns, '')) DESC,
                     /* Then alphabetically for stability */
@@ -6366,14 +6343,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N''
             END +
             N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            SQL Server refuses CREATE INDEX ... WITH (DROP_EXISTING = ON, ONLINE = ON)
+            on a table whose base is a clustered columnstore index: measured on 2022
+            CU27, Msg 35352. The paired DISABLE still runs, so the loser's columns
+            would be covered by nothing. ALTER INDEX ... REBUILD WITH (ONLINE = ON) is
+            accepted on the same table, and a nonclustered columnstore index does not
+            cause the error, so only this case is written offline.
+            */
             CASE
                 WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
                 THEN N'ON'
                 ELSE N'OFF'
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
                 END +
             CASE
@@ -6433,6 +6427,47 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id_nrc.no_recompute = 1
                 )
                 THEN N', STATISTICS_NORECOMPUTE = ON'
+                ELSE N''
+            END +
+            /*
+            DROP_EXISTING resets these three as well: row and page locks back to
+            allowed, and incremental statistics back to OFF. Only a value that
+            differs from the default needs naming.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
                 ELSE N''
             END +
             N')' +
@@ -7093,6 +7128,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       OR id.is_primary_key = 1
     )
     AND   ce.can_compress = 1 /* Only those eligible for compression */
+    AND   fo.can_compress = 1 /* One #filtered_objects row per index, not one per partition compression mix */
     AND   fo.database_id = @current_database_id
     /* Only add if not already in #index_analysis */
     AND   NOT EXISTS
@@ -7192,7 +7228,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
             CASE
@@ -7360,7 +7396,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_size_gb,
         index_rows,
         index_reads,
-        index_writes
+        index_writes,
+        partition_number
     )
     SELECT DISTINCT
         result_type = 'COMPRESS_PARTITION',
@@ -7385,30 +7422,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 nvarchar(20),
                 ps.partition_number
             ) +
-            N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            A single-partition rebuild accepts only SORT_IN_TEMPDB, MAXDOP, ONLINE,
+            the compression options, RESUMABLE and WAIT_AT_LOW_PRIORITY. FILLFACTOR
+            and OPTIMIZE_FOR_SEQUENTIAL_KEY are refused with Msg 155 (measured on
+            2022 CU27), and the rebuild keeps the index's own values for both.
+            */
+            N' WITH (SORT_IN_TEMPDB = ON, ONLINE = ' +
             CASE
                 WHEN @online = 1
                 THEN N'ON'
                 ELSE N'OFF'
             END +
-                        CASE
+            CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
+            END +
             N');',
             N'Compression type: Per Partition | Partition: ' +
             CONVERT
@@ -7440,7 +7470,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.total_rows,
         index_reads =
             (id.user_seeks + id.user_scans + id.user_lookups),
-        id.user_updates
+        id.user_updates,
+        ps.partition_number
     FROM #index_analysis AS ia
     JOIN #partition_stats AS ps
       ON ia.index_hash = ps.index_hash
@@ -7453,6 +7484,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE
         /* Only partitioned indexes */
         ps.partition_function_name IS NOT NULL
+        /* Only partitions still uncompressed, the same test #filtered_objects makes for a whole index */
+    AND  ps.data_compression_desc = N'NONE'
         /* Indexes that are not being disabled or merged */
     AND  (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
@@ -7832,6 +7865,370 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     )
     AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
+    END;
+
+    /*
+    Analyze filtered indexes to identify columns used in filters that should be included.
+
+    A column is referenced by the filter when its bracketed name is in the
+    filter text, because filter_definition always stores column names in
+    brackets: ([SiteID]=(1)). Matching the bare name as a substring found [ID]
+    inside [SiteID] and recommended a column the filter never mentions. CHARINDEX
+    and not LIKE, since in a LIKE pattern the brackets are a character class.
+
+    This runs after every rule and every script, because the finding has to
+    describe the index the scripts leave behind. Run ahead of the rules, it
+    named a filter column that a merge was about to add, so its script listed
+    the column twice (Msg 1909), and it scripted indexes the same run disables:
+    CREATE INDEX ... WITH (DROP_EXISTING = ON) rebuilds a disabled index, so the
+    script undid the DISABLE. Now a column counts as present when the index
+    has it or takes it over from a loser it absorbs - the same losers the
+    include merges read - and an index the run disables gets no finding.
+
+    CONVERT to nvarchar(max) first, so the concatenation below cannot be cut
+    off at 4,000 characters.
+    */
+    SELECT
+        @sql = CONVERT(nvarchar(max), N'') + N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    SELECT DISTINCT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Column names in filter_definition that the index will not carry */
+                            SELECT
+                                N'', '' +
+                                QUOTENAME(c.name)
+                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_analysis AS ia_loser
+                                JOIN #index_details AS id_loser
+                                  ON id_loser.index_hash = ia_loser.index_hash
+                                WHERE ia_loser.scope_hash = ia.scope_hash
+                                AND   ia_loser.target_index_name = ia.index_name
+                                AND   ia_loser.action = N''DISABLE''
+                                AND   ia_loser.consolidation_rule IN
+                                      (
+                                          N''Key Subset'',
+                                          N''Key Duplicate''
+                                      )
+                                AND   id_loser.is_included_column = 1
+                                AND   id_loser.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR
+                                XML
+                                PATH(''''),
+                                TYPE
+                        ).value(''text()[1]'',''nvarchar(max)''),
+                        1,
+                        2,
+                        N''''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* The same test: a filter column the index will not carry */
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_analysis AS ia_loser
+                        JOIN #index_details AS id_loser
+                          ON id_loser.index_hash = ia_loser.index_hash
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.target_index_name = ia.index_name
+                        AND   ia_loser.action = N''DISABLE''
+                        AND   ia_loser.consolidation_rule IN
+                              (
+                                  N''Key Subset'',
+                                  N''Key Duplicate''
+                              )
+                        AND   id_loser.is_included_column = 1
+                        AND   id_loser.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    AND   ia.database_id = @current_database_id
+    /* An index this run disables gets no finding */
+    AND   ISNULL(ia.action, N'''') <> N''DISABLE''
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
+        PRINT SUBSTRING(@sql,    1, 4000);
+        PRINT SUBSTRING(@sql, 4001, 4000);
+    END;
+
+    INSERT INTO
+        #filtered_index_columns_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        index_id,
+        index_name,
+        filter_definition,
+        missing_included_columns,
+        should_include_filter_columns
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@current_database_id integer',
+        @current_database_id;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#filtered_index_columns_analysis',
+            fica.*
+        FROM #filtered_index_columns_analysis AS fica
+        OPTION(RECOMPILE);
+    END;
+
+    /*
+    Script the filtered-index findings for this database, now, while its
+    #index_details, #partition_stats, #compression_eligibility and #filtered_objects
+    are loaded. The findings are returned after the loop, and a script built there
+    read those tables when they held only the last database's rows, so with
+    @get_all_databases = 1 every other database's script lost its compression, its
+    index options and its filegroup or partition scheme.
+    */
+    UPDATE
+        fica
+    SET
+        /*
+        Rebuild the index with the filter columns appended to the INCLUDE
+        list, using DROP_EXISTING so the existing index is replaced in a
+        single statement. Pieces are reused from #index_analysis, so the
+        key columns, existing includes, and filter all match the original.
+        The WITH options and partition ON clause mirror the merge/create
+        scripts so this advice stays consistent with the rest of the tool.
+        */
+        fica.create_index_script =
+            N'CREATE ' +
+            CASE
+                WHEN ia.is_unique = 1
+                THEN N'UNIQUE '
+                ELSE N''
+            END +
+            N'NONCLUSTERED INDEX ' +
+            QUOTENAME(fica.index_name) +
+            N' ON ' +
+            QUOTENAME(fica.database_name) +
+            N'.' +
+            QUOTENAME(fica.schema_name) +
+            N'.' +
+            QUOTENAME(fica.table_name) +
+            N' (' +
+            ia.key_columns +
+            N') INCLUDE (' +
+            CASE
+                WHEN ia.included_columns IS NOT NULL
+                AND  LEN(ia.included_columns) > 0
+                THEN ia.included_columns + N', ' + fica.missing_included_columns
+                ELSE fica.missing_included_columns
+            END +
+            N')' +
+            CASE
+                WHEN fica.filter_definition IS NOT NULL
+                THEN N' WHERE ' + fica.filter_definition
+                ELSE N''
+            END +
+            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /* Offline on a clustered columnstore table, for the reason given at the MERGE SCRIPT (Msg 35352) */
+            CASE
+                WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
+                THEN N'ON'
+                ELSE N'OFF'
+            END +
+            CASE
+                WHEN ce.can_compress = 1
+                THEN N', DATA_COMPRESSION = PAGE'
+                ELSE N''
+            END +
+            CASE
+                WHEN @supports_optimize_for_sequential_key = 1
+                AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_ofsk
+                    WHERE id_ofsk.index_hash = ia.index_hash
+                    AND   id_ofsk.optimize_for_sequential_key = 1
+                )
+                THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = ia.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                )
+                THEN N', IGNORE_DUP_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_nrc
+                    WHERE id_nrc.index_hash = ia.index_hash
+                    AND   id_nrc.no_recompute = 1
+                )
+                THEN N', STATISTICS_NORECOMPUTE = ON'
+                ELSE N''
+            END +
+            /* The other three DROP_EXISTING resets, as in the MERGE SCRIPT */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
+                ELSE N''
+            END +
+            N')' +
+            CASE
+                WHEN ps.partition_function_name IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on) +
+                     N'(' +
+                     ISNULL(ps.partition_columns, N'') +
+                     N')'
+                WHEN ps.built_on IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on)
+                ELSE N''
+            END +
+            N';'
+    FROM #filtered_index_columns_analysis AS fica
+    JOIN #index_analysis AS ia
+      ON  ia.database_id = fica.database_id
+      AND ia.schema_id = fica.schema_id
+      AND ia.object_id = fica.object_id
+      AND ia.index_id = fica.index_id
+    LEFT JOIN
+    (
+        /* One row per index carrying its storage/partition layout */
+        SELECT
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats AS ps
+        GROUP BY
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) AS ps
+      ON ps.index_hash = ia.index_hash
+    LEFT JOIN #compression_eligibility AS ce
+      ON ce.index_hash = ia.index_hash
+    WHERE fica.should_include_filter_columns = 1
+    AND   fica.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /*
@@ -8372,7 +8769,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     irs.schema_name,
                     irs.table_name,
                     irs.index_name,
-                    irs.script_type
+                    irs.script_type,
+                    /* NULL on every row but the per-partition ones, which would otherwise collapse to one partition */
+                    irs.partition_number
                 ORDER BY
                     irs.result_type DESC
             ) AS rn
@@ -8464,7 +8863,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Then by database, schema, table, index name for consistent ordering */
         ir.schema_name,
         ir.table_name,
-        ir.index_name
+        ir.index_name,
+        ir.partition_number
     OPTION(RECOMPILE);
 
     /*
@@ -9094,106 +9494,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.filter_definition,
             ia.original_index_definition,
             fica.missing_included_columns,
-            /*
-            Rebuild the index with the filter columns appended to the INCLUDE
-            list, using DROP_EXISTING so the existing index is replaced in a
-            single statement. Pieces are reused from #index_analysis, so the
-            key columns, existing includes, and filter all match the original.
-            The WITH options and partition ON clause mirror the merge/create
-            scripts so this advice stays consistent with the rest of the tool.
-            */
-            create_index_script =
-                N'CREATE ' +
-                CASE
-                    WHEN ia.is_unique = 1
-                    THEN N'UNIQUE '
-                    ELSE N''
-                END +
-                N'NONCLUSTERED INDEX ' +
-                QUOTENAME(fica.index_name) +
-                N' ON ' +
-                QUOTENAME(fica.database_name) +
-                N'.' +
-                QUOTENAME(fica.schema_name) +
-                N'.' +
-                QUOTENAME(fica.table_name) +
-                N' (' +
-                ia.key_columns +
-                N') INCLUDE (' +
-                CASE
-                    WHEN ia.included_columns IS NOT NULL
-                    AND  LEN(ia.included_columns) > 0
-                    THEN ia.included_columns + N', ' + fica.missing_included_columns
-                    ELSE fica.missing_included_columns
-                END +
-                N')' +
-                CASE
-                    WHEN fica.filter_definition IS NOT NULL
-                    THEN N' WHERE ' + fica.filter_definition
-                    ELSE N''
-                END +
-                N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-                CASE
-                    WHEN @online = 1
-                    THEN N'ON'
-                    ELSE N'OFF'
-                END +
-                CASE
-                    WHEN ce.can_compress = 1
-                    THEN N', DATA_COMPRESSION = PAGE'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_idk
-                        WHERE id_idk.index_hash = ia.index_hash
-                        AND   id_idk.ignore_dup_key = 1
-                    )
-                    THEN N', IGNORE_DUP_KEY = ON'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_nrc
-                        WHERE id_nrc.index_hash = ia.index_hash
-                        AND   id_nrc.no_recompute = 1
-                    )
-                    THEN N', STATISTICS_NORECOMPUTE = ON'
-                    ELSE N''
-                END +
-                N')' +
-                CASE
-                    WHEN ps.partition_function_name IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on) +
-                         N'(' +
-                         ISNULL(ps.partition_columns, N'') +
-                         N')'
-                    WHEN ps.built_on IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on)
-                    ELSE N''
-                END +
-                N';',
+            /* Built inside the database loop, for the reason given there */
+            fica.create_index_script,
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
         JOIN #index_analysis AS ia
@@ -9201,24 +9503,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.schema_id = fica.schema_id
           AND ia.object_id = fica.object_id
           AND ia.index_id = fica.index_id
-        LEFT JOIN
-        (
-            /* One row per index carrying its storage/partition layout */
-            SELECT
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-            FROM #partition_stats AS ps
-            GROUP BY
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-        ) AS ps
-          ON ps.index_hash = ia.index_hash
-        LEFT JOIN #compression_eligibility AS ce
-          ON ce.index_hash = ia.index_hash
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,
