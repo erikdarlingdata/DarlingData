@@ -19,7 +19,6 @@ on:
       - '**/tests/**'
       - 'Install-All/**'
       - '.github/sql/**'
-      - '.github/workflows/sql-tests.yml'
   pull_request:
     branches: [dev, main]
 
@@ -57,7 +56,7 @@ jobs:
           sql=false
           while IFS= read -r f; do
             case "$f" in
-              *.sql | tests/* | */tests/* | Install-All/* | .github/sql/* | .github/workflows/sql-tests.yml)
+              *.sql | tests/* | */tests/* | Install-All/* | .github/sql/*)
                 echo "Matched: $f"
                 sql=true
                 break
