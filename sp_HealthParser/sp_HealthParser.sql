@@ -2356,7 +2356,7 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
@@ -2366,12 +2366,11 @@ AND   ca.utc_timestamp < @end_date';
             xml =
                 CASE
                     WHEN @debug = 1
-                    THEN w.x.query('.')
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
                 END
         INTO #topwaits_count
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
         WHERE wi.component = 'QUERY_PROCESSING'
         /*
         Compare the wait type as a value: an exist() per ignored wait ran
@@ -2646,7 +2645,7 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
@@ -2656,12 +2655,11 @@ AND   ca.utc_timestamp < @end_date';
             xml =
                 CASE
                     WHEN @debug = 1
-                    THEN w.x.query('.')
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
                 END
         INTO #topwaits_duration
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
         WHERE wi.component = 'QUERY_PROCESSING'
         AND   w2.x2.exist('@averageWaitTime[.>= sql:variable("@wait_duration_ms")]') = 1
         /*
@@ -2920,26 +2918,25 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            ioLatchTimeouts = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
-            intervalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
-            totalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            ioLatchTimeouts = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
+            intervalLongIos = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
+            totalLongIos = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
             longestPendingRequests_duration_ms = CONVERT(bigint, w2.x2.value('@duration', 'bigint')),
             longestPendingRequests_filePath = w2.x2.value('@filePath', 'nvarchar(500)'),
             /* Only the @debug output reads this XML copy */
             xml =
                 CASE
                     WHEN @debug = 1
-                    THEN w.x.query('.')
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
                 END
         INTO #io
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
+        OUTER APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
         WHERE wi.component = 'IO_SUBSYSTEM'
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -3146,36 +3143,35 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            name = w.x.value('@name', 'nvarchar(256)'),
-            component = w.x.value('(data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            maxWorkers = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@maxWorkers)[1]', 'bigint'),
-            workersCreated = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@workersCreated)[1]', 'bigint'),
-            workersIdle = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@workersIdle)[1]', 'bigint'),
-            tasksCompletedWithinInterval = w.x.value('(//data[@name="data"]/value/queryProcessing/@tasksCompletedWithinInterval)[1]', 'bigint'),
-            pendingTasks = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks)[1]', 'bigint'),
-            oldestPendingTaskWaitingTime = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
-            hasUnresolvableDeadlockOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
-            hasDeadlockedSchedulersOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
-            didBlockingOccur = w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report'),
+            name = wi.sp_server_diagnostics_component_result.value('(/event/@name)[1]', 'nvarchar(256)'),
+            component = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            maxWorkers = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@maxWorkers)[1]', 'bigint'),
+            workersCreated = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@workersCreated)[1]', 'bigint'),
+            workersIdle = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@workersIdle)[1]', 'bigint'),
+            tasksCompletedWithinInterval = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@tasksCompletedWithinInterval)[1]', 'bigint'),
+            pendingTasks = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint'),
+            oldestPendingTaskWaitingTime = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
+            hasUnresolvableDeadlockOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
+            hasDeadlockedSchedulersOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
+            didBlockingOccur = wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report'),
             /* Only the @debug output reads this XML copy */
             xml =
                 CASE
                     WHEN @debug = 1
-                    THEN w.x.query('.')
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
                 END
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         WHERE wi.component = 'QUERY_PROCESSING'
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         /* Threshold is honored whether or not @warnings_only is set — the
            parameter documents "minimum pending tasks to display" and the
            previous `OR @warnings_only = 0` short-circuit silently ignored
            the user-supplied value whenever warnings-only was off. */
-        AND   w.x.exist('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks[.>= sql:variable("@pending_task_threshold")])') = 1
+        AND   wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint') >= @pending_task_threshold
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -3361,12 +3357,12 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             pending_tasks =
-                w.x.value
+                wi.sp_server_diagnostics_component_result.value
                 (
-                    '(/event/data[@name="data"]/value/queryProcessing/@pendingTasks)[1]',
+                    '(/event/data/value/queryProcessing/@pendingTasks)[1]',
                     'bigint'
                 ),
             entry_point_name =
@@ -3406,13 +3402,13 @@ AND   ca.utc_timestamp < @end_date';
                 ep.e.value('@count', 'bigint')
         INTO #pending_task_details
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        /* Hardcoded threshold > 1 ignored the @pending_task_threshold
-           parameter. Replaced with sql:variable() binding so the user's
-           value actually takes effect here too. */
-        CROSS APPLY w.x.nodes('/event/data[@name="data"]/value/queryProcessing[@pendingTasks >= sql:variable("@pending_task_threshold")]/pendingTasks/entryPoint') AS ep(e)
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/pendingTasks/entryPoint') AS ep(e)
         WHERE wi.component = 'QUERY_PROCESSING'
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        /* Hardcoded threshold > 1 ignored the @pending_task_threshold
+           parameter. It is compared as a value here, which is cheaper
+           than the predicate in the nodes() path it used to be. */
+        AND   wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint') >= @pending_task_threshold
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -4646,34 +4642,33 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            spinlockBackoffs = w.x.value('(/event/data[@name="data"]/value/system/@spinlockBackoffs)[1]', 'bigint'),
-            sickSpinlockType = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),
-            sickSpinlockTypeAfterAv = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
-            latchWarnings = w.x.value('(/event/data[@name="data"]/value/system/@latchWarnings)[1]', 'bigint'),
-            isAccessViolationOccurred = w.x.value('(/event/data[@name="data"]/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
-            writeAccessViolationCount = w.x.value('(/event/data[@name="data"]/value/system/@writeAccessViolationCount)[1]', 'bigint'),
-            totalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@totalDumpRequests)[1]', 'bigint'),
-            intervalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@intervalDumpRequests)[1]', 'bigint'),
-            nonYieldingTasksReported = w.x.value('(/event/data[@name="data"]/value/system/@nonYieldingTasksReported)[1]', 'bigint'),
-            pageFaults = w.x.value('(/event/data[@name="data"]/value/system/@pageFaults)[1]', 'bigint'),
-            systemCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@systemCpuUtilization)[1]', 'bigint'),
-            sqlCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@sqlCpuUtilization)[1]', 'bigint'),
-            BadPagesDetected = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesDetected)[1]', 'bigint'),
-            BadPagesFixed = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesFixed)[1]', 'bigint'),
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            spinlockBackoffs = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@spinlockBackoffs)[1]', 'bigint'),
+            sickSpinlockType = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),
+            sickSpinlockTypeAfterAv = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
+            latchWarnings = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@latchWarnings)[1]', 'bigint'),
+            isAccessViolationOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
+            writeAccessViolationCount = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@writeAccessViolationCount)[1]', 'bigint'),
+            totalDumpRequests = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@totalDumpRequests)[1]', 'bigint'),
+            intervalDumpRequests = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@intervalDumpRequests)[1]', 'bigint'),
+            nonYieldingTasksReported = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@nonYieldingTasksReported)[1]', 'bigint'),
+            pageFaults = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@pageFaults)[1]', 'bigint'),
+            systemCpuUtilization = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@systemCpuUtilization)[1]', 'bigint'),
+            sqlCpuUtilization = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sqlCpuUtilization)[1]', 'bigint'),
+            BadPagesDetected = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@BadPagesDetected)[1]', 'bigint'),
+            BadPagesFixed = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@BadPagesFixed)[1]', 'bigint'),
             /* Only the @debug output reads this XML copy */
             xml =
                 CASE
                     WHEN @debug = 1
-                    THEN w.x.query('.')
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
                 END
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         WHERE wi.component = 'SYSTEM'
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -5445,14 +5440,13 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('(//@timestamp)[1]', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
+            human_events_xml = wi.sp_server_diagnostics_component_result.query('/event/data/value/queryProcessing/blockingTasks/blocked-process-report')
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         WHERE wi.component = 'QUERY_PROCESSING'
-        AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        AND   wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
 
         IF @debug = 1
