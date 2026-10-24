@@ -1134,6 +1134,15 @@ CREATE TABLE
 );
 
 /*
+Index and statistics maintenance plans to leave out, as sp_QuickieStore does
+*/
+CREATE TABLE
+    #maintenance_plans
+(
+    plan_id bigint PRIMARY KEY CLUSTERED
+);
+
+/*
 Create Query Store temp tables
 */
 CREATE TABLE
@@ -3322,6 +3331,80 @@ BEGIN
 END;
 
 /*
+Leave out index and statistics maintenance (index builds, statistics
+updates, StatMan, DBCC, WAITFOR and the like), with the same patterns as
+sp_QuickieStore, so the most recent plans are the ones sp_QuickieStore's
+'recent' sort shows. Only when no @include_ list or @procedure_name is
+given: plans and queries asked for by id, hash, handle or procedure come
+back as before, and a StatMan query among them still gets its warning.
+
+The patterns are matched under a binary collation on upper-cased text. The
+ones that only look at the start of the text test the first 40 characters,
+which is not a max type; only the two that can match past the start look
+at the whole text.
+*/
+IF
+(
+    @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+)
+BEGIN
+    SELECT
+        @sql = @isolation_level,
+        @current_table = N'inserting #maintenance_plans';
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text_start =
+            UPPER(CONVERT(nvarchar(40), qsqt.query_sql_text)) COLLATE Latin1_General_100_BIN2
+) AS u
+WHERE u.query_sql_text_start LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_start LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_start LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''DBCC%''
+OR    u.query_sql_text_start LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_start LIKE N''WAITFOR%''
+OR
+(
+      u.query_sql_text_start LIKE N''CREATE%''
+  AND UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''CREATE%INDEX%''
+)
+OR    UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''%SELECT STATMAN%''
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #maintenance_plans
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+END;
+
+/*
 Populate #query_store_runtime_stats from sys.query_store_runtime_stats
 This aggregates runtime stats for all filtered plan IDs
 
@@ -3674,6 +3757,28 @@ BEGIN
         @sql += N'
     AND   qsrs.last_execution_time >= @start_date
     AND   qsrs.last_execution_time < @end_date';
+END;
+
+/*Leave out maintenance plans, before the TOP, when no @include_ list or @procedure_name is given*/
+IF
+(
+    @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+)
+BEGIN
+    SELECT
+        @sql += N'
+    AND   NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #maintenance_plans AS mp
+              WHERE mp.plan_id = qsrs.plan_id
+          )';
 END;
 
 /*Add include plan IDs filter if specified*/
@@ -7204,6 +7309,15 @@ BEGIN
     FROM #parameter_declarations AS pd
     ORDER BY
         pd.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#maintenance_plans',
+        mp.*
+    FROM #maintenance_plans AS mp
+    ORDER BY
+        mp.plan_id
     OPTION(RECOMPILE);
 
     SELECT
