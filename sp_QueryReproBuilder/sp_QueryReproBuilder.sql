@@ -1400,6 +1400,17 @@ CREATE TABLE
 );
 
 /*
+Every plan of the queries in #query_store_plan, to build all_plan_ids
+*/
+CREATE TABLE
+    #all_plan_ids
+(
+    query_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    PRIMARY KEY CLUSTERED (query_id, plan_id)
+);
+
+/*
 Each plan converted to xml once, by the too-large check. The embedded
 constants and the final SELECT read it here instead of converting again.
 NULL when the plan text can't be converted.
@@ -1799,6 +1810,10 @@ exactly what the caller asked for, instead of widening back out to every plan
 set with the literal plan ids requested. @match holds the per-filter predicate
 (correlated to a sys.query_store_plan row aliased qsp) used for both seeding and
 intersecting.
+
+The statements here that read Query Store views use hash joins. With few
+rows on the other side, nested loops read the in-memory part of the view
+again for every row (about 15 ms each on one test database).
 */
 IF @include_plan_ids IS NOT NULL
 BEGIN
@@ -1950,7 +1965,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -1982,7 +1997,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2101,7 +2116,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2133,7 +2148,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2245,7 +2260,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2277,7 +2292,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2403,7 +2418,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2435,7 +2450,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2598,7 +2613,7 @@ BEGIN
               FROM #ignore_query_ids AS iqi
               WHERE iqi.query_id = qsp.query_id
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2715,7 +2730,7 @@ BEGIN
                         WHERE iqh.query_hash = qsq.query_hash
                     )
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2819,7 +2834,7 @@ BEGIN
               FROM #ignore_plan_hashes AS iph
               WHERE iph.plan_hash = qsp.query_plan_hash
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2937,7 +2952,7 @@ BEGIN
                               )
                     )
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -3084,7 +3099,7 @@ BEGIN
 
     SELECT
         @sql += N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -3214,7 +3229,7 @@ BEGIN
 
     SELECT
         @sql += N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -3241,6 +3256,9 @@ the total_ columns, which are avg x count_executions, came out wrong with
 it. The last_, min_, and max_ columns are float because the values are
 converted from microseconds and pages to ms and MB, and bigint cut them
 to whole numbers (a 0.8 ms query showed 0).
+
+This and the other statements below that read Query Store views use hash
+joins, so each view is read once, not once per row of the other side.
 */
 SELECT
     @sql = @isolation_level;
@@ -3714,7 +3732,7 @@ GROUP BY
     qsrs_with_lasts.plan_id
 ORDER BY
     MAX(qsrs_with_lasts.partitioned_last_execution_time) DESC
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -3753,7 +3771,6 @@ WITH
     database_id,
     plan_id,
     query_id,
-    all_plan_ids,
     plan_group_id,
     engine_version,
     compatibility_level,
@@ -3781,24 +3798,6 @@ SELECT
     @database_id,
     qsp.plan_id,
     qsp.query_id,
-    all_plan_ids =
-        STUFF
-        (
-            (
-                SELECT DISTINCT
-                    '', '' +
-                    RTRIM
-                        (qsp_plans.plan_id)
-                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML
-                    PATH(''''),
-                    TYPE
-            ).value(''./text()[1]'', ''varchar(max)''),
-            1,
-            2,
-            ''''
-        ),
     qsp.plan_group_id,
     qsp.engine_version,
     qsp.compatibility_level,
@@ -3986,12 +3985,18 @@ AND   qsp.query_id IN
       )';
 END;
 
-/*Add final ORDER BY and options*/
+/*
+Add final ORDER BY and options.
+
+The hash joins keep each Query Store view to one read: with few plans in
+#query_store_runtime_stats, nested loops read the in-memory part of
+sys.query_store_plan again for every plan.
+*/
 SELECT
     @sql += N'
 ORDER BY
     qsp.last_execution_time DESC
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -4012,6 +4017,81 @@ EXECUTE sys.sp_executesql
     @procedure_name_quoted;
 
 /*
+all_plan_ids lists every plan of each query. A subquery per plan in the
+insert above read sys.query_store_plan once per plan, and with few plans
+it read the in-memory part of the view again each time (about 15 ms per
+plan on one test database), so read it once here, with a hash join.
+*/
+SELECT
+    @sql = @isolation_level,
+    @current_table = N'inserting #all_plan_ids';
+
+SELECT
+    @sql += N'
+SELECT
+    qsp.query_id,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp2
+          WHERE qsp2.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #all_plan_ids
+WITH
+    (TABLOCK)
+(
+    query_id,
+    plan_id
+)
+EXECUTE sys.sp_executesql
+    @sql;
+
+/*
+The plan ids are listed in the order the DISTINCT of the old subquery
+gave them, sorted as text
+*/
+SELECT
+    @current_table = N'updating all_plan_ids in #query_store_plan';
+
+UPDATE
+    qsp
+SET
+    qsp.all_plan_ids =
+        STUFF
+        (
+            (
+                SELECT
+                    ', ' +
+                    RTRIM(ap.plan_id)
+                FROM #all_plan_ids AS ap
+                WHERE ap.query_id = qsp.query_id
+                ORDER BY
+                    ', ' +
+                    RTRIM(ap.plan_id)
+                FOR XML
+                    PATH(''),
+                    TYPE
+            ).value('./text()[1]', 'varchar(max)'),
+            1,
+            2,
+            ''
+        )
+FROM #query_store_plan AS qsp
+OPTION(RECOMPILE);
+
+/*
 Populate the #query_store_query table with query metadata
 */
 SELECT
@@ -4020,7 +4100,12 @@ SELECT
 
 /*
 Parameter Sensitive Plan variants have object_id 0, so they show
-the object of their parent query instead of Adhoc
+the object of their parent query instead of Adhoc.
+
+Joins instead of a CROSS APPLY TOP (1) per query, so the hash joins can
+read each Query Store view once: the apply read the in-memory part of
+sys.query_store_query again for every query. The row number keeps the
+latest row of a query, as the TOP (1) did.
 */
 SELECT
     @sql += N'
@@ -4035,14 +4120,7 @@ SELECT
     object_id =
         ISNULL
         (
-            (
-                SELECT TOP (1)
-                    qsq_parent.object_id
-                FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
-                JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
-                  ON qsq_parent.query_id = qsqv.parent_query_id
-                WHERE qsqv.query_variant_query_id = qsq.query_id
-            ),
+            psp.parent_object_id,
             qsq.object_id
         ),'
         ELSE N'
@@ -4054,24 +4132,57 @@ SELECT
     qsq.last_execution_time
 FROM
 (
-    /*
-    A query with more than one plan would otherwise get a row per plan
-    */
-    SELECT DISTINCT
-        qsp.query_id
-    FROM #query_store_plan AS qsp
-    WHERE qsp.database_id = @database_id
-) AS qsp
-CROSS APPLY
-(
-    SELECT TOP (1)
-        qsq.*
+    SELECT
+        qsq.*,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id
+                ORDER BY
+                    qsq.last_execution_time DESC
+            )
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    WHERE qsq.query_id = qsp.query_id
-    ORDER BY
-        qsq.last_execution_time DESC
-) AS qsq
-OPTION(RECOMPILE);' + @nc10;
+    WHERE EXISTS
+          (
+              /*
+              A query with more than one plan would otherwise get a row per plan
+              */
+              SELECT
+                  1/0
+              FROM #query_store_plan AS qsp
+              WHERE qsp.query_id = qsq.query_id
+              AND   qsp.database_id = @database_id
+          )
+) AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN
+(
+    SELECT
+        qsqv.query_variant_query_id,
+        parent_object_id =
+            MAX(qsq_parent.object_id)
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+      ON qsq_parent.query_id = qsqv.parent_query_id
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_store_plan AS qsp
+              WHERE qsp.query_id = qsqv.query_variant_query_id
+              AND   qsp.database_id = @database_id
+          )
+    GROUP BY
+        qsqv.query_variant_query_id
+) AS psp
+  ON psp.query_variant_query_id = qsq.query_id'
+        ELSE N''
+    END + N'
+WHERE qsq.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -4239,7 +4350,7 @@ WHERE EXISTS
           FROM #query_store_query AS qsq
           WHERE qsq.context_settings_id = qcs.context_settings_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -4545,7 +4656,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qspf.plan_id = qsp.plan_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -4594,7 +4705,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qsqv.query_variant_query_id = qsp.query_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -4652,7 +4763,7 @@ WHERE EXISTS
           FROM #include_plan_ids AS ipi
           WHERE ipi.plan_id = qsqv.dispatcher_plan_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -4757,7 +4868,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qsqh.query_id = qsp.query_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
