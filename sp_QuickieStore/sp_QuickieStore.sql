@@ -5900,7 +5900,10 @@ OPTION(RECOMPILE);' + @nc10;
         WHERE igh.query_hash = qs.query_hash
     );
 
-    /*Step 2: Top N per metric (static SQL, temp tables only)*/
+    /*
+    Step 2: Top N per metric (static SQL, temp tables only).
+    query_hash breaks ties, so a rerun picks the same hashes at the cut.
+    */
     INSERT
         #hi_interesting WITH (TABLOCK)
     (
@@ -5920,7 +5923,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_cpu_ms DESC
+        ORDER BY qs.total_cpu_ms DESC, qs.query_hash
 
         UNION
 
@@ -5934,7 +5937,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_duration_ms DESC
+        ORDER BY qs.total_duration_ms DESC, qs.query_hash
 
         UNION
 
@@ -5948,7 +5951,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_physical_reads_mb DESC
+        ORDER BY qs.total_physical_reads_mb DESC, qs.query_hash
 
         UNION
 
@@ -5962,7 +5965,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_writes_mb DESC
+        ORDER BY qs.total_writes_mb DESC, qs.query_hash
 
         UNION
 
@@ -5976,7 +5979,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_memory_mb DESC
+        ORDER BY qs.total_memory_mb DESC, qs.query_hash
 
         UNION
 
@@ -5990,7 +5993,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_executions DESC
+        ORDER BY qs.total_executions DESC, qs.query_hash
 
         UNION
 
@@ -6005,7 +6008,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_tempdb_mb DESC
+        ORDER BY qs.total_tempdb_mb DESC, qs.query_hash
 
         UNION
 
@@ -6020,7 +6023,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_rows DESC
+        ORDER BY qs.total_rows DESC, qs.query_hash
     ) AS qs;
 
     /*Step 3: Score with PERCENT_RANK (static SQL, SELECT INTO)*/
@@ -6197,7 +6200,7 @@ FROM
             ROW_NUMBER() OVER
             (
                 PARTITION BY sq.query_hash
-                ORDER BY SUM(qsrs.count_executions) DESC
+                ORDER BY SUM(qsrs.count_executions) DESC, sq.query_text_id
             )
     FROM #hi_id_staging_queries AS sq
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -6467,7 +6470,7 @@ SELECT
         ROW_NUMBER() OVER
         (
             PARTITION BY qsq.query_hash
-            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC, qsws.wait_category_desc
         )
 FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -6546,7 +6549,7 @@ OPTION(RECOMPILE);' + @nc10;
                         WHERE ws2.query_hash = ws.query_hash
                         AND   ws2.rn <= 3
                         ORDER BY
-                            ws2.total_wait_ms DESC
+                            ws2.rn
                         FOR
                             XML PATH(N''),
                             TYPE
@@ -7491,7 +7494,8 @@ FROM
                 PARTITION BY
                     sp.query_hash
                 ORDER BY
-                    sp.last_execution_time DESC
+                    sp.last_execution_time DESC,
+                    sp.plan_id DESC
             )
     FROM #hi_id_staging_plans AS sp
     WHERE EXISTS
@@ -7650,7 +7654,8 @@ LEFT JOIN #hi_plans AS qp
         WHEN 'memory'         THEN N'o.memory_share'
         WHEN 'executions'     THEN N'o.executions_share'
         ELSE N'o.cpu_share'
-    END + N' DESC
+    END + N' DESC,
+    o.query_hash
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -8762,7 +8767,8 @@ FROM
                     s.query_hash,
                     s.query_plan_hash
                 ORDER BY
-                    SUM(qsrs.count_executions) DESC
+                    SUM(qsrs.count_executions) DESC,
+                    s.query_text_id
             )
     FROM #ps_id_staging AS s
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
@@ -8888,7 +8894,8 @@ SELECT
                 s.query_hash,
                 s.query_plan_hash
             ORDER BY
-                SUM(qsws.total_query_wait_time_ms) DESC
+                SUM(qsws.total_query_wait_time_ms) DESC,
+                qsws.wait_category_desc
         )
 FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 JOIN #ps_id_staging AS s
@@ -8967,7 +8974,7 @@ OPTION(RECOMPILE);' + @nc10;
                         AND   ws2.query_plan_hash = ws.query_plan_hash
                         AND   ws2.rn <= 3
                         ORDER BY
-                            ws2.total_wait_ms DESC
+                            ws2.rn
                         FOR
                             XML PATH(N''),
                             TYPE
@@ -9577,7 +9584,8 @@ FROM
                     s.query_hash,
                     s.query_plan_hash
                 ORDER BY
-                    s.last_execution_time DESC
+                    s.last_execution_time DESC,
+                    s.plan_id DESC
             )
     FROM #ps_id_staging AS s
     WHERE EXISTS
@@ -16323,7 +16331,8 @@ BEGIN
                         qspf.last_updated_time
                 FROM #query_store_plan_feedback AS qspf
                 ORDER BY
-                    qspf.plan_id
+                    qspf.plan_id,
+                    qspf.plan_feedback_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -16407,7 +16416,8 @@ BEGIN
                     qsqh.source_desc
                 FROM #query_store_query_hints AS qsqh
                 ORDER BY
-                    qsqh.query_id
+                    qsqh.query_id,
+                    qsqh.query_hint_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -16477,7 +16487,8 @@ BEGIN
                     qsqv.dispatcher_plan_id
                 FROM #query_store_query_variant AS qsqv
                 ORDER BY
-                    qsqv.parent_query_id
+                    qsqv.parent_query_id,
+                    qsqv.query_variant_query_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
