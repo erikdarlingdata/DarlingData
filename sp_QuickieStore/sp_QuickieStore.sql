@@ -10047,7 +10047,11 @@ BEGIN
 
     /*
     Parameter Sensitive Plan variants have object_id 0, so they
-    take the object_id of their parent query
+    take the object_id of their parent query.
+
+    The hash join reads each view once. Nested loops read the
+    in-memory part of sys.query_store_plan again for every module
+    query, about 14 ms each.
     */
     SELECT
         @sql += N'
@@ -10073,7 +10077,7 @@ CASE
     ELSE N'<> 0'
 END
 + N'
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
