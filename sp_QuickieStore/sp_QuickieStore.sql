@@ -2297,6 +2297,7 @@ DECLARE
     @database_id integer,
     @database_name_quoted sysname,
     @procedure_name_quoted nvarchar(1024),
+    @procedure_filter nvarchar(500),
     @collation sysname,
     @text_search_column nvarchar(200),
     @text_search_open nvarchar(10),
@@ -9929,56 +9930,54 @@ BEGIN
     Parameter Sensitive Plan variants are queries of their own, with
     object_id 0. Their runtime stats are on the variant plans, so
     the variants of the procedure's queries come along here.
+
+    The variants are a second branch of a UNION ALL rather than an
+    apply per query, so the hash join can read sys.query_store_plan
+    once. Nested loops read its in-memory part again for every query
+    of the procedure, about 14 ms each.
     */
+    SELECT
+        @procedure_filter =
+            CASE
+                WHEN CHARINDEX(N'%', @procedure_name) = 0
+                THEN N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)'
+                ELSE N'EXISTS
+    (
+         SELECT
+             1/0
+        FROM #procedure_object_ids AS poi
+        WHERE poi.[object_id] = qsq.[object_id]
+    )'
+            END;
+
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq' +
-    CASE
-        WHEN @sql_2022_views = 1
-        THEN N'
-CROSS APPLY
+FROM
 (
     SELECT
         query_id = qsq.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE ' + @procedure_filter +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
 
     UNION ALL
 
     SELECT
         query_id = qsqv.query_variant_query_id
-    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
-    WHERE qsqv.parent_query_id = qsq.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+      ON qsqv.parent_query_id = qsq.query_id
+    WHERE ' + @procedure_filter
+        ELSE N''
+    END + N'
 ) AS q
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-  ON qsp.query_id = q.query_id'
-        ELSE N'
-JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-   ON qsq.query_id = qsp.query_id'
-    END + N'
-WHERE ';
-
-IF CHARINDEX(N'%', @procedure_name) = 0
-BEGIN
-    SELECT
-        @sql += N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)';
-END;
-
-IF CHARINDEX(N'%', @procedure_name) > 0
-BEGIN
-    SELECT
-        @sql += N'EXISTS
-(
-     SELECT
-         1/0
-    FROM #procedure_object_ids AS poi
-    WHERE poi.[object_id] = qsq.[object_id]
-)';
-END;
-
-    SELECT
-        @sql += N'
-OPTION(RECOMPILE);' + @nc10;
+  ON qsp.query_id = q.query_id
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
