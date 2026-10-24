@@ -1717,6 +1717,25 @@ def get_uptime_days(server, password):
     raise RuntimeError("Could not read server uptime:\n%s" % stdout)
 
 
+def get_usage_window_days(server, password, database_name):
+    """Days since the latest of server start, last restore and create_date of one
+    database, as the procedure computes its usage window."""
+    stdout, _ = run_sqlcmd(
+        server, password, database="master",
+        query="SET NOCOUNT ON; SELECT window_days = DATEDIFF(DAY, (SELECT MAX(v.d)"
+              " FROM (VALUES (osi.sqlserver_start_time), (sd.create_date),"
+              " ((SELECT MAX(rh.restore_date) FROM msdb.dbo.restorehistory AS rh"
+              " WHERE rh.destination_database_name = sd.name))) AS v (d)), SYSDATETIME())"
+              " FROM sys.databases AS sd CROSS JOIN sys.dm_os_sys_info AS osi"
+              " WHERE sd.name = N'%s';" % database_name,
+    )
+    for line in stdout.splitlines():
+        line = line.strip()
+        if line.isdigit():
+            return int(line)
+    raise RuntimeError("Could not read the usage window of %s: %s" % (database_name, stdout))
+
+
 def get_database_id(server, password, database_name):
     """
     A database's database_id, or None if it does not exist.
@@ -1776,8 +1795,297 @@ def run_proc_all_databases(server, password, table_name, extra=""):
     return parse_output(stdout), stdout
 
 
-def run_tests(server, password, uptime_days):
-    """Run all assertions and return results."""
+# ---- Group A, per-database usage window (issue 907) ----
+
+WINDOW_PROC = "sp_IndexCleanup_zz_window"
+WINDOW_DATABASES = ["ic_win_old", "ic_win_mid", "ic_win_fresh",
+                    "ic_win_restored", "ic_win_replaced"]
+WINDOW_SERVER_START_DAYS = 12
+# Days the scratch proc moves each database's create_date back, so a database
+# created seconds ago can stand in for an old one. A restored copy and a fresh
+# database are left alone: they are the ones whose window is their own.
+WINDOW_CREATE_SHIFT = {
+    "ic_win_old": -30,
+    "ic_win_mid": -10,
+    "ic_win_replaced": -30,
+}
+WINDOW_BACKUP = "ic_win_907.bak"
+
+# The backup file path in the default backup directory, either path separator.
+# InstanceDefaultBackupPath is NULL before SQL Server 2019, so fall back to the
+# default data directory there, and drop its trailing separator.
+WINDOW_FILE_SQL = """
+DECLARE
+    @dir nvarchar(400) =
+        CONVERT
+        (
+            nvarchar(400),
+            ISNULL
+            (
+                SERVERPROPERTY('InstanceDefaultBackupPath'),
+                SERVERPROPERTY('InstanceDefaultDataPath')
+            )
+        ),
+    @f nvarchar(520),
+    @s nvarchar(max);
+SELECT
+    @dir = IIF(RIGHT(@dir, 1) IN (N'\\', N'/'), LEFT(@dir, LEN(@dir) - 1), @dir);
+SELECT
+    @f = @dir + IIF(@dir LIKE N'%\\%', N'\\', N'/') + N'""" + WINDOW_BACKUP + """';
+"""
+
+
+def _window_fixture_sql(name):
+    return """
+IF DB_ID(N'%(n)s') IS NOT NULL
+BEGIN
+    ALTER DATABASE %(n)s SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE %(n)s;
+END;
+CREATE DATABASE %(n)s;
+GO
+USE %(n)s;
+GO
+CREATE TABLE dbo.ic_win_t (id integer NOT NULL, col_a integer NOT NULL, col_b integer NOT NULL, CONSTRAINT pk_ic_win_t PRIMARY KEY CLUSTERED (id));
+CREATE INDEX ix_win_never_read ON dbo.ic_win_t (col_a);
+INSERT INTO dbo.ic_win_t (id, col_a, col_b)
+SELECT TOP (2000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) %% 50, 1
+FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2 OPTION(MAXDOP 1);
+GO
+/* 120 single-row writes that touch both indexes, so the per-day columns differ between a 10 and a 12 day window */
+DECLARE @i integer = 1;
+WHILE @i <= 120
+BEGIN
+    UPDATE dbo.ic_win_t SET col_a = col_a + 1 WHERE id = 1;
+    SET @i += 1;
+END;
+GO
+USE master;
+GO
+""" % {"n": name}
+
+
+def _window_restore_sql(target, replace):
+    """RESTORE of the ic_win_old backup as <target>, files placed beside the source's."""
+    return WINDOW_FILE_SQL + """
+DECLARE
+    @d nvarchar(520) = (SELECT TOP (1) mf.physical_name FROM sys.master_files AS mf WHERE mf.database_id = DB_ID(N'ic_win_old') AND mf.type = 0),
+    @l nvarchar(520) = (SELECT TOP (1) mf.physical_name FROM sys.master_files AS mf WHERE mf.database_id = DB_ID(N'ic_win_old') AND mf.type = 1);
+SELECT
+    @s = N'RESTORE DATABASE %(t)s FROM DISK = N''' + @f + N''' WITH %(r)s MOVE N''ic_win_old'' TO N''' + REPLACE(@d, N'ic_win_old', N'%(t)s') + N''', MOVE N''ic_win_old_log'' TO N''' + REPLACE(@l, N'ic_win_old', N'%(t)s') + N''';';
+EXECUTE (@s);
+GO
+""" % {"t": target, "r": "REPLACE," if replace else ""}
+
+
+def _window_setup_sql():
+    sql = "".join(_window_fixture_sql(n) for n in WINDOW_DATABASES
+                  if n != "ic_win_restored")
+    sql += WINDOW_FILE_SQL + """
+SELECT
+    @s = N'BACKUP DATABASE ic_win_old TO DISK = N''' + @f + N''' WITH INIT;';
+EXECUTE (@s);
+GO
+"""
+    sql += _window_restore_sql("ic_win_restored", False)
+    sql += _window_restore_sql("ic_win_replaced", True)
+    return sql
+
+
+def _window_cleanup_sql():
+    sql = ""
+    for n in WINDOW_DATABASES:
+        sql += """
+IF DB_ID(N'%(n)s') IS NOT NULL
+BEGIN
+    ALTER DATABASE %(n)s SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE %(n)s;
+END;
+EXECUTE msdb.dbo.sp_delete_database_backuphistory @database_name = N'%(n)s';
+GO
+""" % {"n": n}
+    sql += """
+DROP PROCEDURE IF EXISTS dbo.%s;
+GO
+""" % WINDOW_PROC
+    sql += WINDOW_FILE_SQL + """
+BEGIN TRY
+    EXECUTE master.sys.xp_delete_files @f;
+END TRY
+BEGIN CATCH
+END CATCH;
+GO
+"""
+    return sql
+
+
+def _window_scratch_proc_sql():
+    """A copy of the procedure under another name, with the server start pinned
+    12 days back and create_date moved per database (WINDOW_CREATE_SHIFT). The
+    lab is up about a week and a CI container for minutes, so a restored
+    database on a server that has been up a long time cannot happen on its own.
+    Returns None when the two pinned sources are not found as expected."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                       "sp_IndexCleanup.sql")
+    with open(src, encoding="utf-8-sig") as f:
+        text = f.read()
+    alter = r"ALTER PROCEDURE\s+dbo\.sp_IndexCleanup(?![A-Za-z_])"
+    m = re.search(alter, text)
+    if m is None:
+        return None
+    body = re.sub(alter, "CREATE OR ALTER PROCEDURE dbo.%s" % WINDOW_PROC,
+                  text[m.start():], count=1)
+    start = "osi.sqlserver_start_time"
+    create = "create_date = sd.create_date,"
+    if body.count(start) != 2 or body.count(create) != 1:
+        return None
+    body = body.replace(
+        start, "DATEADD(DAY, -%d, SYSDATETIME())" % WINDOW_SERVER_START_DAYS)
+    cases = " ".join("WHEN N'%s' THEN %d" % (k, v)
+                     for k, v in WINDOW_CREATE_SHIFT.items())
+    body = body.replace(
+        create, "create_date = DATEADD(DAY, CASE sd.name %s ELSE 0 END, sd.create_date)," % cases)
+    return "SET QUOTED_IDENTIFIER ON;\nGO\n" + body + "\nGO\n"
+
+
+def parse_summary(stdout):
+    """The summary result set (level, database_info, ...) as dict rows."""
+    rows = []
+    headers = None
+    for line in stdout.split("\n"):
+        if headers is None:
+            if line.startswith("level\tdatabase_info"):
+                headers = [h.strip() for h in line.split("\t")]
+            continue
+        if line.startswith("---"):
+            continue
+        if not line.strip():
+            break
+        cols = [c.strip() for c in line.split("\t")]
+        if len(cols) >= len(headers):
+            rows.append(dict(zip(headers, cols)))
+    return rows
+
+
+def run_window_tests(server, password, assert_test):
+    """Group A-Window: each database is judged on its own usage window."""
+    grp = "A-Window"
+    proc = _window_scratch_proc_sql()
+    assert_test(grp, "setup: server start and create_date sources found in the procedure",
+                proc is not None, "pattern not found the expected number of times")
+    if proc is None:
+        return
+    try:
+        run_sql_script(server, password, _window_cleanup_sql(), database="master")
+        out, err = run_sql_script(server, password, _window_setup_sql(), database="master")
+        errors = sql_errors(out, err)
+        assert_test(grp, "setup: scratch databases built and restored",
+                    not errors, str(errors[:2]))
+        out, err = run_sql_script(server, password, proc, database="master")
+        errors = sql_errors(out, err)
+        assert_test(grp, "setup: scratch procedure created", not errors, str(errors[:2]))
+        if errors:
+            return
+
+        query = ("EXECUTE master.dbo.%s @get_all_databases = 1, @include_databases = N'%s'"
+                 % (WINDOW_PROC, ",".join(WINDOW_DATABASES)))
+        stdout, _ = run_sqlcmd(server, password, database="master", query=query + ";")
+        rows = parse_output(stdout)
+        summary = parse_summary(stdout)
+        db_rows = {r["database_info"]: r for r in summary if r["level"] == "DATABASE"}
+
+        def reason(name):
+            return db_rows.get(name, {}).get("usage_since_reason", "")
+
+        def unused(name, rule_rows):
+            return [r for r in rule_rows if r.get("database_name") == name
+                    and "unused index" in (r.get("consolidation_rule") or "").lower()]
+
+        skip_note = "Unused Index rule skipped for this database"
+        assert_test(grp, "positive control: a DATABASE row for each scratch database",
+                    all(n in db_rows for n in WINDOW_DATABASES),
+                    "found %s" % sorted(db_rows))
+        assert_test(grp, "database older than the server uptime: window is the server start",
+                    reason("ic_win_old").startswith("Server start")
+                    and skip_note not in reason("ic_win_old"), reason("ic_win_old"))
+        label_server = ("Unused Index (WARNING: Server uptime < 14 days - "
+                        "usage data may be incomplete)")
+        assert_test(grp, "server-start window under 14 days keeps the original warning label",
+                    len(find_rows(rows, database_name="ic_win_old",
+                                  index_name="ix_win_never_read",
+                                  consolidation_rule=label_server)) == 1,
+                    str([r.get("consolidation_rule") for r in unused("ic_win_old", rows)]))
+        assert_test(grp, "database created 10 days ago: reason is create, rule not skipped",
+                    reason("ic_win_mid").startswith("Database create")
+                    and skip_note not in reason("ic_win_mid"), reason("ic_win_mid"))
+        label_db = ("Unused Index (WARNING: Database usage window < 14 days - "
+                    "usage data may be incomplete)")
+        assert_test(grp, "database window under 14 days gets the database warning label",
+                    len(find_rows(rows, database_name="ic_win_mid",
+                                  index_name="ix_win_never_read",
+                                  consolidation_rule=label_db)) == 1,
+                    str([r.get("consolidation_rule") for r in unused("ic_win_mid", rows)]))
+        # The table's per-day write count divides by the database window (10 days),
+        # not the 12 day server uptime: writes / days * removable / total indexes.
+        tbl = [r for r in summary if r["level"] == "TABLE"
+               and r["database_info"].startswith("ic_win_mid")]
+        if len(tbl) == 1:
+            writes = int(tbl[0]["writes"].replace(",", ""))
+            share = int(tbl[0]["removable_indexes"]) / int(tbl[0]["total_indexes"])
+            want10 = "{:,}".format(int(writes / 10 * share + 0.5))
+            want12 = "{:,}".format(int(writes / WINDOW_SERVER_START_DAYS * share + 0.5))
+        assert_test(grp, "TABLE row per-day writes divide by the database window, not server uptime",
+                    len(tbl) == 1 and want10 != want12
+                    and tbl[0]["daily_write_ops_saved"] == want10,
+                    "rows=%d got=%s want10=%s want12=%s" % (
+                        len(tbl), tbl[0]["daily_write_ops_saved"] if tbl else "-",
+                        want10 if len(tbl) == 1 else "-", want12 if len(tbl) == 1 else "-"))
+        for name, want in (("ic_win_restored", "Database restore"),
+                           ("ic_win_replaced", "Database restore"),
+                           ("ic_win_fresh", "Database create")):
+            assert_test(grp, "%s: reason is %s" % (name, want),
+                        reason(name).startswith(want), reason(name))
+            assert_test(grp, "%s: DATABASE row says the unused rule was skipped" % name,
+                        skip_note in reason(name), reason(name))
+            assert_test(grp, "%s: no Unused Index rows" % name,
+                        len(unused(name, rows)) == 0,
+                        "found %d" % len(unused(name, rows)))
+        assert_test(grp, "other databases in the same run are still judged: ic_win_old has an Unused row",
+                    len(unused("ic_win_old", rows)) == 1,
+                    "found %d" % len(unused("ic_win_old", rows)))
+        assert_test(grp, "usage_since is filled on DATABASE rows and blank on the others",
+                    all(r["usage_since"] not in ("", "NULL") for r in db_rows.values())
+                    and all(r["usage_since"] == "NULL" and r["usage_since_reason"] == "NULL"
+                            for r in summary if r["level"] != "DATABASE"),
+                    "levels=%s" % sorted({r["level"] for r in summary}))
+        header = [r for r in summary if r["level"] == "ANALYZED OBJECT DETAILS"]
+        assert_test(grp, "header row still reports the server uptime",
+                    len(header) == 1 and "Server uptime only %d days" % WINDOW_SERVER_START_DAYS
+                    in header[0]["database_info"],
+                    header[0]["database_info"] if header else "no header row")
+
+        # An explicit @dedupe_only = 1 skips the rule everywhere, with no per-database note.
+        stdout, _ = run_sqlcmd(server, password, database="master",
+                               query=query + ", @dedupe_only = 1;")
+        rows = parse_output(stdout)
+        summary = parse_summary(stdout)
+        dbs = [r for r in summary if r["level"] == "DATABASE"]
+        assert_test(grp, "@dedupe_only = 1: no Unused Index rows in any database",
+                    len([r for r in rows if "unused index" in
+                         (r.get("consolidation_rule") or "").lower()]) == 0,
+                    "rows=%d" % len(rows))
+        assert_test(grp, "@dedupe_only = 1: DATABASE rows carry no skip note",
+                    len(dbs) == len(WINDOW_DATABASES)
+                    and all(skip_note not in r["usage_since_reason"] for r in dbs),
+                    "database rows=%d" % len(dbs))
+    finally:
+        run_sql_script(server, password, _window_cleanup_sql(), database="master")
+
+
+def run_tests(server, password, uptime_days, window_days):
+    """Run all assertions and return results. window_days is the usage window of
+    the Crap database: the server uptime, or less when Crap was created or
+    restored after the server started."""
     results = []
 
     def assert_test(group, name, condition, detail=""):
@@ -1796,7 +2104,7 @@ def run_tests(server, password, uptime_days):
         if "unused index" in (r.get("consolidation_rule") or "").lower()
     ]
 
-    if uptime_days > 7:
+    if window_days > 7:
         # Rule 1 is reachable: @dedupe_only defaults to 0 and stays there.
         matches = find_rows(rows, index_name="ix_never_read",
                             script_type="DISABLE SCRIPT",
@@ -1820,18 +2128,23 @@ def run_tests(server, password, uptime_days):
         assert_test("A-Guard", "positive control: ix_never_read has zero reads",
                     reads == "0", "index_reads=%s" % reads)
 
-        # The procedure says so itself when asked with @debug = 1.
-        _, debug_stdout = run_proc(server, password, "ic_unused_test", debug=True)
-        assert_test("A-Guard", "@dedupe_only auto-enabled by the uptime guard",
-                    GUARD_MESSAGE in debug_stdout,
-                    "procedure reported the auto-enable"
-                    if GUARD_MESSAGE in debug_stdout
-                    else "guard message never appeared with @debug = 1")
+        # The procedure says so itself when asked with @debug = 1. Only the
+        # server-wide switch says it: a database that is younger than the server
+        # is skipped per database, and the DATABASE row says so (Group A-Window).
+        if uptime_days <= 7:
+            _, debug_stdout = run_proc(server, password, "ic_unused_test", debug=True)
+            assert_test("A-Guard", "@dedupe_only auto-enabled by the uptime guard",
+                        GUARD_MESSAGE in debug_stdout,
+                        "procedure reported the auto-enable"
+                        if GUARD_MESSAGE in debug_stdout
+                        else "guard message never appeared with @debug = 1")
 
         # Therefore Rule 1 never ran, and nothing is recommended as unused.
         assert_test("A-Guard", "no Unused Index rows while the guard is active",
                     len(unused_rows) == 0,
                     "found %d unused rows (expected 0)" % len(unused_rows))
+
+    run_window_tests(server, password, assert_test)
 
     # ---- Group B: @min_reads / @min_writes index-level screen ----
 
@@ -2916,6 +3229,16 @@ def main():
                query="IF DB_ID('%s') IS NULL CREATE DATABASE %s;"
                      % (TEST_DATABASE, TEST_DATABASE))
 
+    # Rule 1 judges each database on its own usage window, not the server uptime
+    # alone. Crap is old on an established instance and new on a fresh one, so
+    # ask rather than assume: a long-up server with a brand new Crap skips Rule 1.
+    window_days = get_usage_window_days(server, password, TEST_DATABASE)
+    print("%s usage window: %d days" % (TEST_DATABASE, window_days))
+    if uptime_days > 7 and window_days <= 7:
+        print("%s is %d days old, so Rule 1 is skipped for it even though the" % (TEST_DATABASE, window_days))
+        print("server is not new. The guard assertions apply to it.")
+    print()
+
     print("Building synthetic fixture in %s..." % TEST_DATABASE)
     stdout, stderr = run_sql_script(server, password, SETUP_SQL)
 
@@ -2980,7 +3303,7 @@ def main():
             print("testing something other than what they claim.")
             sys.exit(1)
 
-        results = run_tests(server, password, uptime_days)
+        results = run_tests(server, password, uptime_days, window_days)
     finally:
         run_sql_script(server, password, SCRIPTGEN_CLEANUP_SQL)
         run_sql_script(server, password, CLEANUP_SQL)
