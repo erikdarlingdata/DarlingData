@@ -14228,6 +14228,9 @@ END; /*End getting query text*/
 /*
 Here we try to get some data from the "plan cache"
 that isn't available in Query Store :(
+
+The hash join reads sys.dm_exec_query_stats once. With few query
+texts, nested loops read the whole plan cache again for every text.
 */
 SELECT
     @sql = N'',
@@ -14367,7 +14370,7 @@ FROM
 ) AS deqs_with_lasts
 GROUP BY
     deqs_with_lasts.statement_sql_handle
-OPTION(RECOMPILE);
+OPTION(RECOMPILE, HASH JOIN);
 
 SELECT
     @rc = ROWCOUNT_BIG();
