@@ -12182,7 +12182,8 @@ OR
             ELSE ''Yes''
         END
     ORDER BY
-        SUM(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
@@ -12340,7 +12341,8 @@ BEGIN
             ELSE ''Yes''
         END
     ORDER BY
-        SUM(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
@@ -12790,7 +12792,8 @@ BEGIN
                    WHEN 'magnitude' THEN N'ABS(change_since_regression_time_period)'
                    WHEN 'absolute' THEN N'ABS(change_since_regression_time_period)'
               END
-            + N' DESC
+            + N' DESC,
+            compared_stats.query_hash
     ) AS hashes_with_changes
     JOIN
     (
@@ -12980,7 +12983,9 @@ BEGIN
         THEN N')'
         ELSE N' * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
     END +
-    N' DESC
+    /* plan_id breaks ties, so a rerun keeps the same plans at the cut */
+    N' DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END;
 
@@ -16046,7 +16051,8 @@ SELECT
                        GROUP BY
                            qsws.wait_category_desc
                        ORDER BY
-                           SUM(qsws.avg_query_wait_time_ms) DESC
+                           SUM(qsws.avg_query_wait_time_ms) DESC,
+                           qsws.wait_category_desc
                        FOR XML
                            PATH(''''),
                            TYPE
@@ -16205,7 +16211,10 @@ ORDER BY
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
              END END
     END
-             + N' DESC
+             /* database_name and plan_id break ties, so a rerun returns the same order */
+             + N' DESC,
+    x.database_name,
+    x.plan_id
 OPTION(RECOMPILE);' + @nc10
     );
 
