@@ -688,6 +688,35 @@ SELECT
         NULLIF(@query_text_search_not, '');
 
 /*
+Line breaks and tabs separate list items the way commas do, so a list
+pasted one value per line works. The lists are split on commas only, and
+an id next to a line break passed the check below and then failed to
+convert to bigint with a bare Msg 8114. The empty items this leaves
+between a comma and a line break are skipped, like any empty item.
+*/
+SELECT
+    @include_plan_ids =
+        REPLACE(REPLACE(REPLACE(@include_plan_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_query_ids =
+        REPLACE(REPLACE(REPLACE(@include_query_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_query_hashes =
+        REPLACE(REPLACE(REPLACE(@include_query_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_plan_hashes =
+        REPLACE(REPLACE(REPLACE(@include_plan_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_sql_handles =
+        REPLACE(REPLACE(REPLACE(@include_sql_handles, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_plan_ids =
+        REPLACE(REPLACE(REPLACE(@ignore_plan_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_query_ids =
+        REPLACE(REPLACE(REPLACE(@ignore_query_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_query_hashes =
+        REPLACE(REPLACE(REPLACE(@ignore_query_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_plan_hashes =
+        REPLACE(REPLACE(REPLACE(@ignore_plan_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_sql_handles =
+        REPLACE(REPLACE(REPLACE(@ignore_sql_handles, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N',');
+
+/*
 Check the id, hash, and handle lists before they are used, so a typo gets a
 message that names the parameter and the value instead of a bare Msg 8114
 from a conversion inside dynamic SQL. Ids are whole numbers; hashes and
@@ -746,33 +775,8 @@ BEGIN
             item =
                 LTRIM(RTRIM(ISNULL(b.x.value(N'(./text())[1]', N'nvarchar(4000)'), N'')))
     ) AS i
-    CROSS APPLY
-    (
-        /*
-        The id lists are cast to bigint by XQuery, which ignores the
-        white space around a number, line breaks and tabs included
-        */
-        SELECT
-            item =
-                REPLACE
-                (
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            i.item,
-                            NCHAR(9),
-                            N''
-                        ),
-                        NCHAR(10),
-                        N''
-                    ),
-                    NCHAR(13),
-                    N''
-                )
-    ) AS n
     WHERE l.list_value IS NOT NULL
-    AND   n.item <> N''
+    AND   i.item <> N''
     AND
     (
         l.list_value LIKE N'%[<&]%'
@@ -781,10 +785,10 @@ BEGIN
             l.is_binary = 0
         AND
             (
-                LEN(n.item) > 19
-             OR n.item = N'-'
-             OR n.item LIKE N'%[^0-9-]%'
-             OR SUBSTRING(n.item, 2, 4000) LIKE N'%[^0-9]%'
+                LEN(i.item) > 19
+             OR i.item = N'-'
+             OR i.item LIKE N'%[^0-9-]%'
+             OR SUBSTRING(i.item, 2, 4000) LIKE N'%[^0-9]%'
             )
         )
      OR
