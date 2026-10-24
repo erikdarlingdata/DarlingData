@@ -5396,6 +5396,7 @@ BEGIN
     (
         query_hash binary(8) NOT NULL,
         plan_id bigint NOT NULL,
+        last_execution_time datetimeoffset(7) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, plan_id)
     );
@@ -5407,6 +5408,14 @@ BEGIN
         object_id integer NOT NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, object_id)
+    );
+
+    CREATE TABLE
+        #hi_plans
+    (
+        query_hash binary(8) NOT NULL
+            PRIMARY KEY CLUSTERED,
+        query_plan nvarchar(max) NULL
     );
 
     CREATE TABLE
@@ -6557,7 +6566,8 @@ OPTION(RECOMPILE);' + @nc10;
         @sql += N'
 SELECT DISTINCT
     qsq.query_hash,
-    qsp.plan_id
+    qsp.plan_id,
+    qsp.last_execution_time
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     ON qsq.query_id = qsp.query_id
@@ -6575,7 +6585,8 @@ OPTION(RECOMPILE);' + @nc10;
         #hi_id_staging_plans WITH (TABLOCK)
     (
         query_hash,
-        plan_id
+        plan_id,
+        last_execution_time
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -7436,7 +7447,94 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 7: Final output with plans (dynamic SQL for OUTER APPLY)*/
+    /*
+    Step 6b: The latest plan per output query hash, read in one pass.
+    The latest plan_id comes from the staging table, so only the
+    picked plans are read and decompressed. An apply per output row in
+    the final select sorted every staged plan of the hash with its
+    plan text to find the latest one, and could read the in-memory
+    part of sys.query_store_plan again for every row. The final select
+    cannot take OPTION(HASH JOIN) because of its query_sql_text subquery.
+    */
+    SELECT
+        @current_table = 'inserting #hi_plans',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    lp.query_hash,
+    qsp.query_plan
+FROM
+(
+    SELECT
+        sp.query_hash,
+        sp.plan_id,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    sp.query_hash
+                ORDER BY
+                    sp.last_execution_time DESC
+            )
+    FROM #hi_id_staging_plans AS sp
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #hi_output AS o
+        WHERE o.query_hash = sp.query_hash
+    )
+) AS lp
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = lp.plan_id
+WHERE lp.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_plans WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 7: Final output with plans*/
     SELECT
         @current_table = 'selecting high impact results',
         @sql = @isolation_level;
@@ -7524,31 +7622,8 @@ SELECT
     o.volatile_metrics,
     o.resource_metrics
 FROM #hi_output AS o
-OUTER APPLY
-(
-    SELECT
-        qp0.*
-    FROM
-    (
-        SELECT
-            n = ROW_NUMBER() OVER
-                (
-                    ORDER BY
-                        qsp.last_execution_time DESC
-                ),
-            qsp.query_plan
-        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #hi_id_staging_plans AS sp
-            WHERE qsp.plan_id = sp.plan_id
-            AND   o.query_hash = sp.query_hash
-        )
-    ) AS qp0
-    WHERE qp0.n = 1
-) AS qp
+LEFT JOIN #hi_plans AS qp
+  ON qp.query_hash = o.query_hash
 ' +
     CASE
         WHEN @primary_window IS NULL
@@ -19630,6 +19705,29 @@ BEGIN
             SELECT
                 result =
                     '#hi_output is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #hi_plans AS hp
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#hi_plans',
+                hp.*
+            FROM #hi_plans AS hp
+            ORDER BY
+                hp.query_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#hi_plans is empty';
         END;
     END;
 
