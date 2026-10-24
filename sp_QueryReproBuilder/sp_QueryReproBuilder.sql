@@ -5070,6 +5070,11 @@ JOIN #query_store_plan AS qsp
   ON qsp.plan_id = plp.plan_id
 OPTION(RECOMPILE);
 
+/*
+Serial on purpose: the XML readers are costed high, so this went parallel,
+and the parallel plan spent up to 2.7 s waiting on latches and exchanges
+to shred lists that take 15 to 160 ms on one thread
+*/
 INSERT
     #parameter_shred
 WITH
@@ -5090,7 +5095,7 @@ SELECT
         cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
 FROM #parameter_lists AS pl
 CROSS APPLY pl.last_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr(c)
-OPTION(RECOMPILE);
+OPTION(RECOMPILE, MAXDOP 1);
 
 INSERT
     #parameter_shred
