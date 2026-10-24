@@ -2338,12 +2338,16 @@ AND   ca.utc_timestamp < @end_date';
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        /*
+        Compare the wait type as a value: an exist() per ignored wait ran
+        one XQuery for every wait row times every row in #ignore_waits.
+        */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w2.x2.value('@waitType', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -2620,12 +2624,16 @@ AND   ca.utc_timestamp < @end_date';
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND   w2.x2.exist('@averageWaitTime[.>= sql:variable("@wait_duration_ms")]') = 1
+        /*
+        Compare the wait type as a value: an exist() per ignored wait ran
+        one XQuery for every wait row times every row in #ignore_waits.
+        */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w2.x2.value('@waitType', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
