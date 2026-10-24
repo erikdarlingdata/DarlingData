@@ -4869,20 +4869,44 @@ AND   ca.utc_timestamp < @end_date';
                 END
         INTO #scheduler_issues
         FROM #scheduler_monitor AS sm
-        CROSS APPLY sm.scheduler_monitor.nodes('//event') AS w(x)
-        CROSS APPLY
+        CROSS APPLY sm.scheduler_monitor.nodes('/event') AS w(x)
+        OUTER APPLY
         (
+            /*
+            One pass over the event's data elements, PIVOTed by name. A
+            separate (data[@name="..."]/value)[1] per column walked all
+            ten data elements again for each of the five columns.
+            */
             SELECT
-                sql_cpu_utilization = w.x.value('(data[@name="process_utilization"]/value)[1]', 'integer'),
-                system_idle = w.x.value('(data[@name="system_idle"]/value)[1]', 'integer'),
-                memory_utilization = w.x.value('(data[@name="memory_utilization"]/value)[1]', 'integer'),
-                page_faults = w.x.value('(data[@name="page_faults"]/value)[1]', 'bigint'),
+                sql_cpu_utilization = CONVERT(integer, p.process_utilization),
+                system_idle = CONVERT(integer, p.system_idle),
+                memory_utilization = CONVERT(integer, p.memory_utilization),
+                page_faults = CONVERT(bigint, p.page_faults),
                 working_set_delta_mb =
                     CONVERT
                     (
                         decimal(19, 2),
-                        w.x.value('(data[@name="working_set_delta"]/value)[1]', 'bigint') / 1048576.
+                        CONVERT(bigint, p.working_set_delta) / 1048576.
                     )
+            FROM
+            (
+                SELECT
+                    name = dt.d.value('@name', 'nvarchar(60)'),
+                    value = dt.d.value('(value/text())[1]', 'nvarchar(30)')
+                FROM w.x.nodes('data') AS dt(d)
+            ) AS d
+            PIVOT
+            (
+                MAX(d.value)
+                FOR d.name IN
+                (
+                    process_utilization,
+                    system_idle,
+                    memory_utilization,
+                    page_faults,
+                    working_set_delta
+                )
+            ) AS p
         ) AS v
         WHERE
         (
