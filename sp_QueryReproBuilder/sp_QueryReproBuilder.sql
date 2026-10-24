@@ -4302,7 +4302,17 @@ CROSS APPLY
             NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
             NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'')
 ) AS x
-WHERE x.query_sql_text <> qsqt.query_sql_text COLLATE Latin1_General_BIN2
+/*
+One pattern search finds the texts that hold one of these characters, so
+the REPLACE chain runs only for them. Comparing the replaced text with
+the original ran all 29 REPLACEs over every text first.
+*/
+WHERE PATINDEX
+      (
+          N'%[' + NCHAR(1) + N'-' + NCHAR(8) + NCHAR(11) + NCHAR(12) + NCHAR(14) + N'-' + NCHAR(31) + N']%',
+          qsqt.query_sql_text COLLATE Latin1_General_BIN2
+      ) > 0
+OR    CHARINDEX(NCHAR(0), qsqt.query_sql_text COLLATE Latin1_General_BIN2) > 0
 OPTION(RECOMPILE);
 
 /*
