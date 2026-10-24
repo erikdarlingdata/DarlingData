@@ -1812,11 +1812,24 @@ WINDOW_CREATE_SHIFT = {
 WINDOW_BACKUP = "ic_win_907.bak"
 
 # The backup file path in the default backup directory, either path separator.
+# InstanceDefaultBackupPath is NULL before SQL Server 2019, so fall back to the
+# default data directory there, and drop its trailing separator.
 WINDOW_FILE_SQL = """
 DECLARE
-    @dir nvarchar(400) = CONVERT(nvarchar(400), SERVERPROPERTY('InstanceDefaultBackupPath')),
+    @dir nvarchar(400) =
+        CONVERT
+        (
+            nvarchar(400),
+            ISNULL
+            (
+                SERVERPROPERTY('InstanceDefaultBackupPath'),
+                SERVERPROPERTY('InstanceDefaultDataPath')
+            )
+        ),
     @f nvarchar(520),
     @s nvarchar(max);
+SELECT
+    @dir = IIF(RIGHT(@dir, 1) IN (N'\\', N'/'), LEFT(@dir, LEN(@dir) - 1), @dir);
 SELECT
     @f = @dir + IIF(@dir LIKE N'%\\%', N'\\', N'/') + N'""" + WINDOW_BACKUP + """';
 """
