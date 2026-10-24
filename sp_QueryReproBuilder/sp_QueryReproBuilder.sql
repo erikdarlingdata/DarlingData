@@ -1332,44 +1332,27 @@ CREATE TABLE
     query_text_id bigint NOT NULL,
     INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
-    /* Upper case under a binary collation: the temp table checks match upper-case patterns, and the column collation made them take seconds */
-    query_sql_text_normalized AS
-        REPLACE
-        (
-            REPLACE
-            (
-                REPLACE
-                (
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            REPLACE
-                            (
-                                UPPER(query_sql_text) COLLATE Latin1_General_100_BIN2,
-                                NCHAR(13),
-                                N' '
-                            ),
-                            NCHAR(10),
-                            N' '
-                        ),
-                        NCHAR(9),
-                        N' '
-                    ),
-                    N' ',
-                    NCHAR(1) + NCHAR(2)
-                ),
-                NCHAR(2) + NCHAR(1),
-                N''
-            ),
-            NCHAR(1) + NCHAR(2),
-            N' '
-        ) PERSISTED,
     query_sql_text_clickable xml NULL,
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL,
     has_control_characters bit NOT NULL DEFAULT 0
+);
+
+/*
+Query text upper-cased with its white space collapsed, for the temp table and
+table variable checks. It is a table of its own, filled once, with a binary
+collation. As a computed column of #query_store_query_text it was computed
+again for every LIKE that read it, eight times per text in each check, and
+a plain column there was stored off-row and searched under the column
+collation.
+*/
+CREATE TABLE
+    #query_text_normalized
+(
+    query_text_id bigint NOT NULL,
+    query_sql_text_normalized nvarchar(max) COLLATE Latin1_General_100_BIN2 NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
 );
 
 CREATE TABLE
@@ -5621,6 +5604,51 @@ SELECT
     @current_table = N'checking for temp tables and table variables';
 
 INSERT
+    #query_text_normalized
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    query_sql_text_normalized
+)
+SELECT
+    qsqt.query_text_id,
+    query_sql_text_normalized =
+        REPLACE
+        (
+            REPLACE
+            (
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2,
+                                NCHAR(13),
+                                N' '
+                            ),
+                            NCHAR(10),
+                            N' '
+                        ),
+                        NCHAR(9),
+                        N' '
+                    ),
+                    N' ',
+                    NCHAR(1) + NCHAR(2)
+                ),
+                NCHAR(2) + NCHAR(1),
+                N''
+            ),
+            NCHAR(1) + NCHAR(2),
+            N' '
+        )
+FROM #query_store_query_text AS qsqt
+OPTION(RECOMPILE);
+
+INSERT
     #reproduction_warnings
 WITH
     (TABLOCK)
@@ -5636,16 +5664,16 @@ SELECT DISTINCT
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text_normalized LIKE N'% FROM #%'
-OR    qsqt.query_sql_text_normalized LIKE N'% JOIN #%'
-OR    qsqt.query_sql_text_normalized LIKE N'% INTO #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%INSERT #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%DELETE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO #%'
+JOIN #query_text_normalized AS qtn
+  ON qtn.query_text_id = qsq.query_text_id
+WHERE qtn.query_sql_text_normalized LIKE N'% FROM #%'
+OR    qtn.query_sql_text_normalized LIKE N'% JOIN #%'
+OR    qtn.query_sql_text_normalized LIKE N'% INTO #%'
+OR    qtn.query_sql_text_normalized LIKE N'%INSERT #%'
+OR    qtn.query_sql_text_normalized LIKE N'%UPDATE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%DELETE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE INTO #%'
 OPTION(RECOMPILE);
 
 INSERT
@@ -5664,16 +5692,16 @@ SELECT DISTINCT
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text_normalized LIKE N'% FROM @%'
-OR    qsqt.query_sql_text_normalized LIKE N'% JOIN @%'
-OR    qsqt.query_sql_text_normalized LIKE N'% INTO @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%INSERT @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%DELETE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO @%'
+JOIN #query_text_normalized AS qtn
+  ON qtn.query_text_id = qsq.query_text_id
+WHERE qtn.query_sql_text_normalized LIKE N'% FROM @%'
+OR    qtn.query_sql_text_normalized LIKE N'% JOIN @%'
+OR    qtn.query_sql_text_normalized LIKE N'% INTO @%'
+OR    qtn.query_sql_text_normalized LIKE N'%INSERT @%'
+OR    qtn.query_sql_text_normalized LIKE N'%UPDATE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%DELETE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE INTO @%'
 OPTION(RECOMPILE);
 
 /*
