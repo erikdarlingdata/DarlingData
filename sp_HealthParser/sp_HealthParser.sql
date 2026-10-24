@@ -3540,36 +3540,114 @@ AND   ca.utc_timestamp < @end_date';
             isAnyPoolOutOfMemory = r.c.value('@isAnyPoolOutOfMemory', 'bit'),
             processOutOfMemoryPeriod = r.c.value('@processOutOfMemoryPeriod', 'bigint'),
             name = r.c.value('(//memoryReport/@name)[1]', 'varchar(128)'),
-            available_physical_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            available_virtual_memory_gb =  CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            available_paging_file_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            working_set_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            percent_of_committed_memory_in_ws = r.c.value('(//memoryReport/entry[@description[.="Percent of Committed Memory in WS"]]/@value)[1]', 'bigint'),
-            page_faults = r.c.value('(//memoryReport/entry[@description[.="Page Faults"]]/@value)[1]', 'bigint'),
-            system_physical_memory_high = r.c.value('(//memoryReport/entry[@description[.="System physical memory high"]]/@value)[1]', 'bigint'),
-            system_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="System physical memory low"]]/@value)[1]', 'bigint'),
-            process_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process physical memory low"]]/@value)[1]', 'bigint'),
-            process_virtual_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process virtual memory low"]]/@value)[1]', 'bigint'),
-            vm_reserved_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Reserved"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            vm_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            locked_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Locked Pages Allocated"]]/@value)[1]', 'bigint'),
-            large_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Large Pages Allocated"]]/@value)[1]', 'bigint'),
-            emergency_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            emergency_memory_in_use_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory In Use"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            target_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Target Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            current_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Current Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Pages Allocated"]]/@value)[1]', 'bigint'),
-            pages_reserved = r.c.value('(//memoryReport/entry[@description[.="Pages Reserved"]]/@value)[1]', 'bigint'),
-            pages_free = r.c.value('(//memoryReport/entry[@description[.="Pages Free"]]/@value)[1]', 'bigint'),
-            pages_in_use = r.c.value('(//memoryReport/entry[@description[.="Pages In Use"]]/@value)[1]', 'bigint'),
-            page_alloc_potential = r.c.value('(//memoryReport/entry[@description[.="Page Alloc Potential"]]/@value)[1]', 'bigint'),
-            numa_growth_phase = r.c.value('(//memoryReport/entry[@description[.="NUMA Growth Phase"]]/@value)[1]', 'bigint'),
-            last_oom_factor = r.c.value('(//memoryReport/entry[@description[.="Last OOM Factor"]]/@value)[1]', 'bigint'),
-            last_os_error = r.c.value('(//memoryReport/entry[@description[.="Last OS Error"]]/@value)[1]', 'bigint'),
+            available_physical_memory_gb = CONVERT(bigint, mr.available_physical_memory / 1024 / 1024 / 1024),
+            available_virtual_memory_gb = CONVERT(bigint, mr.available_virtual_memory / 1024 / 1024 / 1024),
+            available_paging_file_gb = CONVERT(bigint, mr.available_paging_file / 1024 / 1024 / 1024),
+            working_set_gb = CONVERT(bigint, mr.working_set / 1024 / 1024 / 1024),
+            percent_of_committed_memory_in_ws = mr.percent_of_committed_memory_in_ws,
+            page_faults = mr.page_faults,
+            system_physical_memory_high = mr.system_physical_memory_high,
+            system_physical_memory_low = mr.system_physical_memory_low,
+            process_physical_memory_low = mr.process_physical_memory_low,
+            process_virtual_memory_low = mr.process_virtual_memory_low,
+            vm_reserved_gb = CONVERT(bigint, mr.vm_reserved / 1024 / 1024),
+            vm_committed_gb = CONVERT(bigint, mr.vm_committed / 1024 / 1024),
+            locked_pages_allocated = mr.locked_pages_allocated,
+            large_pages_allocated = mr.large_pages_allocated,
+            emergency_memory_gb = CONVERT(bigint, mr.emergency_memory / 1024 / 1024),
+            emergency_memory_in_use_gb = CONVERT(bigint, mr.emergency_memory_in_use / 1024 / 1024),
+            target_committed_gb = CONVERT(bigint, mr.target_committed / 1024 / 1024),
+            current_committed_gb = CONVERT(bigint, mr.current_committed / 1024 / 1024),
+            pages_allocated = mr.pages_allocated,
+            pages_reserved = mr.pages_reserved,
+            pages_free = mr.pages_free,
+            pages_in_use = mr.pages_in_use,
+            page_alloc_potential = mr.page_alloc_potential,
+            numa_growth_phase = mr.numa_growth_phase,
+            last_oom_factor = mr.last_oom_factor,
+            last_os_error = mr.last_os_error,
             xml = r.c.query('.')
         INTO #memory
         FROM #sp_server_diagnostics_component_result AS s
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
+        OUTER APPLY
+        (
+            /*
+            Each entry used to be its own //memoryReport/entry[@description]
+            search of the whole event, 26 of them per row. Shred the
+            entries once and PIVOT them by description instead.
+            Descriptions are unique within an event, so MAX returns the
+            same value the [1] did, and only the 26 values we read are
+            converted.
+            */
+            SELECT
+                available_physical_memory = CONVERT(bigint, p.[Available Physical Memory]),
+                available_virtual_memory = CONVERT(bigint, p.[Available Virtual Memory]),
+                available_paging_file = CONVERT(bigint, p.[Available Paging File]),
+                working_set = CONVERT(bigint, p.[Working Set]),
+                percent_of_committed_memory_in_ws = CONVERT(bigint, p.[Percent of Committed Memory in WS]),
+                page_faults = CONVERT(bigint, p.[Page Faults]),
+                system_physical_memory_high = CONVERT(bigint, p.[System physical memory high]),
+                system_physical_memory_low = CONVERT(bigint, p.[System physical memory low]),
+                process_physical_memory_low = CONVERT(bigint, p.[Process physical memory low]),
+                process_virtual_memory_low = CONVERT(bigint, p.[Process virtual memory low]),
+                vm_reserved = CONVERT(bigint, p.[VM Reserved]),
+                vm_committed = CONVERT(bigint, p.[VM Committed]),
+                locked_pages_allocated = CONVERT(bigint, p.[Locked Pages Allocated]),
+                large_pages_allocated = CONVERT(bigint, p.[Large Pages Allocated]),
+                emergency_memory = CONVERT(bigint, p.[Emergency Memory]),
+                emergency_memory_in_use = CONVERT(bigint, p.[Emergency Memory In Use]),
+                target_committed = CONVERT(bigint, p.[Target Committed]),
+                current_committed = CONVERT(bigint, p.[Current Committed]),
+                pages_allocated = CONVERT(bigint, p.[Pages Allocated]),
+                pages_reserved = CONVERT(bigint, p.[Pages Reserved]),
+                pages_free = CONVERT(bigint, p.[Pages Free]),
+                pages_in_use = CONVERT(bigint, p.[Pages In Use]),
+                page_alloc_potential = CONVERT(bigint, p.[Page Alloc Potential]),
+                numa_growth_phase = CONVERT(bigint, p.[NUMA Growth Phase]),
+                last_oom_factor = CONVERT(bigint, p.[Last OOM Factor]),
+                last_os_error = CONVERT(bigint, p.[Last OS Error])
+            FROM
+            (
+                SELECT
+                    description = en.e.value('@description', 'nvarchar(128)'),
+                    value = en.e.value('@value', 'nvarchar(30)')
+                FROM r.c.nodes('memoryReport/entry') AS en(e)
+            ) AS e
+            PIVOT
+            (
+                MAX(e.value)
+                FOR e.description IN
+                (
+                    [Available Physical Memory],
+                    [Available Virtual Memory],
+                    [Available Paging File],
+                    [Working Set],
+                    [Percent of Committed Memory in WS],
+                    [Page Faults],
+                    [System physical memory high],
+                    [System physical memory low],
+                    [Process physical memory low],
+                    [Process virtual memory low],
+                    [VM Reserved],
+                    [VM Committed],
+                    [Locked Pages Allocated],
+                    [Large Pages Allocated],
+                    [Emergency Memory],
+                    [Emergency Memory In Use],
+                    [Target Committed],
+                    [Current Committed],
+                    [Pages Allocated],
+                    [Pages Reserved],
+                    [Pages Free],
+                    [Pages In Use],
+                    [Page Alloc Potential],
+                    [NUMA Growth Phase],
+                    [Last OOM Factor],
+                    [Last OS Error]
+                )
+            ) AS p
+        ) AS mr
         WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
