@@ -27,8 +27,8 @@ python no_access_test.py --server SQL2022
 ```
 
 All take `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `58`, `30`, `111`, and `4` passed. `rule_coverage_test.py`
-asserts `108` on a server up more than 7 days, where Group A checks Rule 1
+password). Expect `58`, `30`, `133`, and `4` passed. `rule_coverage_test.py`
+asserts `130` on a server up more than 7 days, where Group A checks Rule 1
 instead of the uptime guard (see below).
 
 ### The execute check is the one that earns its keep
@@ -64,6 +64,14 @@ long-uptime instance it asserts Rule 1 flags the unused index; on a fresh one it
 asserts the guard fired and suppressed it. It never silently skips, and it proves
 the index was analyzed and genuinely has zero reads first, so the absence of an
 `Unused Index` row means the guard, not an invisible index.
+
+The guard is per database as well as per server: a database restored or created 7
+days ago or less skips Rule 1 whatever the server uptime. Group `A-Window` covers
+that on any instance. It installs a scratch copy of the procedure
+(`sp_IndexCleanup_zz_window`) with the server start pinned 12 days back and each
+scratch database's `create_date` moved back, then builds `ic_win_*` databases,
+backs one up to the default backup directory and restores it under a new name and
+over an existing one. Everything it creates is dropped, backup file included.
 
 ### CI
 

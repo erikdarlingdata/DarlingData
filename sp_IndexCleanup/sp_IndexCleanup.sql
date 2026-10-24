@@ -447,6 +447,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM sys.dm_os_sys_info AS osi
         ),
         @database_cursor CURSOR,
+        @usage_window_days integer = 0, /* This database's usage window, set per database before Rule 1 */
+        @usage_since_server_start bit = 0,
+        @skip_unused_rule bit = 0,
         @current_database_name sysname,
         @current_database_id integer,
         @error_msg nvarchar(2048),
@@ -1089,6 +1092,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         server_uptime_days integer NULL,
         uptime_warning bit NULL,
+        usage_since datetime2(0) NULL, /* DATABASE rows only */
+        usage_since_reason nvarchar(500) NULL, /* DATABASE rows only */
         tables_analyzed integer NULL,
         index_count integer NULL,
         total_size_gb decimal(38, 4) NULL,
@@ -1150,7 +1155,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #databases
     (
         database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
-        database_id integer NOT NULL
+        database_id integer NOT NULL,
+        /* Each database's own usage window, filled in once #databases is populated */
+        usage_since datetime2(0) NULL,
+        usage_since_reason nvarchar(500) NULL,
+        usage_window_days integer NULL,
+        skip_unused_rule bit NULL
+    );
+
+    /*
+    Last restore of each database being analyzed, from msdb.dbo.restorehistory.
+    Empty where that table is unavailable (Azure SQL DB, no permission).
+    */
+    CREATE TABLE
+        #database_restores
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
+        last_restore_date datetime NOT NULL
+    );
+
+    /*
+    Databases analyzed here that are availability group primaries with at least
+    one readable secondary. Reads on a secondary are not counted in this
+    replica's index usage stats.
+    */
+    CREATE TABLE
+        #ag_primary_readable_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
@@ -1808,6 +1840,211 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('No valid databases found to process.', 16, 1);
         RETURN;
     END;
+
+    /*
+    Each database's own usage window. Index usage stats start over when the
+    server starts, and also when a database is restored or created, so the
+    window is the latest of those three moments. The server start alone is
+    the right answer only for a database that is older than the server uptime.
+
+    The restore lookup is dynamic SQL in a TRY/CATCH: msdb.dbo.restorehistory
+    does not exist on Azure SQL DB, and a login that cannot read it falls back
+    to create_date instead of failing the run.
+    */
+    IF @is_azure_sql_db = 0
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                rh.destination_database_name,
+                MAX(rh.restore_date)
+            FROM msdb.dbo.restorehistory AS rh
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #databases AS db
+                WHERE db.database_name COLLATE DATABASE_DEFAULT = rh.destination_database_name COLLATE DATABASE_DEFAULT
+            )
+            GROUP BY
+                rh.destination_database_name
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #database_restores
+            WITH
+                (TABLOCK)
+            (
+                database_name,
+                last_restore_date
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Restore history lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
+    /*
+    On an availability group primary, reads on a readable secondary are not
+    counted in this replica's usage stats. Find the databases here that are
+    primaries with at least one readable secondary (READ_ONLY or ALL), so the
+    DATABASE row can say so. Same dynamic SQL and TRY/CATCH reasoning as the
+    lookup above: a failure learns nothing and adds no note.
+    */
+    IF @is_hadr_enabled = 1
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                d.name
+            FROM sys.databases AS d
+            JOIN sys.availability_replicas AS lr
+              ON lr.replica_id = d.replica_id
+            WHERE d.replica_id IS NOT NULL
+            AND   sys.fn_hadr_is_primary_replica(d.name) = 1
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #databases AS db
+                      WHERE db.database_name = d.name
+                  )
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM sys.availability_replicas AS ar
+                      WHERE ar.group_id = lr.group_id
+                      AND   ar.replica_id <> lr.replica_id
+                      AND   ar.secondary_role_allow_connections_desc IN (N''READ_ONLY'', N''ALL'')
+                  )
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #ag_primary_readable_databases
+            WITH
+                (TABLOCK)
+            (
+                database_name
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Availability group readable secondary lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
+    /*
+    The reason names the moment that set the window. A restore under a new
+    name also creates the database a moment after the restore is logged, so
+    a create_date within 60 seconds of the winning time is credited to the
+    restore when there is one. A restore over an existing database keeps the
+    old create_date, and only the restore history shows it.
+    */
+    UPDATE
+        db
+    SET
+        db.usage_since = CONVERT(datetime2(0), w.usage_since),
+        db.usage_window_days =
+            DATEDIFF
+            (
+                DAY,
+                w.usage_since,
+                SYSDATETIME()
+            ),
+        db.usage_since_reason =
+            CASE
+                WHEN c.restore_date >= DATEADD(SECOND, -60, w.usage_since)
+                THEN N'Database restore'
+                WHEN c.create_date >= DATEADD(SECOND, -60, w.usage_since)
+                THEN N'Database create'
+                ELSE N'Server start'
+            END
+    FROM #databases AS db
+    CROSS JOIN sys.dm_os_sys_info AS osi
+    LEFT JOIN sys.databases AS sd
+      ON sd.name = db.database_name
+    LEFT JOIN #database_restores AS dr
+      ON dr.database_name = db.database_name
+    CROSS APPLY
+    (
+        SELECT
+            restore_date = dr.last_restore_date,
+            create_date = sd.create_date,
+            server_start = osi.sqlserver_start_time
+    ) AS c
+    CROSS APPLY
+    (
+        SELECT
+            usage_since =
+                (
+                    SELECT
+                        MAX(v.usage_since)
+                    FROM
+                    (
+                        VALUES
+                            (c.restore_date),
+                            (c.create_date),
+                            (c.server_start)
+                    ) AS v (usage_since)
+                )
+    ) AS w
+    OPTION(RECOMPILE);
+
+    /*
+    Per database, the unused index rule needs more than 7 days of usage data.
+    @dedupe_only is already 1 here when the server itself was started 7 days
+    ago or less, or when the caller asked for it: those cases skip the rule for
+    every database and are not repeated per database.
+    */
+    UPDATE
+        db
+    SET
+        db.skip_unused_rule =
+            CASE
+                WHEN @dedupe_only = 0
+                AND  db.usage_window_days <= 7
+                THEN 1
+                ELSE 0
+            END,
+        db.usage_since_reason =
+            db.usage_since_reason +
+            CASE
+                WHEN @dedupe_only = 0
+                AND  db.usage_window_days <= 7
+                THEN N'. Unused Index rule skipped for this database: only ' +
+                     CONVERT(nvarchar(10), db.usage_window_days) +
+                     N' days of usage data (7 days or less)'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #ag_primary_readable_databases AS ag
+                         WHERE ag.database_name = db.database_name
+                     )
+                THEN N'. Availability group primary with readable secondaries: reads on the secondaries are not counted'
+                ELSE N''
+            END
+    FROM #databases AS db
+    OPTION(RECOMPILE);
 
     /* Show database list in debug mode */
     IF @debug = 1
@@ -3787,16 +4024,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
-    /* Rule 1: Identify unused indexes */
-    IF @dedupe_only = 0
+    /*
+    Rule 1: Identify unused indexes
+
+    The skip is per database: a database restored or created 7 days ago or
+    less has too little usage data to call anything unused, even on a server
+    that has been up for months. The warning label follows the same window.
+    When the window is the server start, the label is the same as ever.
+    */
+    SELECT
+        @usage_window_days = ISNULL(d.usage_window_days, CONVERT(integer, @uptime_days)),
+        @usage_since_server_start =
+            CASE
+                WHEN d.usage_since_reason LIKE N'Server start%'
+                THEN 1
+                ELSE 0
+            END,
+        @skip_unused_rule = ISNULL(d.skip_unused_rule, 0)
+    FROM #databases AS d
+    WHERE d.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    IF  @dedupe_only = 0
+    AND @skip_unused_rule = 0
     BEGIN
         UPDATE
             #index_analysis
         SET
             #index_analysis.consolidation_rule =
                 CASE
-                    WHEN @uptime_warning = 1
+                    WHEN @usage_window_days < 14
+                    AND  @usage_since_server_start = 1
                     THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
+                    WHEN @usage_window_days < 14
+                    THEN 'Unused Index (WARNING: Database usage window < 14 days - usage data may be incomplete)'
                     ELSE 'Unused Index'
                 END,
             #index_analysis.action = N'DISABLE'
@@ -8591,6 +8852,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.database_name
     OPTION(RECOMPILE);
 
+    /* This database's own usage window goes on its DATABASE row, and nowhere else */
+    UPDATE
+        irs
+    SET
+        irs.usage_since = d.usage_since,
+        irs.usage_since_reason = d.usage_since_reason
+    FROM #index_reporting_stats AS irs
+    JOIN #databases AS d
+      ON d.database_name = irs.database_name
+    WHERE irs.summary_level = 'DATABASE'
+    AND   irs.database_name = @current_database_name
+    OPTION(RECOMPILE);
+
     /*
     The server-wide SUMMARY row is generated after the database cursor
     completes (see below), rolling up every DATABASE row so the top line
@@ -8923,7 +9197,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         x.avg_lock_wait_ms,
         x.latch_wait_count,
         x.daily_latch_waits_saved,
-        x.avg_latch_wait_ms
+        x.avg_latch_wait_ms,
+        x.usage_since,
+        x.usage_since_reason
     FROM
     (
         /* ===== SUMMARY LEVEL ===== */
@@ -9018,6 +9294,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             latch_wait_count = 'N/A',
             daily_latch_waits_saved = 'N/A',
             avg_latch_wait_ms = 'N/A',
+            usage_since = CONVERT(datetime2(0), NULL),
+            usage_since_reason = CONVERT(nvarchar(500), NULL),
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 0,
@@ -9140,6 +9418,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
                     ELSE '0'
                 END,
+            usage_since = irs.usage_since,
+            usage_since_reason = irs.usage_since_reason,
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 1,
@@ -9398,6 +9678,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
                     ELSE '0'
                 END,
+            usage_since = CONVERT(datetime2(0), NULL),
+            usage_since_reason = CONVERT(nvarchar(500), NULL),
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 2,
