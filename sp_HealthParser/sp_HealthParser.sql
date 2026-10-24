@@ -1587,7 +1587,8 @@ AND   ca.utc_timestamp < @end_date';
     CREATE TABLE
         #ring_buffer
     (
-        ring_buffer xml NOT NULL
+        ring_buffer xml NOT NULL,
+        event_name sysname NULL
     );
 
     CREATE TABLE
@@ -1830,10 +1831,16 @@ AND   ca.utc_timestamp < @end_date';
         WITH
             (TABLOCKX)
         (
-            ring_buffer
+            ring_buffer,
+            event_name
         )
         SELECT
-            x = e.x.query('.')
+            x = e.x.query('.'),
+            /*
+            Keep the name, so each event type below is a plain filter
+            instead of another pass over every event with exist(@name).
+            */
+            event_name = e.x.value('@name', 'sysname')
         FROM #x AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
         WHERE 1 = 1
@@ -1867,10 +1874,9 @@ AND   ca.utc_timestamp < @end_date';
                 wait_info
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "wait_info"]') = 1
+            WHERE rb.event_name = N'wait_info'
             OPTION(RECOMPILE);
         END;
         /*
@@ -1897,10 +1903,9 @@ AND   ca.utc_timestamp < @end_date';
                 sp_server_diagnostics_component_result
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
+            WHERE rb.event_name = N'sp_server_diagnostics_component_result'
             OPTION(RECOMPILE);
         END;
 
@@ -1924,10 +1929,9 @@ AND   ca.utc_timestamp < @end_date';
                 xml_deadlock_report
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "xml_deadlock_report"]') = 1
+            WHERE rb.event_name = N'xml_deadlock_report'
             OPTION(RECOMPILE);
         END;
 
@@ -1948,10 +1952,9 @@ AND   ca.utc_timestamp < @end_date';
                 scheduler_monitor
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "scheduler_monitor_system_health_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'scheduler_monitor_system_health_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
@@ -1972,10 +1975,9 @@ AND   ca.utc_timestamp < @end_date';
                 error_reported
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "error_reported"]') = 1
+            WHERE rb.event_name = N'error_reported'
             OPTION(RECOMPILE);
         END;
 
@@ -1996,10 +1998,9 @@ AND   ca.utc_timestamp < @end_date';
                 memory_broker
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'memory_broker_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
@@ -2020,10 +2021,9 @@ AND   ca.utc_timestamp < @end_date';
                 memory_node_oom
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "memory_node_oom_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'memory_node_oom_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
