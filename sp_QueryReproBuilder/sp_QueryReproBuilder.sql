@@ -1423,12 +1423,19 @@ CREATE TABLE
     INDEX plan_id CLUSTERED (plan_id)
 );
 
+/*
+#query_parameters and #reproduction_warnings are keyed in the order the
+repro builder lists them (by parameter name, and by warning type), so its
+FOR XML subqueries read each plan's rows in order. Keyed on plan_id only,
+each subquery sorted its rows for every plan, carrying the nvarchar(max)
+values and messages through the sort.
+*/
 CREATE TABLE
     #query_parameters
 (
     plan_id bigint NOT NULL,
-    INDEX plan_id CLUSTERED (plan_id),
     parameter_name sysname NULL,
+    INDEX plan_id CLUSTERED (plan_id, parameter_name),
     parameter_data_type sysname NULL,
     parameter_compiled_value nvarchar(max) NULL
 );
@@ -1437,8 +1444,8 @@ CREATE TABLE
     #reproduction_warnings
 (
     plan_id bigint NOT NULL,
-    INDEX plan_id CLUSTERED (plan_id),
     warning_type nvarchar(50) NULL,
+    INDEX plan_id CLUSTERED (plan_id, warning_type),
     warning_message nvarchar(max) NULL
 );
 
