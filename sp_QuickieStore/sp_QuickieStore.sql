@@ -13648,7 +13648,12 @@ END;
 
 /*
 Parameter Sensitive Plan variants have object_id 0, so they show
-the object of their parent query instead of Adhoc
+the object of their parent query instead of Adhoc.
+
+Joins instead of an apply and a subquery per query, so the hash
+join reads each view once. Per query, nested loops read the
+in-memory part of sys.query_store_query again, about 14 ms each
+on a Query Store with 16,000 queries.
 */
 SELECT
     @sql += N'
@@ -13663,14 +13668,7 @@ SELECT
     object_id =
         ISNULL
         (
-            (
-                SELECT TOP (1)
-                    qsq_parent.object_id
-                FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
-                JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
-                  ON qsq_parent.query_id = qsqv.parent_query_id
-                WHERE qsqv.query_variant_query_id = qsq.query_id
-            ),
+            qsqv.parent_object_id,
             qsq.object_id
         ),'
         ELSE N'
@@ -13703,24 +13701,49 @@ SELECT
     qsq.is_clouddb_internal_query
 FROM
 (
-    /*
-    A query with more than one plan would otherwise get a row per plan
-    */
-    SELECT DISTINCT
-        qsp.query_id
-    FROM #query_store_plan AS qsp
-    WHERE qsp.database_id = @database_id
-) AS qsp
-CROSS APPLY
+    SELECT
+        qsq.*,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id
+                ORDER BY
+                    qsq.last_execution_time DESC
+            )
+    FROM
+    (
+        /*
+        A query with more than one plan would otherwise get a row per plan
+        */
+        SELECT DISTINCT
+            qsp.query_id
+        FROM #query_store_plan AS qsp
+        WHERE qsp.database_id = @database_id
+    ) AS qsp
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+      ON qsq.query_id = qsp.query_id
+) AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN
 (
-    SELECT TOP (1)
-        qsq.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    WHERE qsq.query_id = qsp.query_id
-    ORDER BY
-        qsq.last_execution_time DESC
-) AS qsq
-OPTION(RECOMPILE);' + @nc10;
+    SELECT
+        qsqv.query_variant_query_id,
+        parent_object_id =
+            MAX(qsq_parent.object_id)
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+      ON qsq_parent.query_id = qsqv.parent_query_id
+    GROUP BY
+        qsqv.query_variant_query_id
+) AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id'
+        ELSE N''
+    END + N'
+WHERE qsq.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
