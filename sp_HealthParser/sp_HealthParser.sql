@@ -1536,10 +1536,14 @@ AND   ca.utc_timestamp < @end_date';
         OPTION(RECOMPILE);
     END;
 
+    /*
+    The primary key turns each NOT EXISTS probe against this list into a
+    seek; without it, every wait row scanned the whole list.
+    */
     CREATE TABLE
         #ignore_waits
     (
-        wait_type nvarchar(60) NOT NULL
+        wait_type nvarchar(60) NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
