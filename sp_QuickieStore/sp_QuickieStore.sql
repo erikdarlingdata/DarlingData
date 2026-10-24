@@ -14014,6 +14014,10 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    The hash join reads sys.query_store_query once. Nested loops read
+    its in-memory part again for every matching query, about 14 ms each.
+    */
     SELECT
         @sql += N'
     SELECT
@@ -14064,7 +14068,7 @@ BEGIN
     AND qsrs.last_execution_time < @end_date
     GROUP BY
         qsq.query_hash
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, HASH JOIN);
 ';
 
     IF @debug = 1
