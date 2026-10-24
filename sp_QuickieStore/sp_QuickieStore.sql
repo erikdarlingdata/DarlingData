@@ -6281,6 +6281,10 @@ OPTION(RECOMPILE, HASH JOIN);' + @nc10;
     DATEPART(WEEKDAY, ...) IN (1, 7) only meant Sat+Sun under @@DATEFIRST = 7;
     on a DATEFIRST = 1 server it mislabeled Monday as Weekend and Saturday as
     a weekday. The SELECT and GROUP BY expressions below must stay identical.
+
+    The hash join reads sys.query_store_plan once. With a small @top or
+    a short window, nested loops read its in-memory part again for every
+    staged query, about 14 ms each.
     */
     SELECT
         @sql += N'
@@ -6342,7 +6346,7 @@ GROUP BY
             THEN N''Business''
         ELSE N''Off-hours''
     END
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
