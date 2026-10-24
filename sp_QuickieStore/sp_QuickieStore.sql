@@ -7785,6 +7785,7 @@ BEGIN
         query_id bigint NOT NULL,
         plan_id bigint NOT NULL,
         query_text_id bigint NOT NULL,
+        last_execution_time datetimeoffset(7) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash, query_id, plan_id)
     );
@@ -7796,6 +7797,16 @@ BEGIN
         query_plan_hash binary(8) NOT NULL,
         query_sql_text nvarchar(max) NULL,
         rn bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_plans
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_plan nvarchar(max) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash)
     );
@@ -8650,7 +8661,8 @@ SELECT DISTINCT
     qsp.query_plan_hash,
     qsp.query_id,
     qsp.plan_id,
-    qsq.query_text_id
+    qsq.query_text_id,
+    qsp.last_execution_time
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     ON qsq.query_id = qsp.query_id
@@ -8682,7 +8694,8 @@ OPTION(RECOMPILE);' + @nc10;
         query_plan_hash,
         query_id,
         plan_id,
-        query_text_id
+        query_text_id,
+        last_execution_time
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -9518,7 +9531,98 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 7: Final output with plans (dynamic SQL for OUTER APPLY)*/
+    /*
+    Step 6b: The latest plan per output shape, read in one pass.
+    The latest plan_id comes from the staging table, so only the
+    picked plans are read and decompressed. An apply per output row in
+    the final select read the in-memory part of sys.query_store_plan
+    again for every row, about 14 ms each, and the final select cannot
+    take OPTION(HASH JOIN) because of its query_sql_text subquery.
+    */
+    SELECT
+        @current_table = 'inserting #ps_plans',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    lp.query_hash,
+    lp.query_plan_hash,
+    qsp.query_plan
+FROM
+(
+    SELECT
+        s.query_hash,
+        s.query_plan_hash,
+        s.plan_id,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    s.query_hash,
+                    s.query_plan_hash
+                ORDER BY
+                    s.last_execution_time DESC
+            )
+    FROM #ps_id_staging AS s
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ps_output AS o
+        WHERE o.query_hash = s.query_hash
+        AND   o.query_plan_hash = s.query_plan_hash
+    )
+) AS lp
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = lp.plan_id
+WHERE lp.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_plans WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        query_plan
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 7: Final output with plans*/
     SELECT
         @current_table = 'selecting parameter sensitivity results',
         @sql = @isolation_level;
@@ -9611,32 +9715,9 @@ SELECT
         END + N',
     o.variance_metrics
 FROM #ps_output AS o
-OUTER APPLY
-(
-    SELECT
-        qp0.*
-    FROM
-    (
-        SELECT
-            n = ROW_NUMBER() OVER
-                (
-                    ORDER BY
-                        qsp.last_execution_time DESC
-                ),
-            qsp.query_plan
-        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #ps_id_staging AS s
-            WHERE qsp.plan_id = s.plan_id
-            AND   o.query_hash = s.query_hash
-            AND   o.query_plan_hash = s.query_plan_hash
-        )
-    ) AS qp0
-    WHERE qp0.n = 1
-) AS qp
+LEFT JOIN #ps_plans AS qp
+  ON  qp.query_hash = o.query_hash
+  AND qp.query_plan_hash = o.query_plan_hash
 ORDER BY
     o.sort_value DESC,
     o.query_hash,
@@ -20026,6 +20107,30 @@ BEGIN
             SELECT
                 result =
                     '#ps_output is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_plans AS pp
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_plans',
+                pp.*
+            FROM #ps_plans AS pp
+            ORDER BY
+                pp.query_hash,
+                pp.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_plans is empty';
         END;
     END;
 
