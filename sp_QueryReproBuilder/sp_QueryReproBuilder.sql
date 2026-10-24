@@ -5069,9 +5069,15 @@ SELECT
                      ) AS xml
                  )
         END,
+    /*
+    Most plans have one list, so their first list is their last one. It is
+    only read when the last one holds no parameters, and then it holds
+    none either, so it is converted only when it is a different list.
+    */
     first_parameter_list =
         CASE
-            WHEN plp.first_end > 0
+            WHEN plp.first_start < plp.last_start
+            AND  plp.first_end > 0
             THEN TRY_CAST
                  (
                      SUBSTRING
