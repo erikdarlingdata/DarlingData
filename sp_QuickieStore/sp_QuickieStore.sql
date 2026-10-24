@@ -13444,6 +13444,11 @@ END;
 In regression mode, #query_store_runtime_stats has a row per plan
 and time period, so take each plan once. Duplicate plan rows here
 multiply every row in the tables built from this one.
+
+plan_id is unique in sys.query_store_plan, so this is a plain join.
+The hash join reads the view once: an apply per plan read the
+in-memory part of the view again for every plan, about 14 ms each
+on a Query Store with 17,000 plans.
 */
 SELECT
     @sql += N'
@@ -13454,17 +13459,10 @@ FROM
     FROM #query_store_runtime_stats AS qsrs
     WHERE qsrs.database_id = @database_id
 ) AS qsrs
-CROSS APPLY
-(
-    SELECT TOP (@plans_top)
-        qsp.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    WHERE qsp.plan_id = qsrs.plan_id
-    AND   qsp.is_online_index_plan = 0
-    ORDER BY
-        qsp.last_execution_time DESC
-) AS qsp
-OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = qsrs.plan_id
+WHERE qsp.is_online_index_plan = 0
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -13507,9 +13505,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@plans_top bigint,
-    @database_id int',
-    @plans_top,
+  N'@database_id int',
     @database_id;
 
 IF @troubleshoot_performance = 1
