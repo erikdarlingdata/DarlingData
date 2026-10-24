@@ -1355,6 +1355,18 @@ CREATE TABLE
     INDEX query_text_id CLUSTERED (query_text_id)
 );
 
+/*
+Where the last PLAN PER VALUE( hint starts in the text of a parameter
+sensitive plan variant query; only those texts have a row
+*/
+CREATE TABLE
+    #psp_hint_starts
+(
+    query_text_id bigint NOT NULL,
+    hint_start bigint NOT NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
+);
+
 CREATE TABLE
     #query_store_plan
 (
@@ -5529,6 +5541,30 @@ be run (Msg 102), so the repro is built without it; see psp below.
 SELECT
     @current_table = N'checking for parameter sensitive plan variants';
 
+/*
+The search runs once per text here. The repro builder below used it in a
+CROSS APPLY, and the optimizer copied it into every expression that used
+the PSP-free text, so each text was searched about six times under the
+column collation.
+*/
+INSERT
+    #psp_hint_starts
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    hint_start
+)
+SELECT
+    qsqt.query_text_id,
+    hint_start =
+        DATALENGTH(qsqt.query_sql_text) / 2 -
+        CHARINDEX(REVERSE(N'PLAN PER VALUE('), REVERSE(qsqt.query_sql_text)) -
+        LEN(N'PLAN PER VALUE(') + 2
+FROM #query_store_query_text AS qsqt
+WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
+OPTION(RECOMPILE);
+
 INSERT
     #reproduction_warnings
 WITH
@@ -5549,11 +5585,10 @@ SELECT DISTINCT
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
+JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsq.query_text_id
 LEFT JOIN #query_store_query_variant AS qsqv
   ON qsqv.query_variant_query_id = qsq.query_id
-WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
 OPTION(RECOMPILE);
 
 /*
@@ -6028,19 +6063,16 @@ Find the PLAN PER VALUE(...) hint of a parameter sensitive plan variant.
 It is the last one in the text and ends at the first )) after it, where
 its last predicate_range closes. Query Store writes it either as its own
 clause, " option (PLAN PER VALUE(...))", or first in the query's own
-OPTION clause, "OPTION ( PLAN PER VALUE(...), LOOP JOIN)".
+OPTION clause, "OPTION ( PLAN PER VALUE(...), LOOP JOIN)". Where it
+starts was found once per text, in #psp_hint_starts.
 */
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
 CROSS APPLY
 (
     SELECT
         hint_start =
-            CASE
-                WHEN CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
-                THEN DATALENGTH(qsqt.query_sql_text) / 2 -
-                     CHARINDEX(REVERSE(N'PLAN PER VALUE('), REVERSE(qsqt.query_sql_text)) -
-                     LEN(N'PLAN PER VALUE(') + 2
-                ELSE 0
-            END
+            ISNULL(phs.hint_start, 0)
 ) AS psp_start
 CROSS APPLY
 (
