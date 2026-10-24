@@ -2090,7 +2090,12 @@ AND   ca.utc_timestamp < @end_date';
             wait_resource = w.x.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)'),
             sql_text_pre = w.x.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(max)'),
             session_id = w.x.value('(action[@name="session_id"]/value/text())[1]', 'integer'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #waits_queries
         FROM #wait_info AS wi
         CROSS APPLY wi.wait_info.nodes('//event') AS w(x)
@@ -2332,7 +2337,12 @@ AND   ca.utc_timestamp < @end_date';
             waits = w2.x2.value('@waits', 'bigint'),
             average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
             max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #topwaits_count
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
@@ -2617,7 +2627,12 @@ AND   ca.utc_timestamp < @end_date';
             waits = w2.x2.value('@waits', 'bigint'),
             average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
             max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #topwaits_duration
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
@@ -2888,7 +2903,12 @@ AND   ca.utc_timestamp < @end_date';
             totalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
             longestPendingRequests_duration_ms = CONVERT(bigint, w2.x2.value('@duration', 'bigint')),
             longestPendingRequests_filePath = w2.x2.value('@filePath', 'nvarchar(500)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #io
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
@@ -3115,7 +3135,12 @@ AND   ca.utc_timestamp < @end_date';
             hasUnresolvableDeadlockOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
             hasDeadlockedSchedulersOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
             didBlockingOccur = w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
@@ -3574,7 +3599,12 @@ AND   ca.utc_timestamp < @end_date';
             numa_growth_phase = mr.numa_growth_phase,
             last_oom_factor = mr.last_oom_factor,
             last_os_error = mr.last_os_error,
-            xml = r.c.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN r.c.query('.')
+                END
         INTO #memory
         FROM #sp_server_diagnostics_component_result AS s
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
@@ -3890,7 +3920,12 @@ AND   ca.utc_timestamp < @end_date';
             previously_allocated = w.x.value('(data[@name="previously_allocated"]/value)[1]', 'bigint'),
             broker = w.x.value('(data[@name="broker"]/value)[1]', 'nvarchar(256)'),
             notification = w.x.value('(data[@name="notification"]/value)[1]', 'nvarchar(256)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #memory_broker_info
         FROM #memory_broker AS mb
         CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
@@ -4192,7 +4227,12 @@ AND   ca.utc_timestamp < @end_date';
             is_system_physical_memory_low = w.x.value('(data[@name="is_system_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
             is_process_physical_memory_low = w.x.value('(data[@name="is_process_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
             is_process_virtual_memory_low = w.x.value('(data[@name="is_process_virtual_memory_low"]/value)[1]', 'nvarchar(10)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #memory_node_oom_info
         FROM #memory_node_oom AS mno
         CROSS APPLY mno.memory_node_oom.nodes('//event') AS w(x)
@@ -4597,7 +4637,12 @@ AND   ca.utc_timestamp < @end_date';
             sqlCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@sqlCpuUtilization)[1]', 'bigint'),
             BadPagesDetected = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesDetected)[1]', 'bigint'),
             BadPagesFixed = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesFixed)[1]', 'bigint'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
@@ -4816,7 +4861,12 @@ AND   ca.utc_timestamp < @end_date';
             memory_utilization = v.memory_utilization,
             page_faults = v.page_faults,
             working_set_delta_mb = v.working_set_delta_mb,
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #scheduler_issues
         FROM #scheduler_monitor AS sm
         CROSS APPLY sm.scheduler_monitor.nodes('//event') AS w(x)
@@ -5052,7 +5102,12 @@ AND   ca.utc_timestamp < @end_date';
             */
             database_name = DB_NAME(NULLIF(w.x.value('(action[@name="database_id"]/value)[1]', 'integer'), 0)),
             database_id = w.x.value('(action[@name="database_id"]/value)[1]', 'integer'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #error_info
         FROM #error_reported AS er
         CROSS APPLY er.error_reported.nodes('//event') AS w(x)
