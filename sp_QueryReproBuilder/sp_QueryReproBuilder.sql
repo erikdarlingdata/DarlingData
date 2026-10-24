@@ -1445,6 +1445,20 @@ CREATE TABLE
     parameter_compiled_value nvarchar(max) NULL
 );
 
+/*
+Each plan's parameter values in the order the parameter_values column lists
+them, numbered once, so the final SELECT reads them in order instead of
+sorting every plan's nvarchar(max) values
+*/
+CREATE TABLE
+    #parameter_values
+(
+    plan_id bigint NOT NULL,
+    value_order bigint NOT NULL,
+    parameter_compiled_value nvarchar(max) NULL,
+    PRIMARY KEY CLUSTERED (plan_id, value_order)
+);
+
 CREATE TABLE
     #reproduction_warnings
 (
@@ -6622,6 +6636,38 @@ OPTION(RECOMPILE);
 
 
 /*
+Number each plan's parameter values in value order for the parameter_values
+column. The parameter name breaks ties, so values that sort the same come
+out in one order every run.
+*/
+SELECT
+    @current_table = N'numbering parameter values';
+
+INSERT
+    #parameter_values
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    value_order,
+    parameter_compiled_value
+)
+SELECT
+    qp.plan_id,
+    value_order =
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                qp.plan_id
+            ORDER BY
+                qp.parameter_compiled_value,
+                qp.parameter_name
+        ),
+    qp.parameter_compiled_value
+FROM #query_parameters AS qp
+OPTION(RECOMPILE);
+
+/*
 Match sp_QuickieStore: when nothing landed in the search window there is no
 repro to build, so tell the caller which table came back empty instead of
 returning a silent, unexplained empty result set.
@@ -6655,11 +6701,11 @@ SELECT
                 (
                     SELECT
                         N', ' +
-                        qp.parameter_compiled_value
-                    FROM #query_parameters AS qp
-                    WHERE qp.plan_id = rq.plan_id
+                        pv.parameter_compiled_value
+                    FROM #parameter_values AS pv
+                    WHERE pv.plan_id = rq.plan_id
                     ORDER BY
-                        qp.parameter_compiled_value
+                        pv.value_order
                     FOR XML
                         PATH(N''),
                         TYPE
@@ -7062,6 +7108,16 @@ BEGIN
     FROM #parameter_declarations AS pd
     ORDER BY
         pd.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#parameter_values',
+        pv.*
+    FROM #parameter_values AS pv
+    ORDER BY
+        pv.plan_id,
+        pv.value_order
     OPTION(RECOMPILE);
 END;
 
