@@ -3365,44 +3365,100 @@ AND   ca.utc_timestamp < @end_date';
                     '(/event/data/value/queryProcessing/@pendingTasks)[1]',
                     'bigint'
                 ),
+            /*
+            An entry point is the function a pending task starts in once a
+            worker picks it up; count is how many pending tasks share it,
+            and the counts add up to pending_tasks. SQL Server names the
+            ones it knows: Process Command is a client request waiting for
+            a worker thread, the THREADPOOL case. Internal tasks carry only
+            their module and code address, so they get module+offset
+            instead of NULL. The offset (address minus the module's load
+            address) stays the same across restarts of one build, and the
+            module's public symbols turn it into a function name.
+            */
             entry_point_name =
-                ep.e.value('@name', 'sysname'),
-            module_name =
-                ep.e.value('@moduleName', 'sysname'),
-            image_base =
-                ep.e.value
+                ISNULL
                 (
-                    'xs:hexBinary(substring(string(@imageBase), 3))',
-                    'varbinary(8)'
-                ),
-            size =
-                CONVERT
-                (
-                    bigint,
-                    ep.e.value
+                    ep.e.value('@name', 'sysname'),
+                    hp.module_name +
+                    N'+0x' +
+                    LOWER
                     (
-                        '
-                        xs:hexBinary
+                        SUBSTRING
                         (
-                          if (string-length(substring(string(@size), 3)) mod 2 = 1)
-                          then concat("0", substring(string(@size), 3))
-                          else substring(string(@size), 3)
+                            hx.offset_hex,
+                            PATINDEX('%[^0]%', hx.offset_hex),
+                            16
                         )
-                        ',
-                        'varbinary(8)'
                     )
                 ),
+            module_name =
+                hp.module_name,
+            image_base =
+                hp.image_base,
+            size =
+                CONVERT(bigint, hp.size),
             address =
-                ep.e.value
-                (
-                    'xs:hexBinary(substring(string(@address), 3))',
-                    'varbinary(8)'
-                ),
+                hp.address,
             entry_point_count =
                 ep.e.value('@count', 'bigint')
         INTO #pending_task_details
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/pendingTasks/entryPoint') AS ep(e)
+        CROSS APPLY
+        (
+            /*
+            The hex attributes can have an odd number of digits, and
+            xs:hexBinary returns nothing for those, so pad them to an even
+            length. A missing attribute (named entry points have none)
+            stays NULL instead of coming back as 0x.
+            */
+            SELECT
+                module_name =
+                    ep.e.value('@moduleName', 'sysname'),
+                image_base =
+                    ep.e.value
+                    (
+                        '
+                        for $h in substring(string((@imageBase)[1]), 3)[. != ""]
+                        return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                        ',
+                        'varbinary(8)'
+                    ),
+                size =
+                    ep.e.value
+                    (
+                        '
+                        for $h in substring(string((@size)[1]), 3)[. != ""]
+                        return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                        ',
+                        'varbinary(8)'
+                    ),
+                address =
+                    ep.e.value
+                    (
+                        '
+                        for $h in substring(string((@address)[1]), 3)[. != ""]
+                        return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                        ',
+                        'varbinary(8)'
+                    )
+        ) AS hp
+        CROSS APPLY
+        (
+            SELECT
+                offset_hex =
+                    CONVERT
+                    (
+                        varchar(16),
+                        CONVERT
+                        (
+                            varbinary(8),
+                            CONVERT(bigint, hp.address) - CONVERT(bigint, hp.image_base)
+                        ),
+                        2
+                    )
+        ) AS hx
         WHERE wi.component = 'QUERY_PROCESSING'
         /* Hardcoded threshold > 1 ignored the @pending_task_threshold
            parameter. It is compared as a value here, which is cheaper
@@ -3521,7 +3577,9 @@ AND   ca.utc_timestamp < @end_date';
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
-                ptd.event_time DESC
+                ptd.event_time DESC,
+                ptd.entry_point_count DESC,
+                ptd.entry_point_name
             OPTION(RECOMPILE);
             ';
 
