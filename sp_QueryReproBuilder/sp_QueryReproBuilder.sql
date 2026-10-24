@@ -6094,9 +6094,16 @@ SELECT
                         N'EXECUTE sys.sp_executesql' +
                         NCHAR(10) +
                         N'    N''' +
+                        /*
+                        Under a binary collation only the quote character
+                        itself is doubled. The column collation is width
+                        insensitive, so it also doubled a full-width
+                        apostrophe (NCHAR(65287)) into two plain quotes,
+                        which changed the string literal in the repro.
+                        */
                         REPLACE
                         (
-                            clean_query.query_text_cleaned,
+                            clean_query.query_text_cleaned COLLATE Latin1_General_100_BIN2,
                             N'''',
                             N''''''
                         ) +
