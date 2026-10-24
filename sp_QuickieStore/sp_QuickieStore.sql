@@ -10276,7 +10276,12 @@ BEGIN
             SELECT
                 @current_table = 'inserting #include_plan_ids for ' + @param_name;
 
-            /* Build appropriate SQL based on parameter type */
+            /*
+            Build appropriate SQL based on parameter type.
+            The hash joins read each Query Store view once. Nested loops
+            read the in-memory part of a view again for every id in the
+            list, about 14 ms each.
+            */
             IF @param_name = 'include_query_ids'
             OR @param_name = 'ignore_query_ids'
             BEGIN
@@ -10299,7 +10304,7 @@ BEGIN
                               N'_query_ids AS iqi
                           WHERE iqi.query_id = qsp.query_id
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -10332,7 +10337,7 @@ BEGIN
                                     WHERE iqh.query_hash = qsq.query_hash
                                 )
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -10357,7 +10362,7 @@ BEGIN
                               END + N'_plan_hashes AS iph
                           WHERE iph.plan_hash = qsp.query_plan_hash
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -10396,7 +10401,7 @@ BEGIN
                                         )
                               )
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
 
             /* Process secondary sql if defined */
