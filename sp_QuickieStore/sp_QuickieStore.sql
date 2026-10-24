@@ -14960,6 +14960,10 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    The hash join reads the in-memory part of the view once. Nested
+    loops read it again for every feedback row, about 14 ms each.
+    */
     SELECT
         @sql += N'
 SELECT
@@ -14980,7 +14984,7 @@ WHERE EXISTS
           WHERE qspf.plan_id = qsp.plan_id
           AND   qsp.database_id = @database_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
