@@ -1387,6 +1387,19 @@ CREATE TABLE
     INDEX plan_id_query_id CLUSTERED (plan_id, query_id)
 );
 
+/*
+Each plan converted to xml once, by the too-large check. The embedded
+constants and the final SELECT read it here instead of converting again.
+NULL when the plan text can't be converted.
+*/
+CREATE TABLE
+    #query_plan_xml
+(
+    plan_id bigint NOT NULL,
+    query_plan_xml xml NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
 CREATE TABLE
     #query_parameters
 (
@@ -5286,10 +5299,29 @@ AND DATALENGTH(qp.parameter_compiled_value) / 2 = 256
 OPTION(RECOMPILE);
 
 /*
-Check for plans too large to cast to XML
+Check for plans too large to cast to XML.
+
+The conversion is the test, so its result is kept: the embedded constants
+and the final SELECT read the xml from #query_plan_xml. Each of them
+converted every plan again before, which cost as much as this check.
 */
 SELECT
     @current_table = N'checking for plans too large to cast to XML';
+
+INSERT
+    #query_plan_xml
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    query_plan_xml
+)
+SELECT
+    qsp.plan_id,
+    query_plan_xml =
+        TRY_CAST(qsp.query_plan AS xml)
+FROM #query_store_plan AS qsp
+OPTION(RECOMPILE);
 
 INSERT
     #reproduction_warnings
@@ -5301,14 +5333,14 @@ WITH
     warning_message
 )
 SELECT DISTINCT
-    qsp.plan_id,
+    qpx.plan_id,
     warning_type = N'plan too large for XML parsing',
     warning_message =
         N'Query plan could not be cast to XML (likely too large). ' +
         N'Parameters and embedded constants cannot be extracted using XQuery. ' +
         N'Manual review of plan text required.'
-FROM #query_store_plan AS qsp
-WHERE TRY_CAST(qsp.query_plan AS xml) IS NULL
+FROM #query_plan_xml AS qpx
+WHERE qpx.query_plan_xml IS NULL
 OPTION(RECOMPILE);
 
 /*
@@ -5374,12 +5406,8 @@ JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
-CROSS APPLY
-(
-    SELECT
-        query_plan_xml =
-            TRY_CAST(qsp.query_plan AS xml)
-) AS x
+JOIN #query_plan_xml AS x
+  ON x.plan_id = qsp.plan_id
 CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c(const)
 CROSS APPLY
 (
@@ -5390,8 +5418,6 @@ CROSS APPLY
 ) AS cv
 /*
 No IS NOT NULL test on the xml here: .nodes() returns no rows for NULL.
-With the test, the plan converted every plan before the text filter
-below picked the OPTION(RECOMPILE) ones.
 */
 WHERE qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
 OPTION(RECOMPILE);
@@ -6210,20 +6236,13 @@ SELECT
     qsq.object_name,
     qsqt.query_sql_text_clickable,
     /*
-    The too-large check above already tried every plan, so its warning picks
-    the branch, and each plan is converted once, not once per TRY_CAST
+    The too-large check above converted every plan and kept the xml, so the
+    plan is not converted again here. NULL means it could not be converted.
     */
     query_plan =
          CASE
-             WHEN NOT EXISTS
-                  (
-                      SELECT
-                          1/0
-                      FROM #reproduction_warnings AS rw
-                      WHERE rw.plan_id = rq.plan_id
-                      AND   rw.warning_type = N'plan too large for XML parsing'
-                  )
-             THEN TRY_CAST(qsp.query_plan AS xml)
+             WHEN qpx.query_plan_xml IS NOT NULL
+             THEN qpx.query_plan_xml
              ELSE
                  (
                      SELECT
@@ -6319,6 +6338,13 @@ CROSS APPLY
   ORDER BY
       qsqt.query_text_id DESC
 ) AS qsqt
+OUTER APPLY
+(
+    SELECT TOP (1)
+        qpx.query_plan_xml
+    FROM #query_plan_xml AS qpx
+    WHERE qpx.plan_id = rq.plan_id
+) AS qpx
 OUTER APPLY
 (
     SELECT
