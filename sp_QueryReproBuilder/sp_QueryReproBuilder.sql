@@ -1511,6 +1511,23 @@ CREATE TABLE
 );
 
 /*
+Each plan's parameter declaration list from its query text, with the
+parameter boundaries marked by NCHAR(1), for the missing parameter fill.
+needs_xml is set when the list holds a character that XML would parse
+or reject, so those lists are still split through XML.
+*/
+CREATE TABLE
+    #parameter_declarations
+(
+    plan_id bigint NOT NULL,
+    declaration_end bigint NOT NULL,
+    declaration nvarchar(max) NULL,
+    split_text nvarchar(max) COLLATE Latin1_General_100_BIN2 NULL,
+    needs_xml bit NOT NULL DEFAULT 0,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
 If @query_plan_xml was supplied, seed the repro pipeline with one synthetic
 plan so the parser, warnings, and repro-builder can all run without Query
 Store. Synthetic ids are -1 so they can't collide with real Query Store ids.
@@ -5224,6 +5241,258 @@ be accidentally executed with incorrect values.
 SELECT
     @current_table = N'filling in missing parameters from query text';
 
+/*
+The parameter declaration list of each parameterized query text is split
+with string functions, not XML. Turning the list into XML and reading one
+<p> element per parameter ran an XML reader per parameter, and on a busy
+Query Store that was seconds. The split keeps what XML did to the text:
+each line break (CR LF, or CR alone) becomes LF, a parameter that is only
+white space reads as NULL, and the database collation applies to the
+result. A list with a character that XML parses or rejects (< & ]]>,
+control characters, surrogates, U+FFFE or U+FFFF) still goes through XML,
+so it is read the same way it always was.
+
+The end of each declaration list is found once, then the list is cut once,
+then split. In one statement each search ran again for every expression
+that used it.
+*/
+INSERT
+    #parameter_declarations
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    declaration_end
+)
+SELECT
+    qsp.plan_id,
+    de.declaration_end
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        declaration_end =
+            PATINDEX(N'%)[^,]%', qsqt.query_sql_text)
+) AS de
+WHERE qsqt.query_sql_text LIKE N'(@%'
+AND   de.declaration_end > 0
+OPTION(RECOMPILE);
+
+UPDATE
+    pd
+SET
+    pd.declaration =
+        SUBSTRING
+        (
+            qsqt.query_sql_text,
+            2,
+            pd.declaration_end - 2 +
+                CASE
+                    WHEN SUBSTRING
+                         (
+                             qsqt.query_sql_text,
+                             pd.declaration_end,
+                             2
+                         ) = N'))'
+                    THEN 1
+                    ELSE 0
+                END
+        )
+FROM #parameter_declarations AS pd
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = pd.plan_id
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+OPTION(RECOMPILE);
+
+/*
+Split on ',@' (the parameter boundary), not every comma.
+A scaled type carries its own comma (numeric(10,2),
+decimal(38,6)), always followed by a digit; the separator
+between parameters is always a comma immediately followed by
+the next parameter's @name. Splitting on every comma tore
+numeric(10,2) in half, and the malformed fragment blew up
+LEFT with error 537, aborting the whole procedure for any
+query with a scaled-type parameter.
+
+The two REPLACEs are the ones the XML split used, with NCHAR(1) where it
+put </p><p>. Query text has no control characters by now (they were
+replaced with ?), and a list that has one anyway goes through XML.
+*/
+UPDATE
+    pd
+SET
+    pd.split_text =
+        REPLACE(REPLACE(pd.declaration, N', @', N',@'), N',@', NCHAR(1) + N'@'),
+    pd.needs_xml =
+        CASE
+            WHEN CHARINDEX(N'<', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(N'&', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(N']]>', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(NCHAR(0), pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   PATINDEX
+                 (
+                     N'%[' +
+                     NCHAR(1) + N'-' + NCHAR(8) +
+                     NCHAR(11) +
+                     NCHAR(12) +
+                     NCHAR(14) + N'-' + NCHAR(31) +
+                     NCHAR(55296) + N'-' + NCHAR(57343) +
+                     NCHAR(65534) +
+                     NCHAR(65535) +
+                     N']%',
+                     pd.declaration COLLATE Latin1_General_100_BIN2
+                 ) > 0
+            THEN 1
+            ELSE 0
+        END
+FROM #parameter_declarations AS pd
+OPTION(RECOMPILE);
+
+WITH
+    numbers
+(
+    n
+) AS
+(
+    /*
+    1 to 1,000,000, enough for any declaration list (2,100 parameters at
+    most); TOP below takes only as many as each list is long
+    */
+    SELECT
+        n =
+            ROW_NUMBER() OVER
+            (
+                ORDER BY
+                    (SELECT NULL)
+            )
+    FROM
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t1 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t2 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t3 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t4 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t5 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t6 (n)
+),
+    parameter_items
+(
+    plan_id,
+    item
+) AS
+(
+    /*
+    Each parameter starts at position 1 or right after an NCHAR(1), and
+    runs to the next NCHAR(1) or the end of the list. Most lists fit in
+    nvarchar(4000), where the per-character work is much cheaper than on
+    nvarchar(max).
+    */
+    SELECT
+        pd.plan_id,
+        item =
+            SUBSTRING
+            (
+                ps.split_text,
+                nb.n,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(NCHAR(1), ps.split_text, nb.n),
+                        0
+                    ),
+                    ps.split_length + 1
+                ) - nb.n
+            )
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT
+            split_text =
+                CONVERT(nvarchar(4000), pd.split_text),
+            split_length =
+                DATALENGTH(pd.split_text) / 2
+    ) AS ps
+    CROSS APPLY
+    (
+        SELECT TOP (ps.split_length)
+            n.n
+        FROM numbers AS n
+        ORDER BY
+            n.n
+    ) AS nb
+    WHERE pd.needs_xml = 0
+    AND   ps.split_length <= 4000
+    AND
+    (
+         nb.n = 1
+      OR SUBSTRING(ps.split_text, nb.n - 1, 1) = NCHAR(1)
+    )
+
+    UNION ALL
+
+    SELECT
+        pd.plan_id,
+        item =
+            SUBSTRING
+            (
+                pd.split_text,
+                nb.n,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(NCHAR(1), pd.split_text, nb.n),
+                        0
+                    ),
+                    DATALENGTH(pd.split_text) / 2 + 1
+                ) - nb.n
+            )
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT TOP (DATALENGTH(pd.split_text) / 2)
+            n.n
+        FROM numbers AS n
+        ORDER BY
+            n.n
+    ) AS nb
+    WHERE pd.needs_xml = 0
+    AND   DATALENGTH(pd.split_text) / 2 > 4000
+    AND
+    (
+         nb.n = 1
+      OR SUBSTRING(pd.split_text, nb.n - 1, 1) = NCHAR(1)
+    )
+)
 INSERT
     #query_parameters
 WITH
@@ -5235,67 +5504,82 @@ WITH
     parameter_compiled_value
 )
 SELECT DISTINCT
-    qsp.plan_id,
+    pt.plan_id,
     pn.parameter_name,
     pn.parameter_data_type,
     parameter_compiled_value =
         N'?'
-FROM #query_store_plan AS qsp
-JOIN #query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-CROSS APPLY
+FROM
 (
     SELECT
-        param_prefix =
-            SUBSTRING
-            (
-                qsqt.query_sql_text,
-                2,
-                PATINDEX(N'%)[^,]%', qsqt.query_sql_text) - 2 +
-                    CASE
-                        WHEN SUBSTRING
-                             (
-                                 qsqt.query_sql_text,
-                                 PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
-                                 2
-                             ) = N'))'
-                        THEN 1
-                        ELSE 0
-                    END
-            )
-    WHERE qsqt.query_sql_text LIKE N'(@%'
-    AND   PATINDEX(N'%)[^,]%', qsqt.query_sql_text) > 0
-) AS prefix
-CROSS APPLY
-(
-    SELECT
-        param_xml =
-            TRY_CAST
-            (
-                /*
-                Split on ',@' (the parameter boundary), not every comma.
-                A scaled type carries its own comma (numeric(10,2),
-                decimal(38,6)), always followed by a digit; the separator
-                between parameters is always a comma immediately followed by
-                the next parameter's @name. Splitting on every comma tore
-                numeric(10,2) in half, and the malformed fragment blew up
-                LEFT with error 537, aborting the whole procedure for any
-                query with a scaled-type parameter.
-                */
-                N'<p>' +
-                REPLACE(REPLACE(prefix.param_prefix, N', @', N',@'), N',@', N'</p><p>@') +
-                N'</p>' AS xml
-            )
-) AS px
-CROSS APPLY px.param_xml.nodes(N'/p') AS p(param_text)
-CROSS APPLY
-(
-    /* Read each parameter's text once; every .value() call is its own XML reader */
-    SELECT
+        pi.plan_id,
         param_text =
-            LTRIM(p.param_text.value(N'(./text())[1]', N'nvarchar(max)'))
+            CASE
+                /* XML drops a text node that is only white space */
+                WHEN PATINDEX
+                     (
+                         N'%[^ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N']%',
+                         pi.item
+                     ) = 0
+                THEN NULL
+                /*
+                XML reads CR LF and a lone CR as LF. The round trip through
+                varbinary gives the text the database default collation as a
+                coercible default, as the XML value() call did, so the
+                comparisons below resolve their collation the same way.
+                */
+                ELSE
+                    LTRIM
+                    (
+                        CONVERT
+                        (
+                            nvarchar(max),
+                            CONVERT
+                            (
+                                varbinary(max),
+                                REPLACE
+                                (
+                                    REPLACE
+                                    (
+                                        pi.item,
+                                        NCHAR(13) + NCHAR(10),
+                                        NCHAR(10)
+                                    ),
+                                    NCHAR(13),
+                                    NCHAR(10)
+                                )
+                            )
+                        )
+                    )
+            END
+    FROM parameter_items AS pi
+
+    UNION ALL
+
+    SELECT
+        pd.plan_id,
+        pt.param_text
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT
+            param_xml =
+                TRY_CAST
+                (
+                    N'<p>' +
+                    REPLACE(REPLACE(pd.declaration, N', @', N',@'), N',@', N'</p><p>@') +
+                    N'</p>' AS xml
+                )
+    ) AS px
+    CROSS APPLY px.param_xml.nodes(N'/p') AS p(param_text)
+    CROSS APPLY
+    (
+        /* Read each parameter's text once; every .value() call is its own XML reader */
+        SELECT
+            param_text =
+                LTRIM(p.param_text.value(N'(./text())[1]', N'nvarchar(max)'))
+    ) AS pt
+    WHERE pd.needs_xml = 1
 ) AS pt
 CROSS APPLY
 (
@@ -5333,7 +5617,7 @@ WHERE NOT EXISTS
     SELECT
         1/0
     FROM #query_parameters AS qp
-    WHERE qp.plan_id = qsp.plan_id
+    WHERE qp.plan_id = pt.plan_id
     AND   qp.parameter_name = pn.parameter_name
 )
 OPTION(RECOMPILE);
