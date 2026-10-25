@@ -262,6 +262,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @temp_table sysname,
         @insert_list sysname,
         @collection_sql nvarchar(max),
+        @one_pass_template nvarchar(max) = N'',
+        @copy_template nvarchar(max) = N'',
+        @object_list nvarchar(max) = N'',
+        @event_tables integer = 0,
+        @busy_event_tables integer = 0,
+        @one_pass bit = 0,
         /*
         Log to table stuff.
 
@@ -522,6 +528,63 @@ AND   ca.utc_timestamp < @end_date';
             '{cross_apply}',
             @cross_apply
         );
+
+    /*
+    When more than one event type is needed, the files are read once
+    for all of them into #xe_events, and @copy_template moves each type
+    into its own table. Same filters and conversion as @sql_template.
+    */
+    SELECT
+        @one_pass_template = N'
+    INSERT INTO
+        #xe_events
+    WITH
+        (TABLOCK)
+    (
+        object_name,
+        event_data
+    )
+    SELECT
+        xml.object_name,
+        event_data =
+            ISNULL
+            (
+                xml.event_data,
+                CONVERT(xml, N''<event>event</event>'')
+            )
+    FROM
+    (
+        SELECT
+            fx.object_name,
+            event_data =
+                TRY_CAST(fx.event_data AS xml)
+        FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
+        WHERE fx.object_name IN ({object_list}) ' +
+        @time_filter + N'
+    ) AS xml
+    ' +
+    REPLACE
+    (
+        @cross_apply,
+        '{object_name}',
+        'event_data'
+    ) + N'
+    OPTION(RECOMPILE);
+',
+        @copy_template = N'
+    INSERT INTO
+        {temp_table}
+    WITH
+        (TABLOCK)
+    (
+        {insert_list}
+    )
+    SELECT
+        xe.event_data
+    FROM #xe_events AS xe
+    WHERE xe.object_name = N''{object_name}''
+    OPTION(RECOMPILE);
+';
 
     /*If any parameters that expect non-NULL default values get passed in with NULLs, fix them*/
     SELECT
@@ -1579,6 +1642,13 @@ AND   ca.utc_timestamp < @end_date';
     );
 
     CREATE TABLE
+        #xe_events
+    (
+        object_name sysname NOT NULL,
+        event_data xml NOT NULL
+    );
+
+    CREATE TABLE
         #x
     (
         x xml NOT NULL
@@ -1701,6 +1771,91 @@ AND   ca.utc_timestamp < @end_date';
     IF  @mi = 0
     AND @use_ring_buffer = 0
     BEGIN
+        /*
+        A pass that filters on one object_name has the filter pushed into
+        the file reader, which skips the other events: about 2 s for a
+        rare event type, and nearly 4 s for the two that fire every
+        minute or five (sp_server_diagnostics_component_result and the
+        scheduler monitor), on a week of files. A pass over a list of
+        names reads every event, 6 to 7 s whatever the list. So read
+        everything in one pass into #xe_events, and copy each type into
+        its own table, only when that replaces three or more passes, or
+        both busy ones. Otherwise keep one pass per event type. The
+        default run used to read the files seven times.
+        */
+        SELECT
+            @event_tables = COUNT_BIG(DISTINCT ca.temp_table)
+        FROM @collection_areas AS ca
+        WHERE ca.should_collect = 1;
+
+        SELECT
+            @busy_event_tables = COUNT_BIG(DISTINCT ca.temp_table)
+        FROM @collection_areas AS ca
+        WHERE ca.should_collect = 1
+        AND   ca.temp_table IN
+              (
+                  N'#sp_server_diagnostics_component_result',
+                  N'#scheduler_monitor'
+              );
+
+        IF @event_tables >= 3
+        OR @busy_event_tables = 2
+        BEGIN
+            SELECT
+                @object_list =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                N', N''' + ca.object_name + N''''
+                            FROM @collection_areas AS ca
+                            WHERE ca.should_collect = 1
+                            GROUP BY
+                                ca.object_name
+                            ORDER BY
+                                ca.object_name
+                            FOR XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        2,
+                        N''
+                    );
+
+            SET
+                @collection_sql =
+                    REPLACE
+                    (
+                        @one_pass_template,
+                        '{object_list}',
+                        @object_list
+                    );
+
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Collecting all event types in one pass for dates between %s and %s', 0, 1, @start_date_debug, @end_date_debug) WITH NOWAIT;
+                PRINT @collection_sql;
+                SET STATISTICS XML ON;
+            END;
+
+            EXECUTE sys.sp_executesql
+                @collection_sql,
+                @params,
+                @start_date,
+                @end_date;
+
+            IF @debug = 1
+            BEGIN
+                SET STATISTICS XML OFF;
+            END;
+
+            /* The loop below now copies from #xe_events instead of reading the files */
+            SELECT
+                @sql_template = @copy_template,
+                @one_pass = 1;
+        END;
+
         OPEN @collection_cursor;
 
         FETCH NEXT
@@ -1770,6 +1925,12 @@ AND   ca.utc_timestamp < @end_date';
                 @object_name,
                 @temp_table,
                 @insert_list;
+        END;
+
+        /* Each event type has its own copy now */
+        IF @one_pass = 1
+        BEGIN
+            TRUNCATE TABLE #xe_events;
         END;
 
         IF @debug = 1
