@@ -268,6 +268,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @event_tables integer = 0,
         @busy_event_tables integer = 0,
         @one_pass bit = 0,
+        @ring_buffer_events integer,
+        @ring_buffer_shown integer,
         /*
         Log to table stuff.
 
@@ -1969,6 +1971,30 @@ AND   ca.utc_timestamp < @end_date';
         WHERE s.name = N'system_health'
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
+
+        /*
+        The ring buffer target returns about 4 MB of XML at most, oldest
+        events first, and marks the output truncated="1" when it had to
+        leave events out. The ones left out are the newest.
+        */
+        SELECT
+            @ring_buffer_events = x.x.value('(/RingBufferTarget/@eventCount)[1]', 'integer'),
+            @ring_buffer_shown = x.x.value('count(/RingBufferTarget/event)', 'integer')
+        FROM #x AS x
+        WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+        OPTION(RECOMPILE);
+
+        IF @ring_buffer_shown IS NOT NULL
+        BEGIN
+            IF @mi = 0
+            BEGIN
+                RAISERROR('Warning: the system_health ring buffer output was cut off. It returned %i of its %i events, and the newest events are the ones missing. The event_file target has the full history: run with @use_ring_buffer = 0.', 0, 1, @ring_buffer_shown, @ring_buffer_events) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                RAISERROR('Warning: the system_health ring buffer output was cut off. It returned %i of its %i events, and the newest events are the ones missing.', 0, 1, @ring_buffer_shown, @ring_buffer_events) WITH NOWAIT;
+            END;
+        END;
 
         IF @debug = 1
         BEGIN
