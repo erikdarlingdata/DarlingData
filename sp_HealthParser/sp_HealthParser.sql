@@ -939,9 +939,36 @@ AND   ca.utc_timestamp < @end_date';
                     hasUnresolvableDeadlockOccurred bit NULL,
                     hasDeadlockedSchedulersOccurred bit NULL,
                     didBlockingOccur bit NULL,
+                    pending_user_requests bigint NULL,
+                    pending_entry_points nvarchar(max) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU tasks logging.'', 0, 1, ''' + REPLACE(@log_table_cpu_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
+            END;
+
+            /*
+            Tables created by older versions do not have the pending task
+            columns, which replaced the _PendingTasks table. Add them.
+            */
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON s.schema_id = t.schema_id
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+                  ON c.object_id = t.object_id
+                WHERE t.name = @table_name + N''_CPUTasks''
+                AND   s.name = @schema_name
+                AND   c.name = N''pending_user_requests''
+            )
+            BEGIN
+                ALTER TABLE ' + @log_table_cpu_tasks + N'
+                ADD
+                    pending_user_requests bigint NULL,
+                    pending_entry_points nvarchar(max) NULL;
+                IF @debug = 1 BEGIN RAISERROR(''Added the pending task columns to %s.'', 0, 1, ''' + REPLACE(@log_table_cpu_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1267,45 +1294,6 @@ AND   ca.utc_timestamp < @end_date';
             @log_table_name_prefix,
             @debug;
 
-        /* Create PendingTasks table if it doesn't exist */
-        SET @create_sql = N'
-            IF NOT EXISTS
-            (
-                SELECT
-                    1/0
-                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
-                  ON t.schema_id = s.schema_id
-                WHERE t.name = @table_name + N''_PendingTasks''
-                AND   s.name = @schema_name
-            )
-            BEGIN
-                CREATE TABLE ' + @log_table_pending_tasks + N'
-                (
-                    id bigint IDENTITY,
-                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    event_time datetime2(7) NULL,
-                    pending_tasks bigint NULL,
-                    entry_point_name sysname NULL,
-                    module_name sysname NULL,
-                    image_base varbinary(8) NULL,
-                    size bigint NULL,
-                    address varbinary(8) NULL,
-                    entry_point_count bigint NULL,
-                    PRIMARY KEY CLUSTERED (collection_time, id)
-                );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for pending tasks logging.'', 0, 1, ''' + REPLACE(@log_table_pending_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
-            END';
-
-        EXECUTE sys.sp_executesql
-            @create_sql,
-          N'@schema_name sysname,
-            @table_name sysname,
-            @debug bit',
-            @log_schema_name,
-            @log_table_name_prefix,
-            @debug;
-
         /* Create Blocking table if it doesn't exist */
         SET @create_sql = N'
             IF NOT EXISTS
@@ -1478,8 +1466,16 @@ AND   ca.utc_timestamp < @end_date';
     DELETE FROM ' + @log_table_severe_errors + '
     WHERE collection_time < @cleanup_date;
 
-    DELETE FROM ' + @log_table_pending_tasks + '
-    WHERE collection_time < @cleanup_date;
+    /*
+    Pending task entry points used to go to _PendingTasks; they are
+    columns of _CPUTasks now. The table is no longer created or
+    written, but one left by an older version still ages out.
+    */
+    IF OBJECT_ID(N''' + REPLACE(@log_table_pending_tasks, N'''', N'''''') + ''', N''U'') IS NOT NULL
+    BEGIN
+        DELETE FROM ' + @log_table_pending_tasks + '
+        WHERE collection_time < @cleanup_date;
+    END;
 
     DELETE FROM ' + @log_table_blocking + '
     WHERE collection_time < @cleanup_date;
@@ -3315,6 +3311,117 @@ AND   ca.utc_timestamp < @end_date';
             tasksCompletedWithinInterval = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@tasksCompletedWithinInterval)[1]', 'bigint'),
             pendingTasks = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint'),
             oldestPendingTaskWaitingTime = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
+            /*
+            How to read the pending task columns: pendingTasks is how many
+            tasks were waiting for a worker thread when the snapshot was
+            taken. pending_user_requests is how many of them were client
+            requests (batches and RPCs, the Process Command entry point).
+            pending_entry_points lists the function each pending task will
+            start in, with its count: the name SQL Server gives it, or
+            module+offset for internal tasks, which stays the same across
+            restarts of one build and can be looked up in that build's
+            public symbols. User requests pending, with a non-zero
+            oldestPendingTaskWaitingTime and workersCreated near
+            maxWorkers, means worker thread starvation (THREADPOOL waits);
+            look at blocking and parallelism in the same snapshot.
+            Internal tasks pending for 0 ms are noise.
+            */
+            pending_user_requests =
+                CONVERT
+                (
+                    bigint,
+                    wi.sp_server_diagnostics_component_result.value
+                    (
+                        'sum(/event/data/value/queryProcessing/pendingTasks/entryPoint[@name = "Process Command"]/@count)',
+                        'float'
+                    )
+                ),
+            pending_entry_points =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ep.entry_point +
+                            N' (' +
+                            CONVERT(nvarchar(20), ep.entry_point_count) +
+                            N')'
+                        FROM
+                        (
+                            SELECT
+                                entry_point =
+                                    ISNULL
+                                    (
+                                        e.e.value('@name', 'sysname'),
+                                        e.e.value('@moduleName', 'sysname') +
+                                        N'+0x' +
+                                        LOWER
+                                        (
+                                            SUBSTRING
+                                            (
+                                                hx.offset_hex,
+                                                PATINDEX('%[^0]%', hx.offset_hex),
+                                                16
+                                            )
+                                        )
+                                    ),
+                                entry_point_count =
+                                    e.e.value('@count', 'bigint')
+                            FROM wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/pendingTasks/entryPoint') AS e(e)
+                            CROSS APPLY
+                            (
+                                /*
+                                The hex attributes can have an odd number of
+                                digits, and xs:hexBinary returns nothing for
+                                those, so pad them to an even length.
+                                */
+                                SELECT
+                                    image_base =
+                                        e.e.value
+                                        (
+                                            '
+                                            for $h in substring(string((@imageBase)[1]), 3)[. != ""]
+                                            return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                                            ',
+                                            'varbinary(8)'
+                                        ),
+                                    address =
+                                        e.e.value
+                                        (
+                                            '
+                                            for $h in substring(string((@address)[1]), 3)[. != ""]
+                                            return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                                            ',
+                                            'varbinary(8)'
+                                        )
+                            ) AS hp
+                            CROSS APPLY
+                            (
+                                SELECT
+                                    offset_hex =
+                                        CONVERT
+                                        (
+                                            varchar(16),
+                                            CONVERT
+                                            (
+                                                varbinary(8),
+                                                CONVERT(bigint, hp.address) - CONVERT(bigint, hp.image_base)
+                                            ),
+                                            2
+                                        )
+                            ) AS hx
+                        ) AS ep
+                        ORDER BY
+                            ep.entry_point_count DESC,
+                            ep.entry_point
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                ),
             hasUnresolvableDeadlockOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
             hasDeadlockedSchedulersOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
             didBlockingOccur = wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report'),
@@ -3403,6 +3510,8 @@ AND   ca.utc_timestamp < @end_date';
                     sd.tasksCompletedWithinInterval,
                     sd.pendingTasks,
                     sd.oldestPendingTaskWaitingTime,
+                    sd.pending_user_requests,
+                    sd.pending_entry_points,
                     sd.hasUnresolvableDeadlockOccurred,
                     sd.hasDeadlockedSchedulersOccurred,
                     sd.didBlockingOccur
@@ -3468,6 +3577,8 @@ AND   ca.utc_timestamp < @end_date';
                     tasksCompletedWithinInterval,
                     pendingTasks,
                     oldestPendingTaskWaitingTime,
+                    pending_user_requests,
+                    pending_entry_points,
                     hasUnresolvableDeadlockOccurred,
                     hasDeadlockedSchedulersOccurred,
                     didBlockingOccur
@@ -3498,294 +3609,6 @@ AND   ca.utc_timestamp < @end_date';
             END;
         END;
     END;/*End CPU*/
-
-    /*Grab pending task entry point details*/
-    IF @what_to_check IN ('all', 'cpu')
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Parsing pending task entry point details', 0, 0) WITH NOWAIT;
-        END;
-
-        SELECT
-            event_time =
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        GETUTCDATE(),
-                        SYSDATETIME()
-                    ),
-                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
-                ),
-            pending_tasks =
-                wi.sp_server_diagnostics_component_result.value
-                (
-                    '(/event/data/value/queryProcessing/@pendingTasks)[1]',
-                    'bigint'
-                ),
-            /*
-            An entry point is the function a pending task starts in once a
-            worker picks it up; count is how many pending tasks share it,
-            and the counts add up to pending_tasks. SQL Server names the
-            ones it knows: Process Command is a client request waiting for
-            a worker thread, the THREADPOOL case. Internal tasks carry only
-            their module and code address, so they get module+offset
-            instead of NULL. The offset (address minus the module's load
-            address) stays the same across restarts of one build, and the
-            module's public symbols turn it into a function name.
-            */
-            entry_point_name =
-                ISNULL
-                (
-                    ep.e.value('@name', 'sysname'),
-                    hp.module_name +
-                    N'+0x' +
-                    LOWER
-                    (
-                        SUBSTRING
-                        (
-                            hx.offset_hex,
-                            PATINDEX('%[^0]%', hx.offset_hex),
-                            16
-                        )
-                    )
-                ),
-            module_name =
-                hp.module_name,
-            image_base =
-                hp.image_base,
-            size =
-                CONVERT(bigint, hp.size),
-            address =
-                hp.address,
-            entry_point_count =
-                ep.e.value('@count', 'bigint')
-        INTO #pending_task_details
-        FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/pendingTasks/entryPoint') AS ep(e)
-        CROSS APPLY
-        (
-            /*
-            The hex attributes can have an odd number of digits, and
-            xs:hexBinary returns nothing for those, so pad them to an even
-            length. A missing attribute (named entry points have none)
-            stays NULL instead of coming back as 0x.
-            */
-            SELECT
-                module_name =
-                    ep.e.value('@moduleName', 'sysname'),
-                image_base =
-                    ep.e.value
-                    (
-                        '
-                        for $h in substring(string((@imageBase)[1]), 3)[. != ""]
-                        return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
-                        ',
-                        'varbinary(8)'
-                    ),
-                size =
-                    ep.e.value
-                    (
-                        '
-                        for $h in substring(string((@size)[1]), 3)[. != ""]
-                        return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
-                        ',
-                        'varbinary(8)'
-                    ),
-                address =
-                    ep.e.value
-                    (
-                        '
-                        for $h in substring(string((@address)[1]), 3)[. != ""]
-                        return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
-                        ',
-                        'varbinary(8)'
-                    )
-        ) AS hp
-        CROSS APPLY
-        (
-            SELECT
-                offset_hex =
-                    CONVERT
-                    (
-                        varchar(16),
-                        CONVERT
-                        (
-                            varbinary(8),
-                            CONVERT(bigint, hp.address) - CONVERT(bigint, hp.image_base)
-                        ),
-                        2
-                    )
-        ) AS hx
-        WHERE wi.component = 'QUERY_PROCESSING'
-        /* Hardcoded threshold > 1 ignored the @pending_task_threshold
-           parameter. It is compared as a value here, which is cheaper
-           than the predicate in the nodes() path it used to be. */
-        AND   wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint') >= @pending_task_threshold
-        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE, MAXDOP 1);
-
-        IF @debug = 1
-        BEGIN
-            SELECT TOP (100)
-                table_name = '#pending_task_details, top 100 rows',
-                x.*
-            FROM #pending_task_details AS x
-            ORDER BY
-                x.event_time DESC;
-        END;
-    END;
-
-    /*Pending task entry point details output*/
-    IF @what_to_check IN ('all', 'cpu')
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Parsing pending task entry point output', 0, 0) WITH NOWAIT;
-        END;
-
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #pending_task_details AS ptd
-        )
-        BEGIN
-            IF @log_to_table = 0
-            BEGIN
-                SELECT
-                    finding =
-                        CASE
-                            WHEN @what_to_check NOT IN ('all', 'cpu')
-                            THEN 'cpu skipped, @what_to_check set to ' +
-                                 @what_to_check
-                            WHEN @what_to_check IN ('all', 'cpu')
-                            THEN 'no pending task entry point details found between ' +
-                                 RTRIM(CONVERT(date, @start_date)) +
-                                 ' and ' +
-                                 RTRIM(CONVERT(date, @end_date)) +
-                                 ' with @warnings_only set to ' +
-                                 RTRIM(@warnings_only) +
-                                 '.'
-                            ELSE 'no pending task entry point details found!'
-                        END;
-
-                RAISERROR('No pending task entry point data found', 0, 0) WITH NOWAIT;
-            END;
-        END;
-        ELSE
-        BEGIN
-            /* Build the query */
-            SET @dsql = N'
-                SELECT
-                    ' + CASE
-                            WHEN @log_to_table = 1
-                            THEN N''
-                            ELSE N'finding = ''pending task entry point details'','
-                        END +
-                  N'
-                    ptd.event_time,
-                    ptd.pending_tasks,
-                    ptd.entry_point_name,
-                    ptd.module_name,
-                    ptd.image_base,
-                    ptd.size,
-                    ptd.address,
-                    ptd.entry_point_count
-                FROM #pending_task_details AS ptd';
-
-            /* Add the WHERE clause only for table logging */
-            IF @log_to_table = 1
-            BEGIN
-                /* Get max event_time for pending task details */
-                SET @mdsql_execute =
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            REPLACE
-                            (
-                                @mdsql_template,
-                                '{table_check_literal}',
-                                REPLACE(@log_table_pending_tasks, N'''', N'''''')
-                            ),
-                            '{table_check}',
-                            @log_table_pending_tasks
-                        ),
-                        '{date_column}',
-                        'event_time'
-                    );
-
-                IF @debug = 1
-                BEGIN
-                    PRINT @mdsql_execute;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT,
-                    @fallback_date datetime2(7)',
-                    @max_event_time OUTPUT,
-                    @fallback_date;
-
-                SET @dsql += N'
-            WHERE ptd.event_time > @max_event_time';
-            END;
-
-            /* Add the ORDER BY clause */
-            SET @dsql += N'
-            ORDER BY
-                ptd.event_time DESC,
-                ptd.entry_point_count DESC,
-                ptd.entry_point_name
-            OPTION(RECOMPILE);
-            ';
-
-            /* Handle table logging */
-            IF @log_to_table = 1
-            BEGIN
-                SET @insert_sql = N'
-                INSERT INTO
-                    ' + @log_table_pending_tasks + N'
-                (
-                    event_time,
-                    pending_tasks,
-                    entry_point_name,
-                    module_name,
-                    image_base,
-                    size,
-                    address,
-                    entry_point_count
-                )' +
-                    @dsql;
-
-                IF @debug = 1
-                BEGIN
-                    PRINT @insert_sql;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @insert_sql,
-                  N'@max_event_time datetime2(7)',
-                    @max_event_time;
-            END;
-
-            /* Execute the query for client results */
-            IF @log_to_table = 0
-            BEGIN
-                IF @debug = 1
-                BEGIN
-                    PRINT @dsql;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @dsql;
-            END;
-        END;
-    END;/*End pending task entry point details*/
 
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
