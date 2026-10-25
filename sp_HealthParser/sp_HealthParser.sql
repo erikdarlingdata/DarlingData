@@ -6326,9 +6326,17 @@ AND   ca.utc_timestamp < @end_date';
             x.event_date,
             x.id,
             x.victim_id,
+            /*
+            The process element carries the name of the database it ran
+            in (currentdbname), so use that. DB_NAME() of the id is a
+            lookup at run time: once a database is dropped and its id
+            reused, an old deadlock showed the new database's name. The
+            lookup is only the fallback when the element has no name.
+            */
             database_name =
-                ISNULL
+                COALESCE
                 (
+                    x.current_database_name,
                     DB_NAME(x.database_id),
                     N'UNKNOWN'
                 ),
