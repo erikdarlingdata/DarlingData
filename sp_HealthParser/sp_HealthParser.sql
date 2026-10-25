@@ -5487,7 +5487,12 @@ AND   ca.utc_timestamp < @end_date';
         FROM #sp_server_diagnostics_component_result AS wi
         WHERE wi.component = 'QUERY_PROCESSING'
         AND   wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
+        /*
+        No @warnings_only filter here. It used to keep a blocked process
+        report only when the QUERY_PROCESSING component was in a WARNING
+        state, and that state follows pending tasks, not blocking, so
+        @warnings_only = 1 dropped most of the blocking.
+        */
         OPTION(RECOMPILE);
 
         IF @debug = 1
