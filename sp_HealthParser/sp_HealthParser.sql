@@ -982,7 +982,12 @@ AND   ca.utc_timestamp < @end_date';
             @log_table_name_prefix,
             @debug;
 
-        /* Create MemoryConditions table if it doesn't exist */
+        /*
+        Create MemoryConditions table if it doesn't exist. Tables from
+        older versions also have a name column, which was always the
+        first memory report's name. It is nullable in every version, so
+        the insert below, which leaves it out, works against them too.
+        */
         SET @create_sql = N'
             IF NOT EXISTS
             (
@@ -1004,7 +1009,6 @@ AND   ca.utc_timestamp < @end_date';
                     outOfMemoryExceptions bigint NULL,
                     isAnyPoolOutOfMemory bit NULL,
                     processOutOfMemoryPeriod bigint NULL,
-                    name nvarchar(128) NULL,
                     available_physical_memory_gb bigint NULL,
                     available_virtual_memory_gb bigint NULL,
                     available_paging_file_gb bigint NULL,
@@ -3661,7 +3665,6 @@ AND   ca.utc_timestamp < @end_date';
             outOfMemoryExceptions = r.c.value('@outOfMemoryExceptions', 'bigint'),
             isAnyPoolOutOfMemory = r.c.value('@isAnyPoolOutOfMemory', 'bit'),
             processOutOfMemoryPeriod = r.c.value('@processOutOfMemoryPeriod', 'bigint'),
-            name = r.c.value('(//memoryReport/@name)[1]', 'varchar(128)'),
             available_physical_memory_gb = CONVERT(bigint, mr.available_physical_memory / 1024 / 1024 / 1024),
             available_virtual_memory_gb = CONVERT(bigint, mr.available_virtual_memory / 1024 / 1024 / 1024),
             available_paging_file_gb = CONVERT(bigint, mr.available_paging_file / 1024 / 1024 / 1024),
@@ -3835,7 +3838,6 @@ AND   ca.utc_timestamp < @end_date';
                 m.outOfMemoryExceptions,
                 m.isAnyPoolOutOfMemory,
                 m.processOutOfMemoryPeriod,
-                m.name,
                 m.available_physical_memory_gb,
                 m.available_virtual_memory_gb,
                 m.available_paging_file_gb,
@@ -3921,7 +3923,6 @@ AND   ca.utc_timestamp < @end_date';
                 outOfMemoryExceptions,
                 isAnyPoolOutOfMemory,
                 processOutOfMemoryPeriod,
-                name,
                 available_physical_memory_gb,
                 available_virtual_memory_gb,
                 available_paging_file_gb,
