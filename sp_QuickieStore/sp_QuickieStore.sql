@@ -5479,15 +5479,17 @@ BEGIN
     BEGIN
         SELECT
             @include_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
-                NCHAR(10), N' '), NCHAR(13), N' ');
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -7952,25 +7954,29 @@ BEGIN
     BEGIN
         SELECT
             @include_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @include_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_plan_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_plan_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
-                NCHAR(10), N' '), NCHAR(13), N' ');
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -10184,10 +10190,11 @@ BEGIN
         /* Clean parameter value */
         SELECT
             @param_value =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@param_value)),
                 CHAR(10), N' '), CHAR(13), N' '),
-                NCHAR(10), N' '), NCHAR(13), N' ');
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         /* Log current operation if debugging */
         IF @debug = 1
