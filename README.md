@@ -106,14 +106,16 @@ Extended Events are hard. You don't know which ones to use, when to use them, or
 
 This procedure is designed to make them easier for you, by creating event sessions to help you troubleshoot common scenarios:
  * Blocking: blocked process report
- * Query performance: query execution metrics an actual execution plans
+ * Query performance: query execution metrics and actual execution plans
  * Compiles: catch query compilations
  * Recompiles: catch query recompilations
  * Wait Stats: server wait stats, broken down by query and database
 
-The default behavior is to run a session for a set period of time to capture information, but you can also set sessions up to data to permanent tables.
+The default behavior is to run a session for a set period of time to capture information, but you can also set sessions up to log data to permanent tables.
 
-For execution examples, see here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_HumanEvents/Examples.sql)
+Requires SQL Server 2012 SP4 or newer (the query_hash_signed action must exist). The blocking event needs the blocked process threshold option set.
+
+For execution examples, run it with @help = 1.
 
 If you set up sessions to capture long term data, you'll need an agent job set up to poll them. You can find an example of that here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_HumanEvents/sp_Human%20Events%20Agent%20Job%20Example.sql)
 
@@ -130,7 +132,7 @@ Current valid parameter details:
 | @query_duration_ms     | decimal  | (>=) used to set a minimum query duration (milliseconds) to collect data for; 0 removes the floor and collects every duration | a decimal; fractional milliseconds allowed (e.g. 0.5 = 500 microseconds), 0 captures all durations | 500 (ms)                                        |
 | @query_sort_order      | nvarchar | when you use the "query" event, lets you choose which metrics to sort results by             | "cpu", "reads", "writes", "duration", "memory", or "spills" (any of which you can prefix with "avg" to sort by averages, e.g. "avg cpu"), or "event_time" | "cpu"                                           |
 | @skip_plans            | bit      | when you use the "query" event, lets you skip collecting actual execution plans              |1 or 0                                                                                                               | 0                                               |
-| @keep_prepare_rpc      | bit      | when you use the "query" event, adds a result set of the prepared-statement RPC calls (sp_prepare, sp_prepexec, sp_execute, sp_unprepare) that are normally filtered out; shows whether a driver is preparing and reusing statements, e.g. pyodbc's fast_executemany | 1 or 0 | 0                                               |
+| @keep_prepare_rpc      | bit      | when you use the "query" event, adds a result set of the prepared-statement RPC calls (sp_prepare, sp_prepexec, sp_execute, sp_unprepare, anything matching sp_cursor%, and sp_describe_undeclared_parameters) that are normally filtered out. Lower @query_duration_ms (to 0 or a fractional value) to get rows back. Shows whether a driver is preparing and reusing statements, e.g. pyodbc's fast_executemany | 1 or 0 | 0                                               |
 | @blocking_duration_ms  | integer  | (>=) used to set a minimum blocking duration to collect data for                             | an integer                                                                                                          | 500 (ms)                                        |
 | @wait_type             | nvarchar | (inclusive) filter to only specific wait types                                               | a single wait type, or a CSV list of wait types                                                                     | "all", which uses a list of "interesting" waits |
 | @wait_duration_ms      | integer  | (>=) used to set a minimum time per wait to collect data for                                 | an integer                                                                                                          | 10 (ms)                                         |
@@ -140,7 +142,7 @@ Current valid parameter details:
 | @session_id            | nvarchar | (inclusive) filter to only a specific session id, or a sample of session ids                 | an integer, or "sample" to sample a workload                                                                        | intentionally left blank                        |
 | @sample_divisor        | integer  | the divisor for session ids when sampling a workload, e.g. SPID % 5                          | an integer                                                                                                          | 5                                               |
 | @username              | sysname  | (inclusive) filter to only a specific user                                                   | a stringy thing                                                                                                     | intentionally left blank                        |
-| @object_name           | sysname  | (inclusive) to only filter to a specific object name                                         | a stringy thing                                                                                                     | intentionally left blank                        |
+| @object_name           | sysname  | (inclusive) to only filter to a specific object name. With the blocking event, also pass @database_name | a stringy thing                                                                                                     | intentionally left blank                        |
 | @object_schema         | sysname  | (inclusive) the schema of the object you want to filter to; only needed with blocking events | a stringy thing                                                                                                     | dbo                                             |
 | @requested_memory_mb   | integer  | (>=) the memory grant a query must ask for to have data collected                            | an integer                                                                                                          | 0                                               |
 | @seconds_sample        | tinyint  | the duration in seconds to run the event session for                                         | an integer                                                                                                          | 10                                              |
@@ -209,6 +211,8 @@ ON SERVER
     STATE = START;
 ```
 
+The setup session above does not work in Azure SQL Database as written. There, create it ON DATABASE instead of ON SERVER, with a ring_buffer target.
+
 Once it has data collected, you can analyze it using this command:
 
 ```
@@ -222,21 +226,21 @@ Current valid parameter details:
 | parameter_name        | data_type |                   description                   |                              valid_inputs                              |              defaults              |
 |-----------------------|-----------|-------------------------------------------------|------------------------------------------------------------------------|------------------------------------|
 | @session_name         | sysname   | name of the extended event session to pull from | extended event session name capturing sqlserver.blocked_process_report, system_health also works | keeper_HumanEvents_blocking        |
-| @target_type          | sysname   | target type of the extended event session (ring buffer, file) or 'table' to read from a table | event_file or ring_buffer or table                                     | NULL                               |
+| @target_type          | sysname   | target type of the extended event session (ring_buffer, event_file) or 'table' to read from a table. NULL detects it from the session | event_file or ring_buffer or table                                     | NULL                               |
 | @start_date           | datetime2 | filter by date                                  | a reasonable date                                                      | NULL; will shortcut to last 7 days |
 | @end_date             | datetime2 | filter by date                                  | a reasonable date                                                      | NULL                               |
-| @database_name        | sysname   | filter by database name                         | a database that exists on this server                                  | NULL                               |
+| @database_name        | sysname   | filter by database name                         | a database name. A name not on this server gives a warning and matches only reports recorded under that name                                  | NULL                               |
 | @object_name          | sysname   | filter by table name                            | a schema-prefixed table name                                           | NULL                               |
 | @target_database      | sysname   | database containing the table with BPR data     | a valid database name                                                  | NULL                               |
-| @target_schema        | sysname   | schema of the table                             | a valid schema name                                                    | NULL                               |
-| @target_table         | sysname   | table name                                      | a valid table name                                                     | NULL                               |
-| @target_column        | sysname   | column containing XML data                      | an XML column containing blocked process report data                   | NULL                               |
+| @target_schema        | sysname   | schema of the table containing blocked process report data                             | a schema in the target database                                                    | NULL                               |
+| @target_table         | sysname   | table containing blocked process report data                                      | a table in the target schema                                                     | NULL                               |
+| @target_column        | sysname   | column containing blocked process report XML                      | an XML column containing blocked process report data                   | NULL                               |
 | @timestamp_column     | sysname   | column containing UTC timestamp for filtering (optional). MUST be stored in UTC — @start_date and @end_date are shifted to UTC internally to match the XML @timestamp attribute, and the same UTC-shifted values are used for this column filter. A column in local time will be filtered against the wrong window. | a datetime / datetime2 / datetimeoffset column storing UTC timestamps  | NULL                               |
 | @log_to_table         | bit       | enable logging to permanent tables instead of returning results | 0 or 1                                                                 | 0                                  |
 | @log_database_name    | sysname   | database to store logging tables                | a valid database name                                                  | NULL (current database)            |
 | @log_schema_name      | sysname   | schema to store logging tables                  | a valid schema name                                                    | NULL (dbo)                         |
 | @log_table_name_prefix| sysname   | prefix for all logging tables                   | a valid table name prefix                                              | 'HumanEventsBlockViewer'           |
-| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a valid integer                                                    | 30                                 |
+| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a positive integer (0 keeps logs indefinitely)                                                    | 30                                 |
 | @max_blocking_events  | integer   | maximum blocking events to analyze, 0 = unlimited  | 0 to 2147483647 (0 = unlimited)                                    | 5000                               |
 | @skip_execution_plans | bit       | skip gathering and returning the execution plans result set and jump straight to the findings rollup | 0 or 1                                                             | 0                                  |
 | @help                 | bit       | how you got here                                | 0 or 1                                                                 | 0                                  |
@@ -453,16 +457,23 @@ The problem is, hardly anyone ever looks at it, and when they do, they realize h
 
 This stored procedure takes all that pain away.
 
-Note that it focuses on performance data, and does not output errors or security details, or any of the other non-performance related data.
+Note that it focuses on performance data, and does not output security details or most other non-performance related data. The one exception is severe errors (severity 16 and up, or 19 and up when @warnings_only = 1).
+
+Does not run on Azure SQL Database.
 
 Typical result set will show you
  * Queries with significant waits
  * Waits by count
  * Waits by duration
  * Potential I/O issues
- * CPU task details
+ * CPU task details (including pending task counts and the entry points of pending tasks)
  * Memory conditions
+ * Memory broker notifications
+ * Memory node out-of-memory events
  * Overall system health
+ * Scheduler monitor health
+ * Severe errors
+ * CPU intensive requests
  * A limited version of the blocked process report
  * XML deadlock report
  * Query plans for queries involved in blocking and deadlocks (when available)
@@ -474,10 +485,10 @@ Current valid parameter details:
 
 |        parameter_name        |   data_type    |                             description                             |                             valid_inputs                              |    defaults     |
 |------------------------------|----------------|---------------------------------------------------------------------|-----------------------------------------------------------------------|-----------------|
-| @what_to_check               | varchar        | areas of system health to check                                     | all, waits, disk, cpu, memory, system, locking                        | all             |
-| @start_date                  | datetimeoffset | earliest date to show data for, will be internally converted to UTC | a reasonable date                                                     | seven days back |
-| @end_date                    | datetimeoffset | latest date to show data for, will be internally converted to UTC   | a reasonable date                                                     | current date    |
-| @warnings_only               | bit            | only show rows where a warning was reported                         | NULL, 0, 1                                                            | 0               |
+| @what_to_check               | varchar        | areas of system health to check                                     | all, waits, disk, cpu, memory, system, locking (also accepts wait, blocking, blocks, deadlock, deadlocks, lock, locks) | all             |
+| @start_date                  | datetimeoffset | earliest date to show data for. A value without an offset (or with +00:00) is server local time, like the output. It is converted to UTC internally | a reasonable date                                                     | seven days back |
+| @end_date                    | datetimeoffset | latest date to show data for. A value without an offset (or with +00:00) is server local time, like the output. It is converted to UTC internally | a reasonable date                                                     | current date    |
+| @warnings_only               | bit            | only show rows where a warning was reported (the blocked process report is not filtered) | NULL, 0, 1                                                            | 0               |
 | @database_name               | sysname        | database name to show blocking events for                           | the name of a database                                                | NULL            |
 | @wait_duration_ms            | bigint         | minimum wait duration                                               | the minimum duration of a wait for queries with interesting waits     | 500             |
 | @wait_round_interval_minutes | bigint         | interval to round minutes to for wait stats                         | interval to round minutes to for top wait stats by count and duration | 60              |
@@ -488,7 +499,7 @@ Current valid parameter details:
 | @log_to_table                | bit            | enable logging to permanent tables instead of returning results     | 0 or 1                                                                | 0               |
 | @log_database_name           | sysname        | database to store logging tables                                    | valid database name                                                   | NULL (current database) |
 | @log_schema_name             | sysname        | schema to store logging tables                                      | valid schema name                                                     | NULL (dbo)      |
-| @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid table name prefix                                               | 'HealthParser'  |
+| @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid identifier, 111 characters or fewer                             | 'HealthParser'  |
 | @log_retention_days          | integer        | Number of days to keep logs, 0 = keep indefinitely                  | integer                                                               | 30              |
 | @debug                       | bit            | prints dynamic sql, selects from temp tables                        | 0 or 1                                                                | 0               |
 | @help                        | bit            | how you got here                                                    | 0 or 1                                                                | 0               |

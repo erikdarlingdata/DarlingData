@@ -12,8 +12,8 @@ thing that actually breaks: whether the generated DDL is accepted by SQL Server.
 Two levers make that deterministic and fast, with no slow live captures:
 
   * @keep_alive = 1 creates a PERMANENT session and RETURNs immediately -- no
-    WAITFOR sample, no drop (see the @keep_alive = 1 branch around line 1777 of
-    sp_HumanEvents.sql). A session that CREATEs successfully is proof the
+    WAITFOR sample, no drop (see the @keep_alive = 1 branch of
+    sp_HumanEvents.sql that RETURNs after "Session ... created, exiting"). A session that CREATEs successfully is proof the
     generated DDL is valid on this server version. This is the high-value core:
     for every accepted @event_type, and for representative filter parameters,
     the harness runs @keep_alive = 1, asserts the call raised no error, asserts
@@ -23,11 +23,11 @@ Two levers make that deterministic and fast, with no slow live captures:
     Server actually accepted each event), then DROPs the session and asserts it
     is gone.
 
-  * @debug = 1 prints the generated @session_sql via RAISERROR (around line
-    1768). The harness captures that per event category and asserts it contains
-    CREATE EVENT SESSION plus the events expected for the category. (RAISERROR
-    truncates a long message near 2044 chars, so the untruncated catalog check
-    above is the authoritative one; the debug-text check is a secondary guard.)
+  * @debug = 1 prints the generated @session_sql with PRINT, in tiles of at
+    most 4,000 characters. The harness captures that per event category and
+    asserts it contains CREATE EVENT SESSION plus the events expected for the
+    category. (The untruncated catalog check above is the authoritative one;
+    the debug-text check is a secondary guard.)
 
 Session hygiene is non-negotiable. Every session this proc or this harness
 creates is dropped, even on assertion failure:

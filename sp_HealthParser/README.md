@@ -8,7 +8,9 @@ The problem is, hardly anyone ever looks at it, and when they do, they realize h
 
 This stored procedure takes all that pain away.
 
-Note that it focuses on performance data, and does not output errors or security details, or any of the other non-performance related data.
+Note that it focuses on performance data, and does not output security details or most other non-performance related data. The one exception is severe errors (severity 16 and up, or 19 and up when @warnings_only = 1).
+
+Does not run on Azure SQL Database.
 
 ## Results
 
@@ -17,9 +19,14 @@ Typical result set will show you:
 * Waits by count
 * Waits by duration
 * Potential I/O issues
-* CPU task details
+* CPU task details (including pending task counts and the entry points of pending tasks)
 * Memory conditions
+* Memory broker notifications
+* Memory node out-of-memory events
 * Overall system health
+* Scheduler monitor health
+* Severe errors
+* CPU intensive requests
 * A limited version of the blocked process report
 * XML deadlock report
 * Query plans for queries involved in blocking and deadlocks (when available)
@@ -28,10 +35,10 @@ Typical result set will show you:
 
 |        parameter_name        |   data_type    |                             description                             |                             valid_inputs                              |    defaults     |
 |------------------------------|----------------|---------------------------------------------------------------------|-----------------------------------------------------------------------|-----------------|
-| @what_to_check               | varchar        | areas of system health to check                                     | all, waits, disk, cpu, memory, system, locking                        | all             |
-| @start_date                  | datetimeoffset | earliest date to show data for, will be internally converted to UTC | a reasonable date                                                     | seven days back |
-| @end_date                    | datetimeoffset | latest date to show data for, will be internally converted to UTC   | a reasonable date                                                     | current date    |
-| @warnings_only               | bit            | only show rows where a warning was reported                         | NULL, 0, 1                                                            | 0               |
+| @what_to_check               | varchar        | areas of system health to check                                     | all, waits, disk, cpu, memory, system, locking (also accepts wait, blocking, blocks, deadlock, deadlocks, lock, locks) | all             |
+| @start_date                  | datetimeoffset | earliest date to show data for. A value without an offset (or with +00:00) is server local time, like the output. It is converted to UTC internally | a reasonable date                                                     | seven days back |
+| @end_date                    | datetimeoffset | latest date to show data for. A value without an offset (or with +00:00) is server local time, like the output. It is converted to UTC internally | a reasonable date                                                     | current date    |
+| @warnings_only               | bit            | only show rows where a warning was reported (the blocked process report is not filtered) | NULL, 0, 1                                                            | 0               |
 | @database_name               | sysname        | database name to show blocking events for                           | the name of a database                                                | NULL            |
 | @wait_duration_ms            | bigint         | minimum wait duration                                               | the minimum duration of a wait for queries with interesting waits     | 500             |
 | @wait_round_interval_minutes | bigint         | interval to round minutes to for wait stats                         | interval to round minutes to for top wait stats by count and duration | 60              |
@@ -42,7 +49,7 @@ Typical result set will show you:
 | @log_to_table                | bit            | enable logging to permanent tables instead of returning results     | 0 or 1                                                                | 0               |
 | @log_database_name           | sysname        | database to store logging tables                                    | valid database name                                                   | NULL (current database) |
 | @log_schema_name             | sysname        | schema to store logging tables                                      | valid schema name                                                     | NULL (dbo)      |
-| @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid table name prefix                                               | 'HealthParser'  |
+| @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid identifier, 111 characters or fewer                             | 'HealthParser'  |
 | @log_retention_days          | integer        | Number of days to keep logs, 0 = keep indefinitely                  | integer                                                               | 30              |
 | @debug                       | bit            | prints dynamic sql, selects from temp tables                        | 0 or 1                                                                | 0               |
 | @help                        | bit            | how you got here                                                    | 0 or 1                                                                | 0               |
