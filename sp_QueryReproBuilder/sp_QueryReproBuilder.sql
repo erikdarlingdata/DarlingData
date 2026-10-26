@@ -1460,7 +1460,7 @@ CREATE TABLE
 (
     query_id bigint NOT NULL,
     plan_id bigint NOT NULL,
-    PRIMARY KEY CLUSTERED (query_id, plan_id)
+    INDEX query_id_plan_id CLUSTERED (query_id, plan_id)
 );
 
 /*
@@ -1488,7 +1488,7 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     parameter_name sysname NULL,
-    INDEX plan_id CLUSTERED (plan_id, parameter_name),
+    INDEX plan_id_parameter_name CLUSTERED (plan_id, parameter_name),
     parameter_data_type sysname NULL,
     parameter_compiled_value nvarchar(max) NULL
 );
@@ -1512,7 +1512,7 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     warning_type nvarchar(50) NULL,
-    INDEX plan_id CLUSTERED (plan_id, warning_type),
+    INDEX plan_id_warning_type CLUSTERED (plan_id, warning_type),
     warning_message nvarchar(max) NULL
 );
 
@@ -5875,7 +5875,7 @@ AND DATALENGTH
         (
             SUBSTRING
             (
-                qp.parameter_compiled_value,
+                qp.parameter_compiled_value COLLATE Latin1_General_100_BIN2,
                 t.value_start,
                 CASE
                     WHEN DATALENGTH(qp.parameter_compiled_value) / 2 > t.value_start
@@ -6699,10 +6699,11 @@ SELECT
                         N'    N''' +
                         /*
                         Under a binary collation only the quote character
-                        itself is doubled. The column collation is width
-                        insensitive, so it also doubled a full-width
-                        apostrophe (NCHAR(65287)) into two plain quotes,
-                        which changed the string literal in the repro.
+                        itself is doubled. A width insensitive column
+                        collation (the tempdb default can be one) also
+                        doubled a full-width apostrophe (NCHAR(65287)) into
+                        two plain quotes, which changed the string literal
+                        in the repro.
                         */
                         REPLACE
                         (
