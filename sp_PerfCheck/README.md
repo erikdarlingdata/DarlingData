@@ -10,7 +10,7 @@
 - Detects resource pressure signals (CPU, memory, I/O)
 - Analyzes wait statistics to identify bottlenecks
 - Finds suboptimal database settings
-- Works with SQL Server 2016+ and Azure SQL options
+- Works with SQL Server 2016+, Azure SQL DB, Azure SQL Managed Instance, and AWS RDS
 
 ## Requirements
 
@@ -114,7 +114,7 @@ without being raised as findings.
 | 2004 | Uneven TempDB Data File Sizes | Low (40) | Data files vary in size by more than 10% |
 | 2005 | Mixed TempDB Autogrowth Settings | Low (40) | Inconsistent growth settings across files |
 | 2006 | Percentage Auto-Growth Setting in TempDB | Low (40) | Percentage-based growth in TempDB files |
-| 2010 | TempDB Allocation Contention Detected | Medium (30) | Active pagelatch contention detected |
+| 2010 | TempDB Allocation Contention Detected | Medium (30) | Cumulative PAGELATCH waits since startup are 1% or more of uptime, with fewer than 8 data files and no more files than logical processors |
 
 ### Storage Performance
 
@@ -124,8 +124,9 @@ without being raised as findings.
 | 3002 | Slow Write Latency | High (20) / Medium (30) | Medium above @slow_write_ms (20 ms default), High above 5x that (100 ms default) |
 | 3003 | Multiple Slow Files on Storage Location | High (20) | More than one slow file sharing a drive or volume |
 
-Checks 3001 and 3002 only fire for files with more than 1,000 reads or writes
-respectively, so a barely-used file cannot trip them on a handful of slow samples.
+Checks 3001, 3002 and 3003 only count files with more than 1,000 reads or writes.
+A barely-used file cannot trip them on a handful of slow samples. Check 3003
+reports the total stall over the total I/O for the storage location.
 
 ### Server Health
 
@@ -150,7 +151,7 @@ unactionable.
 | 5000 | Inadequate permissions | Informational (50) | `sys.traces` is not readable by the current login, so trace checks are skipped |
 | 5001 | Slow Data File / Log File Auto Grow | Medium (30) / Low (40) | Log grows = Medium, data grows = Low |
 | 5002 | Data File / Log File Auto Shrink | Low (40) | Harmful config actually executing |
-| 5003 | Potentially Disruptive DBCC Commands | Medium (30) / Informational (50) | Cache-clearing and WRITEPAGE = Medium, other = Informational |
+| 5003 | Potentially Disruptive DBCC Commands | Medium (30) / Informational (50) | FREEPROCCACHE (whole cache or a pool), FREESYSTEMCACHE, DROPCLEANBUFFERS and WRITEPAGE = Medium. FREEPROCCACHE for a single plan handle and other commands = Informational |
 | 5004 | Default Trace Not Readable | Informational (50) | Default trace is registered but cannot be read; expected on Linux |
 | 5103 | High Number of Deadlocks | High (20) / Medium (30) | More than 50/day = High, more than 9/day = Medium |
 
@@ -165,7 +166,7 @@ distinguishable from a server that genuinely has nothing to report: on Linux,
 |-------|---------|----------|-------------|
 | 6001 | Per-category wait findings | High (20) / Medium (30) / Low (40) | Top 10 waits by percent of uptime; see below |
 | 6002 | High Stolen Memory Percentage | High (20) / Medium (30) / Low (40) | Over 30% = High, over 15% = Medium |
-| 6003 | Top Memory Consumer | Informational (50) | Top 5 non-buffer-pool memory clerks using 1 GB or more |
+| 6003 | Top Memory Consumer | Informational (50) | When 6002 fires: top 5 non-buffer-pool memory clerks using 1 GB or more |
 | 6101 | High Signal Wait Ratio | High (20) / Medium (30) / Low (40) | CPU scheduler contention; 50% = High, 30% = Medium, fires at 25% |
 | 6102 | High SOS_SCHEDULER_YIELD Waits | High (20) / Medium (30) / Low (40) | CPU pressure from frequent yields; same 50/30/25 thresholds |
 
@@ -179,10 +180,12 @@ The specific wait type and its plain-English meaning go in `object_name`.
 
 Severity is calibrated by category rather than applied flat. Resource-pressure
 waits (locking, memory, storage, tempdb, transaction log, CPU) reach High at
-`@wait_high_pct` of uptime or an average wait of 1 second, and Medium at
-`@wait_medium_pct` or an average wait of 250 ms. Parallelism waits are usually a
-cost threshold or MAXDOP symptom, so they need 100% of uptime just to reach
-Medium. Everything else stays Low.
+`@wait_high_pct` of uptime. They also reach High at an average wait of 1 second
+with at least 60 seconds of total wait time. They reach Medium at
+`@wait_medium_pct`, or at an average wait of 250 ms with at least 60 seconds of
+total wait time.
+Parallelism waits are usually a cost threshold or MAXDOP symptom, so they need
+100% of uptime just to reach Medium. Everything else stays Low.
 
 ### Database Configuration
 
@@ -206,7 +209,7 @@ Medium. Everything else stays Low.
 |-------|---------|----------|-------------|
 | 7101 | Percentage Auto-Growth Setting on Data File | Low (40) | Reports growth percent and current file size |
 | 7102 | Percentage Auto-Growth Setting on Log File | Medium (30) | Reports growth percent and current file size |
-| 7103 | Non-Optimal Log File Growth Increment | Low (40) | Not exactly 64 MB on SQL Server 2022+, Azure SQL DB, or Azure MI |
+| 7103 | Non-Optimal Log File Growth Increment | Low (40) | Log file auto-growth is off, or the growth increment is over 64 MB. SQL Server 2022+, Azure SQL DB, or Azure MI |
 | 7104 | Extremely Large Auto-Growth Setting | Low (40) | Fixed growth over 10 GB |
 
 ## Results Organization

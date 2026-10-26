@@ -16,6 +16,8 @@ All you need to do is hit F5 to get information about:
 * Thread count and current usage 
 * Any current THREADPOOL waits (best observed with the DAC)
 * Currently executing queries, along with other execution details
+* Blocking chains with lead blockers (@troubleshoot_blocking = 1)
+* Optional logging to permanent tables (@log_to_table = 1)
 
 ## Parameters
 
@@ -25,14 +27,14 @@ All you need to do is hit F5 to get information about:
 | @skip_queries              | bit       | if you want to skip looking at running queries                                 | 0 or 1                                               | 0            |
 | @skip_plan_xml             | bit       | if you want to skip getting plan XML                                           | 0 or 1                                               | 0            |
 | @minimum_disk_latency_ms   | smallint  | low bound for reporting disk latency                                           | a reasonable number of milliseconds for disk latency | 100          |
-| @cpu_utilization_threshold | smallint  | low bound for reporting high cpu utlization                                    | a reasonable cpu utlization percentage               | 50           |
+| @cpu_utilization_threshold | smallint  | low bound for reporting high cpu utilization                                    | a reasonable cpu utilization percentage               | 50           |
 | @skip_waits                | bit       | skips waits when you do not need them on every run                             | 0 or 1                                               | 0            |
 | @skip_perfmon              | bit       | skips perfmon counters when you do not need them on every run                  | 0 or 1                                               | 0            |
 | @sample_seconds            | tinyint   | take a sample of your server's metrics                                         | a valid tinyint: 0-255                               | 0            |
-| @log_to_table              | bit       | enable logging to permanent tables instead of returning results                | 0 or 1                                               | 0            |
+| @log_to_table              | bit       | enable logging to permanent tables instead of returning results. Ignores @what_to_check, @sample_seconds and the @skip_* parameters, and logs all CPU utilization (treats @cpu_utilization_threshold as 0) | 0 or 1                                               | 0            |
 | @log_database_name         | sysname   | database to store logging tables                                               | valid database name                                  | NULL (current database) |
 | @log_schema_name           | sysname   | schema to store logging tables                                                 | valid schema name                                    | NULL (dbo)   |
-| @log_table_name_prefix     | sysname   | prefix for all logging tables                                                  | valid table name prefix                               | 'PressureDetector' |
+| @log_table_name_prefix     | sysname   | prefix for all logging tables                                                  | any valid identifier, 112 characters or fewer        | 'PressureDetector' |
 | @log_retention_days        | integer   | Number of days to keep logs, 0 = keep indefinitely                             | integer                                              | 30           |
 | @troubleshoot_blocking       | bit       | show blocking chains instead of pressure analysis                              | 0 or 1                                               | 0            |
 | @help                      | bit       | how you got here                                                               | 0 or 1                                               | 0            |
@@ -67,6 +69,10 @@ EXECUTE dbo.sp_PressureDetector
     @log_to_table = 1,
     @log_database_name = 'DBA',
     @log_schema_name = 'dbo';
+
+-- Show blocking chains with lead blockers instead of pressure analysis
+EXECUTE dbo.sp_PressureDetector
+    @troubleshoot_blocking = 1;
 ```
 
 ## Resources
