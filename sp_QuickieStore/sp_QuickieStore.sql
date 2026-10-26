@@ -2306,7 +2306,6 @@ DECLARE
     @sql nvarchar(max),
     @isolation_level nvarchar(max),
     @parameters nvarchar(4000),
-    @plans_top bigint,
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(max),
@@ -3830,8 +3829,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @work_end_utc time(0),
           @regression_baseline_start_date datetimeoffset(7),
           @regression_baseline_end_date datetimeoffset(7)',
-    @plans_top =
-        9223372036854775807,
     @queries_top =
         9223372036854775807,
     @nc10 = NCHAR(10),
@@ -18185,8 +18182,6 @@ BEGIN
             @isolation_level,
         parameters =
             @parameters,
-        plans_top =
-            @plans_top,
         queries_top =
             @queries_top,
         nc10 =
