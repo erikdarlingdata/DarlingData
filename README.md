@@ -355,9 +355,11 @@ The plan cache companion to sp_QuickieStore. While QuickieStore digs into Query 
 It aggregates data from `sys.dm_exec_query_stats`, `sys.dm_exec_procedure_stats`, `sys.dm_exec_function_stats`, and `sys.dm_exec_trigger_stats`, then scores queries across 7 resource dimensions (CPU, duration, reads, writes, memory grants, spills, executions) using `PERCENT_RANK`. Only the vital few queries with disproportionate resource consumption are surfaced.
 
 Results come in three result sets:
- * **Plan cache health findings**: plan age distribution, single-use plan bloat, duplicate plan detection, USERSTORE_TOKENPERM pressure
- * **High-impact queries**: Pareto-scored queries with impact scores, resource shares, and diagnostic signals (parameter sniffing, plan instability, wasteful grants, wait-bound queries, etc.)
  * **Workload profile summary**: overall concentration analysis with tuning recommendations
+ * **High-impact queries**: Pareto-scored queries with impact scores, resource shares, and diagnostic signals (parameter sniffing, plan instability, wasteful grants, wait-bound queries, etc.)
+ * **Plan cache health findings**: plan age distribution, single-use plan bloat, duplicate plan detection, USERSTORE_TOKENPERM pressure
+
+With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure returns only that list and skips the three result sets above. The lists are the largest single-use plans by cached size, or query hashes with more than one cached plan per database.
 
 Requires SQL Server 2016 SP1+ for full memory grant and spill analysis.
 
@@ -368,8 +370,8 @@ Current valid parameter details:
 | @top                        | bigint       | candidates per metric dimension before dedup                                                         | a positive integer                       | 10         |
 | @sort_order                 | varchar      | secondary sort after impact_score                                                                    | cpu, duration, reads, writes, memory, spills, executions | cpu        |
 | @database_name              | sysname      | filter to a specific database                                                                        | a valid database name                    | NULL       |
-| @start_date                 | datetime     | only include plans created after this date                                                           | a valid datetime                         | NULL       |
-| @end_date                   | datetime     | only include plans created before this date                                                          | a valid datetime                         | NULL       |
+| @start_date                 | datetime     | only include plans created or cached on or after this date                                           | a valid datetime                         | NULL       |
+| @end_date                   | datetime     | only include plans created or cached before this date                                                | a valid datetime                         | NULL       |
 | @minimum_execution_count    | bigint       | minimum execution count to include a query                                                           | a positive integer                       | 2          |
 | @ignore_system_databases    | bit          | exclude system databases (master, model, msdb, tempdb), unless @database_name names one              | 0 or 1                                   | 1          |
 | @impact_threshold           | decimal(3,2) | minimum impact_score (0.00-1.00) to surface in results                                               | 0.00 to 1.00                             | 0.50       |
@@ -396,6 +398,14 @@ EXECUTE dbo.sp_QuickieCache
 EXECUTE dbo.sp_QuickieCache
     @impact_threshold = 0.25,
     @top = 20;
+
+-- Single-use plans that use the most memory (returns only that list)
+EXECUTE dbo.sp_QuickieCache
+    @find_single_use_plans = 1;
+
+-- Query hashes with more than one cached plan (returns only that list)
+EXECUTE dbo.sp_QuickieCache
+    @find_duplicate_plans = 1;
 ```
 
 [*Back to top*](#navigatory)
@@ -414,8 +424,6 @@ It's designed to make it easy to reproduce query performance issues by capturing
 You can filter queries by plan_id or query_id, and optionally specify a date range.
 
 The executable_query column is displayed as clickable XML - click on it in SSMS to view the formatted, ready-to-run script.
-
-More examples can be found here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_QueryReproBuilder/Examples.sql)
 
 More resources:
  * For a text-based adventure, head to [my site here](https://www.erikdarling.com/sp_queryreprobuilder/).
@@ -441,6 +449,8 @@ Current valid parameter details:
 | @procedure_name        | sysname            | the name of the programmable object you're searching for              | a valid programmable object in your database       | NULL                             |
 | @query_text_search     | nvarchar(4000)     | query text to search for                                              | a string; leading and trailing wildcards will be added if missing | NULL                             |
 | @query_text_search_not | nvarchar(4000)     | query text to exclude                                                 | a string; leading and trailing wildcards will be added if missing | NULL                             |
+| @top                   | bigint             | the number of plans you want to pull back, most recently executed first | a positive integer between 1 and 9,223,372,036,854,775,807 | 10, or every matching plan when an @include_ list or @procedure_name is given |
+| @include_maintenance   | bit                | set this bit to 1 to keep index and statistics maintenance plans (index builds, statistics updates, StatMan, DBCC) in the result set | 0 or 1 | 0 |
 | @query_plan_xml | xml                | a single query plan XML to process directly, bypassing Query Store    | a valid ShowPlanXML document; when supplied, all Query Store filters are ignored | NULL                             |
 | @help                  | bit                | return available parameter details, etc.                              | 0 or 1                                             | 0                                |
 | @debug                 | bit                | prints dynamic sql, statement length, parameter and variable values   | 0 or 1                                             | 0                                |
@@ -625,7 +635,11 @@ This procedure identifies and removes duplicate and noisy queries from Query Sto
 
 By default, it targets system queries, maintenance operations, and removes all copies of duplicated query and plan hashes. You can customize what to target, how to deduplicate, and whether to just report or actually remove.
 
-Queries with forced plans are always protected from removal.
+Queries with forced plans are always protected from removal. On SQL Server 2022 or later, the same protection applies to a query with a forced Query Store hint.
+
+On SQL Server 2022 or later, a parameter sensitive plan (PSP) parent query cannot be removed while any of its variant queries remain. The procedure removes parents after their variants, and leaves out a parent that has a variant not on the removal list, instead of failing on it.
+
+For report mode, removal order and compaction, read the [sp_QueryStoreCleanup README](https://github.com/erikdarlingdata/DarlingData/tree/main/sp_QueryStoreCleanup).
 
 **Note:** This procedure is not included in the Install-All script due to its destructive nature. Install it separately.
 
@@ -637,13 +651,13 @@ Current valid parameter details:
 | @cleanup_targets | varchar(100) | what to target for cleanup | all, system, maintenance (or maint), custom, none, or comma-separated combination | all |
 | @custom_query_filter | nvarchar(1024) | custom LIKE pattern for query text filtering; also applied when @cleanup_targets = all | a valid LIKE pattern | NULL |
 | @dedupe_by | varchar(50) | deduplication strategy | all, query_hash, plan_hash, none | all |
-| @min_age_days | integer | only remove queries not executed in this many days | a positive integer | NULL; no age filter |
+| @min_age_days | integer | only remove queries whose last execution is older than this many days | a positive integer | NULL; no age filter |
 | @report_only | bit | report what would be removed without removing | 0 or 1 | 0 |
 | @sort_direction | varchar(10) | removal order by query_id | ASC, DESC | ASC |
 | @compact_tables | bit | afterwards, compact Query Store's internal tables | 0 or 1 | 0 |
 | @help | bit | how you got here | 0 or 1 | 0 |
 | @debug | bit | prints dynamic sql and diagnostics | 0 or 1 | 0 |
-| @version | varchar | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
+| @version | varchar(30) | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
 | @version_date | datetime | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
 
 [*Back to top*](#navigatory)

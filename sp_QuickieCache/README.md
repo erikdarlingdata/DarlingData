@@ -15,9 +15,11 @@ While QuickieStore digs into Query Store data, QuickieCache uses the same Pareto
 
 ## Result Sets
 
-1. **Plan cache health findings**: plan age distribution, single-use plan bloat per database, duplicate plan detection per database, USERSTORE_TOKENPERM memory pressure
+1. **Workload profile summary**: concentration analysis (Concentrated / Moderate / Flat) with recommendations
 2. **High-impact queries**: Pareto-scored queries with resource shares and diagnostics
-3. **Workload profile summary**: concentration analysis (Concentrated / Moderate / Flat) with recommendations
+3. **Plan cache health findings**: plan age distribution, single-use plan bloat per database, duplicate plan detection per database, USERSTORE_TOKENPERM memory pressure
+
+With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure returns only that list and skips the three result sets above. The lists are the largest single-use plans by cached size, or query hashes with more than one cached plan per database.
 
 ## Diagnostics Detected
 
@@ -37,8 +39,8 @@ While QuickieStore digs into Query Store data, QuickieCache uses the same Pareto
 | @top | bigint | candidates per metric dimension before dedup | 10 |
 | @sort_order | varchar | secondary sort after impact_score | cpu |
 | @database_name | sysname | filter to a specific database | NULL |
-| @start_date | datetime | only include plans created after this date | NULL |
-| @end_date | datetime | only include plans created before this date | NULL |
+| @start_date | datetime | only include plans created or cached on or after this date | NULL |
+| @end_date | datetime | only include plans created or cached before this date | NULL |
 | @minimum_execution_count | bigint | minimum execution count to include a query | 2 |
 | @ignore_system_databases | bit | exclude system databases (master, model, msdb, tempdb), unless @database_name names one | 1 |
 | @impact_threshold | decimal(3,2) | minimum impact_score to surface | 0.50 |
@@ -72,6 +74,14 @@ EXECUTE dbo.sp_QuickieCache
 EXECUTE dbo.sp_QuickieCache
     @start_date = '20260401',
     @end_date = '20260402';
+
+-- Single-use plans that use the most memory (returns only that list)
+EXECUTE dbo.sp_QuickieCache
+    @find_single_use_plans = 1;
+
+-- Query hashes with more than one cached plan (returns only that list)
+EXECUTE dbo.sp_QuickieCache
+    @find_duplicate_plans = 1;
 ```
 
 ## Requirements

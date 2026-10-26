@@ -36,6 +36,8 @@ You can filter queries by plan_id or query_id, and optionally specify a date ran
 | @procedure_name        | sysname            | the name of the programmable object you're searching for              | a valid programmable object in your database       | NULL                             |
 | @query_text_search     | nvarchar(4000)     | query text to search for                                              | a string; leading and trailing wildcards will be added if missing | NULL                             |
 | @query_text_search_not | nvarchar(4000)     | query text to exclude                                                 | a string; leading and trailing wildcards will be added if missing | NULL                             |
+| @top                   | bigint             | the number of plans you want to pull back, most recently executed first | a positive integer between 1 and 9,223,372,036,854,775,807 | 10, or every matching plan when an @include_ list or @procedure_name is given |
+| @include_maintenance   | bit                | set this bit to 1 to keep index and statistics maintenance plans (index builds, statistics updates, StatMan, DBCC) in the result set | 0 or 1 | 0 |
 | @query_plan_xml | xml                | a single query plan XML to process directly, bypassing Query Store    | a valid ShowPlanXML document; when supplied, all Query Store filters are ignored | NULL                             |
 | @help                  | bit                | return available parameter details, etc.                              | 0 or 1                                             | 0                                |
 | @debug                 | bit                | prints dynamic sql, statement length, parameter and variable values   | 0 or 1                                             | 0                                |
@@ -45,7 +47,7 @@ You can filter queries by plan_id or query_id, and optionally specify a date ran
 ## Examples
 
 ```sql
--- Basic execution - generates repro scripts for all queries in the last 7 days
+-- Basic execution: repro scripts for the 10 most recently executed plans in the last 7 days
 EXECUTE dbo.sp_QueryReproBuilder;
 
 -- Generate repro scripts for specific plan IDs
@@ -107,12 +109,16 @@ The procedure returns multiple result sets:
 
 ### Main Results
 The primary result set contains:
+* **table_name**: Always `results`
 * **database_name**: The database the query came from
 * **executable_query**: Clickable XML containing the ready-to-run query script (click to view formatted)
 * **embedded_constants**: For queries with OPTION(RECOMPILE), shows literal values embedded in the plan
 * **parameter_values**: The compiled parameter values from the plan
 * **query_id/plan_id**: Identifiers to correlate back to Query Store
-* **query_sql_text**: The original query text from Query Store
+* **all_plan_ids**: All of the plan ids for the query
+* **compatibility_level**: The database compatibility level of the plan
+* **object_name**: The name of the object that the query belongs to, if any
+* **query_sql_text_clickable**: The original query text from Query Store (clickable XML)
 * **query_plan**: The query execution plan (clickable XML)
 * All runtime statistics (duration, CPU, reads, writes, memory, etc.)
 * Wait statistics broken down by category
@@ -126,8 +132,15 @@ Warnings are displayed in the executable_query script header and indicate potent
 * **plan too large for XML parsing**: Query plan couldn't be cast to XML
 * **encrypted module**: Query is from an encrypted module
 * **restricted text**: Query text is restricted (contains passwords or sensitive information)
+* **missing parameter values**: Parameters declared in the query text were not found in the plan. Their value is set to ? and must be filled in by hand
+* **truncated parameter value**: A compiled parameter value is as long as a plan keeps, and its type can hold more. It was probably cut off
+* **dispatcher plan**: The plan is a dispatcher plan for parameter sensitive plan optimization. No executable query can be made for it, so the warning lists the variant query ids to use
+* **PSP variant**: The query is a parameter sensitive plan variant. The PLAN PER VALUE hint in the Query Store text was removed from the repro
+* **control characters**: The query text has control characters that XML cannot show. They were replaced with ? in the repro
+* **internal query**: The query is an internal statistics update (StatMan) or a full-text index population query. The repro fails, because only SQL Server can run it
+* **declarations from plan**: The query text has no parameter declarations, so the repro declares the parameters from the plan. Local variables must be declared by hand
 
-### Additional Result Sets
+### Additional Result Sets (only with @debug = 1)
 * **#query_parameters**: Extracted parameters with names, data types, and compiled values
 * **#embedded_constants**: Constants extracted from plans using parameter embedding
 * **#reproduction_warnings**: All warnings for all plans
@@ -135,6 +148,7 @@ Warnings are displayed in the executable_query script header and indicate potent
 
 ## Notes
 
+* By default the procedure returns 10 plans (set @top to change that). When you name plans or queries with an @include_ list or @procedure_name, every match comes back. Index and statistics maintenance plans are left out unless you name plans or queries or set @include_maintenance = 1.
 * The **executable_query** column is displayed as XML with a processing instruction wrapper (`<?_ ... ?>`). Click on it in SSMS to view the formatted, executable script.
 * For queries with parameters, the script generates `EXECUTE sys.sp_executesql` statements with proper parameter declarations and values.
 * For queries without parameters, the script contains just the query text with context settings.
