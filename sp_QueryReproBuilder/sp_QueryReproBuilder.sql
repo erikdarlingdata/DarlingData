@@ -1460,7 +1460,7 @@ CREATE TABLE
 (
     query_id bigint NOT NULL,
     plan_id bigint NOT NULL,
-    INDEX query_id_plan_id CLUSTERED (query_id, plan_id)
+    INDEX query_id_plan_id UNIQUE CLUSTERED (query_id, plan_id)
 );
 
 /*
