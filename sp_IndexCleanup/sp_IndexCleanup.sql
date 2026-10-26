@@ -6773,7 +6773,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
@@ -7528,7 +7528,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
