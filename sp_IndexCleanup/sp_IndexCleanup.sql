@@ -75,8 +75,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.10',
-        @version_date = '20261001';
+        @version = '2.11',
+        @version_date = '20261101';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -8084,7 +8084,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.object_id,
             ps.index_id,
             ps.partition_function_name
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,

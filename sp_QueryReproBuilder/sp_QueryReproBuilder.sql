@@ -92,8 +92,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.10',
-    @version_date = '20261001';
+    @version = '1.11',
+    @version_date = '20261101';
 
 /*Help*/
 IF @help = 1
@@ -1145,7 +1145,7 @@ Index and statistics maintenance plans to leave out, as sp_QuickieStore does
 CREATE TABLE
     #maintenance_plans
 (
-    plan_id bigint PRIMARY KEY CLUSTERED
+    plan_id bigint NOT NULL PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -5300,7 +5300,7 @@ SELECT
     param_compiled_value =
         cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
 FROM #parameter_lists AS pl
-CROSS APPLY pl.last_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr(c)
+CROSS APPLY pl.last_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr (c)
 OPTION(RECOMPILE, MAXDOP 1);
 
 INSERT
@@ -5322,7 +5322,7 @@ SELECT
     param_compiled_value =
         cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
 FROM #parameter_lists AS pl
-CROSS APPLY pl.first_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr(c)
+CROSS APPLY pl.first_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr (c)
 WHERE NOT EXISTS
       (
           SELECT
@@ -5737,7 +5737,7 @@ FROM
                     N'</p>' AS xml
                 )
     ) AS px
-    CROSS APPLY px.param_xml.nodes(N'/p') AS p(param_text)
+    CROSS APPLY px.param_xml.nodes(N'/p') AS p (param_text)
     CROSS APPLY
     (
         /* Read each parameter's text once; every .value() call is its own XML reader */
@@ -6006,7 +6006,7 @@ SELECT DISTINCT
 FROM #reproduction_warnings AS rw
 JOIN #query_plan_xml AS x
   ON x.plan_id = rw.plan_id
-CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c(const)
+CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c (const)
 CROSS APPLY
 (
     /* Read the attribute once; each .value() call is its own XML reader */
@@ -7116,7 +7116,7 @@ OUTER APPLY
         XML
         PATH('waits'),
         TYPE
-) AS qsws(waits)
+) AS qsws (waits)
 WHERE rq.n = 1
 ORDER BY
     qsrs.last_execution_time DESC

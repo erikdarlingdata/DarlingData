@@ -78,8 +78,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.10',
-    @version_date = '20261001';
+    @version = '6.11',
+    @version_date = '20261101';
 
 
 IF @help = 1
@@ -2489,8 +2489,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             CASE
                                 WHEN dopc.cntr_type = 272696576
                                 THEN
-                                    FORMAT((dopc2.cntr_value - dopc.cntr_value) /
-                                    ISNULL(DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 1), 'N0')
+                                    FORMAT
+                                    (
+                                        (dopc2.cntr_value - dopc.cntr_value) /
+                                        ISNULL
+                                        (
+                                            DATEDIFF
+                                            (
+                                                SECOND,
+                                                dopc.sample_time,
+                                                dopc2.sample_time
+                                            ),
+                                            1
+                                        ),
+                                        'N0'
+                                    )
                             END,
                         sample_seconds =
                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
