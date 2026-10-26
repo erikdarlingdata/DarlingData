@@ -72,6 +72,7 @@ ALTER PROCEDURE
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
     @top bigint = NULL, /*the number of plans you want to pull back, most recently executed first; NULL means 10, or every matching plan when an @include_ list or @procedure_name is given*/
+    @include_maintenance bit = 0, /*set this bit to 1 to keep index and statistics maintenance plans in the result set*/
     @query_plan_xml xml = NULL, /*a single query plan XML to process directly, bypassing Query Store*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
@@ -133,6 +134,7 @@ BEGIN
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@query_text_search_not' THEN 'query text to exclude'
                 WHEN N'@top' THEN 'the number of plans you want to pull back, most recently executed first'
+                WHEN N'@include_maintenance' THEN 'set this bit to 1 to keep index and statistics maintenance plans (index builds, statistics updates, StatMan, DBCC) in the result set'
                 WHEN N'@query_plan_xml' THEN 'a single query plan XML to process directly, bypassing Query Store'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values'
@@ -161,6 +163,7 @@ BEGIN
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@include_maintenance' THEN '0 or 1'
                 WHEN N'@query_plan_xml' THEN 'a valid ShowPlanXML document; when supplied, all Query Store filters are ignored'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
@@ -189,6 +192,7 @@ BEGIN
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@query_text_search_not' THEN 'NULL'
                 WHEN N'@top' THEN '10, or every matching plan when an @include_ list or @procedure_name is given'
+                WHEN N'@include_maintenance' THEN '0'
                 WHEN N'@query_plan_xml' THEN 'NULL'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
@@ -687,7 +691,9 @@ SELECT
     @query_text_search =
         NULLIF(@query_text_search, ''),
     @query_text_search_not =
-        NULLIF(@query_text_search_not, '');
+        NULLIF(@query_text_search_not, ''),
+    @include_maintenance =
+        ISNULL(@include_maintenance, 0);
 
 /*
 Line breaks and tabs separate list items the way commas do, so a list
@@ -3335,8 +3341,9 @@ Leave out index and statistics maintenance (index builds, statistics
 updates, StatMan, DBCC, WAITFOR and the like), with the same patterns as
 sp_QuickieStore, so the most recent plans are the ones sp_QuickieStore's
 'recent' sort shows. Only when no @include_ list or @procedure_name is
-given: plans and queries asked for by id, hash, handle or procedure come
-back as before, and a StatMan query among them still gets its warning.
+given and @include_maintenance is 0: plans and queries asked for by id,
+hash, handle or procedure come back as before, and a StatMan query among
+them still gets its warning.
 
 The patterns are matched under a binary collation on upper-cased text. The
 ones that only look at the start of the text test the first 40 characters,
@@ -3351,6 +3358,7 @@ AND @include_query_hashes IS NULL
 AND @include_plan_hashes IS NULL
 AND @include_sql_handles IS NULL
 AND @procedure_name IS NULL
+AND @include_maintenance = 0
 )
 BEGIN
     SELECT
@@ -3759,7 +3767,7 @@ BEGIN
     AND   qsrs.last_execution_time < @end_date';
 END;
 
-/*Leave out maintenance plans, before the TOP, when no @include_ list or @procedure_name is given*/
+/*Leave out maintenance plans, before the TOP, when no @include_ list or @procedure_name is given and @include_maintenance is 0*/
 IF
 (
     @include_plan_ids IS NULL
@@ -3768,6 +3776,7 @@ AND @include_query_hashes IS NULL
 AND @include_plan_hashes IS NULL
 AND @include_sql_handles IS NULL
 AND @procedure_name IS NULL
+AND @include_maintenance = 0
 )
 BEGIN
     SELECT
