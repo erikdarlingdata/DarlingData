@@ -224,7 +224,7 @@ BEGIN
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
                 WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, log, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits, rows, total cpu, total logical reads, total physical reads, total writes, total duration, total memory, total log, total tempdb, total rows (avg/average prefix also accepted, e.g. avg cpu, average duration)'
-                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@top' THEN '0 or a positive integer up to 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@timezone' THEN 'SELECT tzi.* FROM sys.time_zone_info AS tzi;'

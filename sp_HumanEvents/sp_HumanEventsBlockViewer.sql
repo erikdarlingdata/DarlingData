@@ -157,7 +157,7 @@ BEGIN
                  WHEN N'@log_database_name' THEN N'any valid database name'
                  WHEN N'@log_schema_name' THEN N'any valid schema name'
                  WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
-                 WHEN N'@log_retention_days' THEN N'a positive integer'
+                 WHEN N'@log_retention_days' THEN N'a positive integer, or 0 to keep logs indefinitely'
                  WHEN N'@max_blocking_events' THEN N'0 to 2147483647 (0 = unlimited)'
                  WHEN N'@skip_execution_plans' THEN N'0 or 1'
                  WHEN N'@help' THEN '0 or 1'

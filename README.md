@@ -254,7 +254,7 @@ Current valid parameter details:
 | @log_database_name    | sysname   | database to store logging tables                | a valid database name                                                  | NULL (current database)            |
 | @log_schema_name      | sysname   | schema to store logging tables                  | a valid schema name                                                    | NULL (dbo)                         |
 | @log_table_name_prefix| sysname   | prefix for all logging tables                   | a valid table name prefix                                              | 'HumanEventsBlockViewer'           |
-| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a positive integer (0 keeps logs indefinitely)                                                    | 30                                 |
+| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a positive integer, or 0 to keep logs indefinitely                                                | 30                                 |
 | @max_blocking_events  | integer   | maximum blocking events to analyze, 0 = unlimited  | 0 to 2147483647 (0 = unlimited)                                    | 5000                               |
 | @skip_execution_plans | bit       | skip gathering and returning the execution plans result set and jump straight to the findings rollup | 0 or 1                                                             | 0                                  |
 | @help                 | bit       | how you got here                                | 0 or 1                                                                 | 0                                  |
@@ -534,7 +534,7 @@ Current valid parameter details:
 
 ## Log Hunter
 
-The SQL Server error log can have a lot of good information in it about what's goin on, whether it's right or wrong.
+The SQL Server error log can have a lot of good information in it about what's going on, whether it's right or wrong.
 
 The problem is that it's hard to know *what* to look for, and what else was going on once you filter it.
 
