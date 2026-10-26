@@ -1,4 +1,4 @@
--- Compile Date: 09/29/2026 17:13:02 UTC
+-- Compile Date: 10/26/2026 19:47:02 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -81,8 +81,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.10',
-        @version_date = '20261001';
+        @version = '3.11',
+        @version_date = '20261101';
 
     IF @help = 1
     BEGIN
@@ -106,9 +106,9 @@ BEGIN
                 CASE
                     ap.name
                     WHEN N'@what_to_check' THEN N'areas of system health to check'
-                    WHEN N'@start_date' THEN N'earliest date to show data for, will be internally converted to UTC'
-                    WHEN N'@end_date' THEN N'latest date to show data for, will be internally converted to UTC'
-                    WHEN N'@warnings_only' THEN N'only show rows where a warning was reported'
+                    WHEN N'@start_date' THEN N'earliest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
+                    WHEN N'@end_date' THEN N'latest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
+                    WHEN N'@warnings_only' THEN N'only show rows where a warning was reported (the blocked process report is not filtered)'
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
@@ -129,7 +129,7 @@ BEGIN
             valid_inputs =
                 CASE
                     ap.name
-                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking'
+                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking (also accepts wait, blocking, blocks, deadlock, deadlocks, lock, locks)'
                     WHEN N'@start_date' THEN N'a reasonable date'
                     WHEN N'@end_date' THEN N'a reasonable date'
                     WHEN N'@warnings_only' THEN N'NULL, 0, 1'
@@ -144,7 +144,7 @@ BEGIN
                     WHEN N'@log_database_name' THEN N'any valid database name'
                     WHEN N'@log_schema_name' THEN N'any valid schema name'
                     WHEN N'@log_table_name_prefix' THEN N'any valid identifier, 111 characters or fewer'
-                    WHEN N'@log_retention_days' THEN N'a positive integer'
+                    WHEN N'@log_retention_days' THEN N'a positive integer, or 0 to keep logs indefinitely'
                     WHEN N'@version' THEN N'none'
                     WHEN N'@version_date' THEN N'none'
                     WHEN N'@help' THEN N'0 or 1'
@@ -263,6 +263,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @temp_table sysname,
         @insert_list sysname,
         @collection_sql nvarchar(max),
+        @one_pass_template nvarchar(max) = N'',
+        @copy_template nvarchar(max) = N'',
+        @object_list nvarchar(max) = N'',
+        @event_tables integer = 0,
+        @busy_event_tables integer = 0,
+        @one_pass bit = 0,
+        @ring_buffer_events integer,
+        @ring_buffer_shown integer,
         /*
         Log to table stuff.
 
@@ -292,6 +300,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @insert_sql nvarchar(max) = N'',
         @log_database_schema nvarchar(1024),
         @max_event_time datetime2(7),
+        @fallback_date datetime2(7),
         @dsql nvarchar(max) = N'',
         @mdsql_template nvarchar(max) = N'',
         @mdsql_execute nvarchar(max) = N'',
@@ -310,10 +319,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
-    Normalize dates to UTC offset for comparison with system_health events
-    When dates are NULL, use SYSUTCDATETIME() which is already UTC
-    When dates are provided, SWITCHOFFSET converts from any timezone to UTC
-    This matches sp_QuickieStore pattern for handling date conversions
+    Normalize dates to UTC offset for comparison with system_health events.
+    When dates are NULL, use SYSUTCDATETIME(), which is already UTC.
+
+    The results show event times in server local time, so a date passed
+    without an offset is read as server local time too, the same way
+    sp_QuickieStore and sp_HumanEventsBlockViewer read plain dates.
+    It used to be read as UTC, so a window copied from the output missed
+    its own events by the UTC offset. A plain value converts to
+    datetimeoffset with an offset of +00:00, so an explicit +00:00 also
+    reads as local; pass any other offset to give an exact instant.
+    SWITCHOFFSET then converts to UTC.
     */
     SELECT
         @start_date =
@@ -321,7 +337,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @start_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @start_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @start_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @start_date
+                    END,
                     '+00:00'
                 ),
                 DATEADD
@@ -336,7 +361,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @end_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @end_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @end_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @end_date
+                    END,
                     '+00:00'
                 ),
                 SYSUTCDATETIME()
@@ -418,6 +452,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         placeholder gets the quote-doubled value at every substitution
         site, and they cannot share a placeholder.
         */
+        /*
+        @fallback_date covers the first logging run against empty
+        tables. It used to be UTC now minus one day, which ignored
+        @start_date and was compared with event_time columns stored in
+        server local time, so a first run west of UTC logged only the
+        last 19 hours or so. It is now the start of the requested
+        window, in server local time (set below).
+        */
         @mdsql_template = N'
     IF OBJECT_ID(''{table_check_literal}'', ''U'') IS NOT NULL
     BEGIN
@@ -426,22 +468,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     MAX({date_column}),
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        DATEADD
-                        (
-                            DAY,
-                            -1,
-                            SYSDATETIME()
-                        )
-                    )
+                    @fallback_date
                 )
         FROM {table_check};
     END;
@@ -449,7 +476,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         @start_date_debug = @start_date,
-        @end_date_debug = @end_date;
+        @end_date_debug = @end_date,
+        @fallback_date =
+            CONVERT
+            (
+                datetime2(7),
+                SWITCHOFFSET
+                (
+                    @start_date,
+                    DATENAME(TZOFFSET, SYSDATETIMEOFFSET())
+                )
+            );
 
     IF @timestamp_utc_mode = 0
     BEGIN
@@ -495,6 +532,63 @@ AND   ca.utc_timestamp < @end_date';
             @cross_apply
         );
 
+    /*
+    When more than one event type is needed, the files are read once
+    for all of them into #xe_events, and @copy_template moves each type
+    into its own table. Same filters and conversion as @sql_template.
+    */
+    SELECT
+        @one_pass_template = N'
+    INSERT INTO
+        #xe_events
+    WITH
+        (TABLOCK)
+    (
+        object_name,
+        event_data
+    )
+    SELECT
+        xml.object_name,
+        event_data =
+            ISNULL
+            (
+                xml.event_data,
+                CONVERT(xml, N''<event>event</event>'')
+            )
+    FROM
+    (
+        SELECT
+            fx.object_name,
+            event_data =
+                TRY_CAST(fx.event_data AS xml)
+        FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
+        WHERE fx.object_name IN ({object_list}) ' +
+        @time_filter + N'
+    ) AS xml
+    ' +
+    REPLACE
+    (
+        @cross_apply,
+        '{object_name}',
+        'event_data'
+    ) + N'
+    OPTION(RECOMPILE);
+',
+        @copy_template = N'
+    INSERT INTO
+        {temp_table}
+    WITH
+        (TABLOCK)
+    (
+        {insert_list}
+    )
+    SELECT
+        xe.event_data
+    FROM #xe_events AS xe
+    WHERE xe.object_name = N''{object_name}''
+    OPTION(RECOMPILE);
+';
+
     /*If any parameters that expect non-NULL default values get passed in with NULLs, fix them*/
     SELECT
         @what_to_check = LOWER(ISNULL(@what_to_check, 'all')),
@@ -530,8 +624,27 @@ AND   ca.utc_timestamp < @end_date';
                            'lock', 'locks'
                          )
                     THEN 'locking'
-                    ELSE 'all'
+                    ELSE @what_to_check
                 END;
+    END;
+
+    /*
+    Anything else used to fall back to 'all' without a word, which ran
+    the full (and slowest) check for a typo. Say what is valid instead.
+    */
+    IF @what_to_check NOT IN
+        (
+            'all',
+            'cpu',
+            'disk',
+            'locking',
+            'memory',
+            'system',
+            'waits'
+        )
+    BEGIN
+        RAISERROR('@what_to_check = ''%s'' is not valid. Use all, waits, disk, cpu, memory, system, or locking (wait, blocking, blocks, deadlock, deadlocks, lock, and locks also work).', 11, 1, @what_to_check) WITH NOWAIT;
+        RETURN;
     END;
 
     /* Validate logging parameters */
@@ -829,9 +942,36 @@ AND   ca.utc_timestamp < @end_date';
                     hasUnresolvableDeadlockOccurred bit NULL,
                     hasDeadlockedSchedulersOccurred bit NULL,
                     didBlockingOccur bit NULL,
+                    pending_user_requests bigint NULL,
+                    pending_entry_points nvarchar(max) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU tasks logging.'', 0, 1, ''' + REPLACE(@log_table_cpu_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
+            END;
+
+            /*
+            Tables created by older versions do not have the pending task
+            columns, which replaced the _PendingTasks table. Add them.
+            */
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON s.schema_id = t.schema_id
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+                  ON c.object_id = t.object_id
+                WHERE t.name = @table_name + N''_CPUTasks''
+                AND   s.name = @schema_name
+                AND   c.name = N''pending_user_requests''
+            )
+            BEGIN
+                ALTER TABLE ' + @log_table_cpu_tasks + N'
+                ADD
+                    pending_user_requests bigint NULL,
+                    pending_entry_points nvarchar(max) NULL;
+                IF @debug = 1 BEGIN RAISERROR(''Added the pending task columns to %s.'', 0, 1, ''' + REPLACE(@log_table_cpu_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -843,7 +983,12 @@ AND   ca.utc_timestamp < @end_date';
             @log_table_name_prefix,
             @debug;
 
-        /* Create MemoryConditions table if it doesn't exist */
+        /*
+        Create MemoryConditions table if it doesn't exist. Tables from
+        older versions also have a name column, which was always the
+        first memory report's name. It is nullable in every version, so
+        the insert below, which leaves it out, works against them too.
+        */
         SET @create_sql = N'
             IF NOT EXISTS
             (
@@ -865,7 +1010,6 @@ AND   ca.utc_timestamp < @end_date';
                     outOfMemoryExceptions bigint NULL,
                     isAnyPoolOutOfMemory bit NULL,
                     processOutOfMemoryPeriod bigint NULL,
-                    name nvarchar(128) NULL,
                     available_physical_memory_gb bigint NULL,
                     available_virtual_memory_gb bigint NULL,
                     available_paging_file_gb bigint NULL,
@@ -1157,45 +1301,6 @@ AND   ca.utc_timestamp < @end_date';
             @log_table_name_prefix,
             @debug;
 
-        /* Create PendingTasks table if it doesn't exist */
-        SET @create_sql = N'
-            IF NOT EXISTS
-            (
-                SELECT
-                    1/0
-                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
-                  ON t.schema_id = s.schema_id
-                WHERE t.name = @table_name + N''_PendingTasks''
-                AND   s.name = @schema_name
-            )
-            BEGIN
-                CREATE TABLE ' + @log_table_pending_tasks + N'
-                (
-                    id bigint IDENTITY,
-                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    event_time datetime2(7) NULL,
-                    pending_tasks bigint NULL,
-                    entry_point_name sysname NULL,
-                    module_name sysname NULL,
-                    image_base varbinary(8) NULL,
-                    size bigint NULL,
-                    address varbinary(8) NULL,
-                    entry_point_count bigint NULL,
-                    PRIMARY KEY CLUSTERED (collection_time, id)
-                );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for pending tasks logging.'', 0, 1, ''' + REPLACE(@log_table_pending_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
-            END';
-
-        EXECUTE sys.sp_executesql
-            @create_sql,
-          N'@schema_name sysname,
-            @table_name sysname,
-            @debug bit',
-            @log_schema_name,
-            @log_table_name_prefix,
-            @debug;
-
         /* Create Blocking table if it doesn't exist */
         SET @create_sql = N'
             IF NOT EXISTS
@@ -1368,8 +1473,16 @@ AND   ca.utc_timestamp < @end_date';
     DELETE FROM ' + @log_table_severe_errors + '
     WHERE collection_time < @cleanup_date;
 
-    DELETE FROM ' + @log_table_pending_tasks + '
-    WHERE collection_time < @cleanup_date;
+    /*
+    Pending task entry points used to go to _PendingTasks; they are
+    columns of _CPUTasks now. The table is no longer created or
+    written, but one left by an older version still ages out.
+    */
+    IF OBJECT_ID(N''' + REPLACE(@log_table_pending_tasks, N'''', N'''''') + ''', N''U'') IS NOT NULL
+    BEGIN
+        DELETE FROM ' + @log_table_pending_tasks + '
+        WHERE collection_time < @cleanup_date;
+    END;
 
     DELETE FROM ' + @log_table_blocking + '
     WHERE collection_time < @cleanup_date;
@@ -1489,10 +1602,14 @@ AND   ca.utc_timestamp < @end_date';
         OPTION(RECOMPILE);
     END;
 
+    /*
+    The primary key turns each NOT EXISTS probe against this list into a
+    seek; without it, every wait row scanned the whole list.
+    */
     CREATE TABLE
         #ignore_waits
     (
-        wait_type nvarchar(60) NOT NULL
+        wait_type nvarchar(60) NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
@@ -1510,7 +1627,8 @@ AND   ca.utc_timestamp < @end_date';
     CREATE TABLE
         #sp_server_diagnostics_component_result
     (
-        sp_server_diagnostics_component_result xml NOT NULL
+        sp_server_diagnostics_component_result xml NOT NULL,
+        component varchar(30) NULL
     );
 
     CREATE TABLE
@@ -1527,6 +1645,13 @@ AND   ca.utc_timestamp < @end_date';
     );
 
     CREATE TABLE
+        #xe_events
+    (
+        object_name sysname NOT NULL,
+        event_data xml NOT NULL
+    );
+
+    CREATE TABLE
         #x
     (
         x xml NOT NULL
@@ -1535,7 +1660,8 @@ AND   ca.utc_timestamp < @end_date';
     CREATE TABLE
         #ring_buffer
     (
-        ring_buffer xml NOT NULL
+        ring_buffer xml NOT NULL,
+        event_name sysname NULL
     );
 
     CREATE TABLE
@@ -1648,6 +1774,91 @@ AND   ca.utc_timestamp < @end_date';
     IF  @mi = 0
     AND @use_ring_buffer = 0
     BEGIN
+        /*
+        A pass that filters on one object_name has the filter pushed into
+        the file reader, which skips the other events: about 2 s for a
+        rare event type, and nearly 4 s for the two that fire every
+        minute or five (sp_server_diagnostics_component_result and the
+        scheduler monitor), on a week of files. A pass over a list of
+        names reads every event, 6 to 7 s whatever the list. So read
+        everything in one pass into #xe_events, and copy each type into
+        its own table, only when that replaces three or more passes, or
+        both busy ones. Otherwise keep one pass per event type. The
+        default run used to read the files seven times.
+        */
+        SELECT
+            @event_tables = COUNT_BIG(DISTINCT ca.temp_table)
+        FROM @collection_areas AS ca
+        WHERE ca.should_collect = 1;
+
+        SELECT
+            @busy_event_tables = COUNT_BIG(DISTINCT ca.temp_table)
+        FROM @collection_areas AS ca
+        WHERE ca.should_collect = 1
+        AND   ca.temp_table IN
+              (
+                  N'#sp_server_diagnostics_component_result',
+                  N'#scheduler_monitor'
+              );
+
+        IF @event_tables >= 3
+        OR @busy_event_tables = 2
+        BEGIN
+            SELECT
+                @object_list =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                N', N''' + ca.object_name + N''''
+                            FROM @collection_areas AS ca
+                            WHERE ca.should_collect = 1
+                            GROUP BY
+                                ca.object_name
+                            ORDER BY
+                                ca.object_name
+                            FOR XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        2,
+                        N''
+                    );
+
+            SET
+                @collection_sql =
+                    REPLACE
+                    (
+                        @one_pass_template,
+                        '{object_list}',
+                        @object_list
+                    );
+
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Collecting all event types in one pass for dates between %s and %s', 0, 1, @start_date_debug, @end_date_debug) WITH NOWAIT;
+                PRINT @collection_sql;
+                SET STATISTICS XML ON;
+            END;
+
+            EXECUTE sys.sp_executesql
+                @collection_sql,
+                @params,
+                @start_date,
+                @end_date;
+
+            IF @debug = 1
+            BEGIN
+                SET STATISTICS XML OFF;
+            END;
+
+            /* The loop below now copies from #xe_events instead of reading the files */
+            SELECT
+                @sql_template = @copy_template,
+                @one_pass = 1;
+        END;
+
         OPEN @collection_cursor;
 
         FETCH NEXT
@@ -1719,6 +1930,12 @@ AND   ca.utc_timestamp < @end_date';
                 @insert_list;
         END;
 
+        /* Each event type has its own copy now */
+        IF @one_pass = 1
+        BEGIN
+            TRUNCATE TABLE #xe_events;
+        END;
+
         IF @debug = 1
         BEGIN
             RAISERROR('Data collection complete', 0, 0) WITH NOWAIT;
@@ -1760,6 +1977,33 @@ AND   ca.utc_timestamp < @end_date';
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
 
+        /*
+        The ring buffer target returns about 4 MB of XML at most, oldest
+        events first, and marks the output truncated="1" when it had to
+        leave events out. The ones left out are the newest, so only warn
+        when the window (@end_date, already UTC) reaches past the newest
+        event that was returned.
+        */
+        SELECT
+            @ring_buffer_events = x.x.value('(/RingBufferTarget/@eventCount)[1]', 'integer'),
+            @ring_buffer_shown = x.x.value('count(/RingBufferTarget/event)', 'integer')
+        FROM #x AS x
+        WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+        AND   x.x.exist('(/RingBufferTarget/event/@timestamp)[last()][. < sql:variable("@end_date")]') = 1
+        OPTION(RECOMPILE);
+
+        IF @ring_buffer_shown IS NOT NULL
+        BEGIN
+            IF @mi = 0
+            BEGIN
+                RAISERROR('Warning: the system_health ring buffer output was cut off. It returned %i of its %i events, and the newest events are the ones missing. The event_file target has the full history: run with @use_ring_buffer = 0.', 0, 1, @ring_buffer_shown, @ring_buffer_events) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                RAISERROR('Warning: the system_health ring buffer output was cut off. It returned %i of its %i events, and the newest events are the ones missing.', 0, 1, @ring_buffer_shown, @ring_buffer_events) WITH NOWAIT;
+            END;
+        END;
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1778,10 +2022,16 @@ AND   ca.utc_timestamp < @end_date';
         WITH
             (TABLOCKX)
         (
-            ring_buffer
+            ring_buffer,
+            event_name
         )
         SELECT
-            x = e.x.query('.')
+            x = e.x.query('.'),
+            /*
+            Keep the name, so each event type below is a plain filter
+            instead of another pass over every event with exist(@name).
+            */
+            event_name = e.x.value('@name', 'sysname')
         FROM #x AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
         WHERE 1 = 1
@@ -1815,10 +2065,9 @@ AND   ca.utc_timestamp < @end_date';
                 wait_info
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "wait_info"]') = 1
+            WHERE rb.event_name = N'wait_info'
             OPTION(RECOMPILE);
         END;
         /*
@@ -1845,10 +2094,9 @@ AND   ca.utc_timestamp < @end_date';
                 sp_server_diagnostics_component_result
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
+            WHERE rb.event_name = N'sp_server_diagnostics_component_result'
             OPTION(RECOMPILE);
         END;
 
@@ -1872,10 +2120,9 @@ AND   ca.utc_timestamp < @end_date';
                 xml_deadlock_report
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "xml_deadlock_report"]') = 1
+            WHERE rb.event_name = N'xml_deadlock_report'
             OPTION(RECOMPILE);
         END;
 
@@ -1896,10 +2143,9 @@ AND   ca.utc_timestamp < @end_date';
                 scheduler_monitor
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "scheduler_monitor_system_health_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'scheduler_monitor_system_health_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
@@ -1920,10 +2166,9 @@ AND   ca.utc_timestamp < @end_date';
                 error_reported
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "error_reported"]') = 1
+            WHERE rb.event_name = N'error_reported'
             OPTION(RECOMPILE);
         END;
 
@@ -1944,10 +2189,9 @@ AND   ca.utc_timestamp < @end_date';
                 memory_broker
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'memory_broker_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
@@ -1968,14 +2212,33 @@ AND   ca.utc_timestamp < @end_date';
                 memory_node_oom
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "memory_node_oom_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'memory_node_oom_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
     END; /*End Managed Instance collection*/
+
+    /*
+    Each sp_server_diagnostics_component_result event belongs to one
+    component (SYSTEM, RESOURCE, QUERY_PROCESSING, IO_SUBSYSTEM, EVENTS).
+    Tag every row once so each section below reads only its own events,
+    instead of running an exist() over all of them. component is the
+    event's first data field, so the first text in the event is its
+    name; the @name lookup is the fallback.
+    */
+    UPDATE
+        sdcr
+    SET
+        sdcr.component =
+            CASE
+                WHEN sdcr.sp_server_diagnostics_component_result.value('(/event/data/@name)[1]', 'varchar(30)') = 'component'
+                THEN sdcr.sp_server_diagnostics_component_result.value('(/event/data/text/text())[1]', 'varchar(30)')
+                ELSE sdcr.sp_server_diagnostics_component_result.value('(/event/data[@name="component"]/text/text())[1]', 'varchar(30)')
+            END
+    FROM #sp_server_diagnostics_component_result AS sdcr
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -2043,7 +2306,12 @@ AND   ca.utc_timestamp < @end_date';
             wait_resource = w.x.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)'),
             sql_text_pre = w.x.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(max)'),
             session_id = w.x.value('(action[@name="session_id"]/value/text())[1]', 'integer'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #waits_queries
         FROM #wait_info AS wi
         CROSS APPLY wi.wait_info.nodes('//event') AS w(x)
@@ -2051,12 +2319,13 @@ AND   ca.utc_timestamp < @end_date';
         AND   w.x.exist('(action[@name="sql_text"]/value/text())') = 1
         AND   w.x.exist('(action[@name="sql_text"]/value/text()[contains(upper-case(.), "BACKUP")] )') = 0
         AND   w.x.exist('(data[@name="duration"]/value/text())[.>= sql:variable("@wait_duration_ms")]') = 1
+        /* Compare the wait type as a value, not one exist() per ignored wait */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w.x.exist('(data[@name="wait_type"]/text/text())[1][.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w.x.value('(data[@name="wait_type"]/text/text())[1]', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -2205,8 +2474,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE wq.event_time > @max_event_time';
@@ -2277,24 +2548,32 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
             average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
             max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #topwaits_count
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
+        WHERE wi.component = 'QUERY_PROCESSING'
+        /*
+        Compare the wait type as a value: an exist() per ignored wait ran
+        one XQuery for every wait row times every row in #ignore_waits.
+        */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w2.x2.value('@waitType', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -2485,8 +2764,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2556,25 +2837,33 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
             average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
             max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #topwaits_duration
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
+        WHERE wi.component = 'QUERY_PROCESSING'
         AND   w2.x2.exist('@averageWaitTime[.>= sql:variable("@wait_duration_ms")]') = 1
+        /*
+        Compare the wait type as a value: an exist() per ignored wait ran
+        one XQuery for every wait row times every row in #ignore_waits.
+        */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w2.x2.value('@waitType', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -2746,8 +3035,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2819,21 +3110,25 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            ioLatchTimeouts = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
-            intervalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
-            totalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            ioLatchTimeouts = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
+            intervalLongIos = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
+            totalLongIos = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
             longestPendingRequests_duration_ms = CONVERT(bigint, w2.x2.value('@duration', 'bigint')),
             longestPendingRequests_filePath = w2.x2.value('@filePath', 'nvarchar(500)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #io
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "IO_SUBSYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        OUTER APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
+        WHERE wi.component = 'IO_SUBSYSTEM'
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -2963,8 +3258,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE i.event_time > @max_event_time';
@@ -3038,31 +3335,146 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            name = w.x.value('@name', 'nvarchar(256)'),
-            component = w.x.value('(data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            maxWorkers = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@maxWorkers)[1]', 'bigint'),
-            workersCreated = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@workersCreated)[1]', 'bigint'),
-            workersIdle = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@workersIdle)[1]', 'bigint'),
-            tasksCompletedWithinInterval = w.x.value('(//data[@name="data"]/value/queryProcessing/@tasksCompletedWithinInterval)[1]', 'bigint'),
-            pendingTasks = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks)[1]', 'bigint'),
-            oldestPendingTaskWaitingTime = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
-            hasUnresolvableDeadlockOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
-            hasDeadlockedSchedulersOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
-            didBlockingOccur = w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report'),
-            xml = w.x.query('.')
+            name = wi.sp_server_diagnostics_component_result.value('(/event/@name)[1]', 'nvarchar(256)'),
+            component = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            maxWorkers = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@maxWorkers)[1]', 'bigint'),
+            workersCreated = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@workersCreated)[1]', 'bigint'),
+            workersIdle = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@workersIdle)[1]', 'bigint'),
+            tasksCompletedWithinInterval = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@tasksCompletedWithinInterval)[1]', 'bigint'),
+            pendingTasks = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint'),
+            oldestPendingTaskWaitingTime = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
+            /*
+            How to read the pending task columns: pendingTasks is how many
+            tasks were waiting for a worker thread when the snapshot was
+            taken. pending_user_requests is how many of them were client
+            requests (batches and RPCs, the Process Command entry point).
+            pending_entry_points lists the function each pending task will
+            start in, with its count: the name SQL Server gives it, or
+            module+offset for internal tasks, which stays the same across
+            restarts of one build and can be looked up in that build's
+            public symbols. User requests pending, with a non-zero
+            oldestPendingTaskWaitingTime and workersCreated near
+            maxWorkers, means worker thread starvation (THREADPOOL waits);
+            look at blocking and parallelism in the same snapshot.
+            Internal tasks pending for 0 ms are noise.
+            */
+            pending_user_requests =
+                CONVERT
+                (
+                    bigint,
+                    wi.sp_server_diagnostics_component_result.value
+                    (
+                        'sum(/event/data/value/queryProcessing/pendingTasks/entryPoint[@name = "Process Command"]/@count)',
+                        'float'
+                    )
+                ),
+            pending_entry_points =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ep.entry_point +
+                            N' (' +
+                            CONVERT(nvarchar(20), ep.entry_point_count) +
+                            N')'
+                        FROM
+                        (
+                            SELECT
+                                entry_point =
+                                    ISNULL
+                                    (
+                                        e.e.value('@name', 'sysname'),
+                                        e.e.value('@moduleName', 'sysname') +
+                                        N'+0x' +
+                                        LOWER
+                                        (
+                                            SUBSTRING
+                                            (
+                                                hx.offset_hex,
+                                                PATINDEX('%[^0]%', hx.offset_hex),
+                                                16
+                                            )
+                                        )
+                                    ),
+                                entry_point_count =
+                                    e.e.value('@count', 'bigint')
+                            FROM wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/pendingTasks/entryPoint') AS e(e)
+                            CROSS APPLY
+                            (
+                                /*
+                                The hex attributes can have an odd number of
+                                digits, and xs:hexBinary returns nothing for
+                                those, so pad them to an even length.
+                                */
+                                SELECT
+                                    image_base =
+                                        e.e.value
+                                        (
+                                            '
+                                            for $h in substring(string((@imageBase)[1]), 3)[. != ""]
+                                            return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                                            ',
+                                            'varbinary(8)'
+                                        ),
+                                    address =
+                                        e.e.value
+                                        (
+                                            '
+                                            for $h in substring(string((@address)[1]), 3)[. != ""]
+                                            return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                                            ',
+                                            'varbinary(8)'
+                                        )
+                            ) AS hp
+                            CROSS APPLY
+                            (
+                                SELECT
+                                    offset_hex =
+                                        CONVERT
+                                        (
+                                            varchar(16),
+                                            CONVERT
+                                            (
+                                                varbinary(8),
+                                                CONVERT(bigint, hp.address) - CONVERT(bigint, hp.image_base)
+                                            ),
+                                            2
+                                        )
+                            ) AS hx
+                        ) AS ep
+                        ORDER BY
+                            ep.entry_point_count DESC,
+                            ep.entry_point
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                ),
+            hasUnresolvableDeadlockOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
+            hasDeadlockedSchedulersOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
+            didBlockingOccur = wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report'),
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        WHERE wi.component = 'QUERY_PROCESSING'
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         /* Threshold is honored whether or not @warnings_only is set — the
            parameter documents "minimum pending tasks to display" and the
            previous `OR @warnings_only = 0` short-circuit silently ignored
            the user-supplied value whenever warnings-only was off. */
-        AND   w.x.exist('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks[.>= sql:variable("@pending_task_threshold")])') = 1
+        AND   wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint') >= @pending_task_threshold
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -3133,6 +3545,8 @@ AND   ca.utc_timestamp < @end_date';
                     sd.tasksCompletedWithinInterval,
                     sd.pendingTasks,
                     sd.oldestPendingTaskWaitingTime,
+                    sd.pending_user_requests,
+                    sd.pending_entry_points,
                     sd.hasUnresolvableDeadlockOccurred,
                     sd.hasDeadlockedSchedulersOccurred,
                     sd.didBlockingOccur
@@ -3167,8 +3581,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE sd.event_time > @max_event_time';
@@ -3196,6 +3612,8 @@ AND   ca.utc_timestamp < @end_date';
                     tasksCompletedWithinInterval,
                     pendingTasks,
                     oldestPendingTaskWaitingTime,
+                    pending_user_requests,
+                    pending_entry_points,
                     hasUnresolvableDeadlockOccurred,
                     hasDeadlockedSchedulersOccurred,
                     didBlockingOccur
@@ -3227,234 +3645,6 @@ AND   ca.utc_timestamp < @end_date';
         END;
     END;/*End CPU*/
 
-    /*Grab pending task entry point details*/
-    IF @what_to_check IN ('all', 'cpu')
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Parsing pending task entry point details', 0, 0) WITH NOWAIT;
-        END;
-
-        SELECT
-            event_time =
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        GETUTCDATE(),
-                        SYSDATETIME()
-                    ),
-                    w.x.value('@timestamp', 'datetime2')
-                ),
-            pending_tasks =
-                w.x.value
-                (
-                    '(/event/data[@name="data"]/value/queryProcessing/@pendingTasks)[1]',
-                    'bigint'
-                ),
-            entry_point_name =
-                ep.e.value('@name', 'sysname'),
-            module_name =
-                ep.e.value('@moduleName', 'sysname'),
-            image_base =
-                ep.e.value
-                (
-                    'xs:hexBinary(substring(string(@imageBase), 3))',
-                    'varbinary(8)'
-                ),
-            size =
-                CONVERT
-                (
-                    bigint,
-                    ep.e.value
-                    (
-                        '
-                        xs:hexBinary
-                        (
-                          if (string-length(substring(string(@size), 3)) mod 2 = 1)
-                          then concat("0", substring(string(@size), 3))
-                          else substring(string(@size), 3)
-                        )
-                        ',
-                        'varbinary(8)'
-                    )
-                ),
-            address =
-                ep.e.value
-                (
-                    'xs:hexBinary(substring(string(@address), 3))',
-                    'varbinary(8)'
-                ),
-            entry_point_count =
-                ep.e.value('@count', 'bigint')
-        INTO #pending_task_details
-        FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        /* Hardcoded threshold > 1 ignored the @pending_task_threshold
-           parameter. Replaced with sql:variable() binding so the user's
-           value actually takes effect here too. */
-        CROSS APPLY w.x.nodes('/event/data[@name="data"]/value/queryProcessing[@pendingTasks >= sql:variable("@pending_task_threshold")]/pendingTasks/entryPoint') AS ep(e)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE, MAXDOP 1);
-
-        IF @debug = 1
-        BEGIN
-            SELECT TOP (100)
-                table_name = '#pending_task_details, top 100 rows',
-                x.*
-            FROM #pending_task_details AS x
-            ORDER BY
-                x.event_time DESC;
-        END;
-    END;
-
-    /*Pending task entry point details output*/
-    IF @what_to_check IN ('all', 'cpu')
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Parsing pending task entry point output', 0, 0) WITH NOWAIT;
-        END;
-
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #pending_task_details AS ptd
-        )
-        BEGIN
-            IF @log_to_table = 0
-            BEGIN
-                SELECT
-                    finding =
-                        CASE
-                            WHEN @what_to_check NOT IN ('all', 'cpu')
-                            THEN 'cpu skipped, @what_to_check set to ' +
-                                 @what_to_check
-                            WHEN @what_to_check IN ('all', 'cpu')
-                            THEN 'no pending task entry point details found between ' +
-                                 RTRIM(CONVERT(date, @start_date)) +
-                                 ' and ' +
-                                 RTRIM(CONVERT(date, @end_date)) +
-                                 ' with @warnings_only set to ' +
-                                 RTRIM(@warnings_only) +
-                                 '.'
-                            ELSE 'no pending task entry point details found!'
-                        END;
-
-                RAISERROR('No pending task entry point data found', 0, 0) WITH NOWAIT;
-            END;
-        END;
-        ELSE
-        BEGIN
-            /* Build the query */
-            SET @dsql = N'
-                SELECT
-                    ' + CASE
-                            WHEN @log_to_table = 1
-                            THEN N''
-                            ELSE N'finding = ''pending task entry point details'','
-                        END +
-                  N'
-                    ptd.event_time,
-                    ptd.pending_tasks,
-                    ptd.entry_point_name,
-                    ptd.module_name,
-                    ptd.image_base,
-                    ptd.size,
-                    ptd.address,
-                    ptd.entry_point_count
-                FROM #pending_task_details AS ptd';
-
-            /* Add the WHERE clause only for table logging */
-            IF @log_to_table = 1
-            BEGIN
-                /* Get max event_time for pending task details */
-                SET @mdsql_execute =
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            REPLACE
-                            (
-                                @mdsql_template,
-                                '{table_check_literal}',
-                                REPLACE(@log_table_pending_tasks, N'''', N'''''')
-                            ),
-                            '{table_check}',
-                            @log_table_pending_tasks
-                        ),
-                        '{date_column}',
-                        'event_time'
-                    );
-
-                IF @debug = 1
-                BEGIN
-                    PRINT @mdsql_execute;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
-
-                SET @dsql += N'
-            WHERE ptd.event_time > @max_event_time';
-            END;
-
-            /* Add the ORDER BY clause */
-            SET @dsql += N'
-            ORDER BY
-                ptd.event_time DESC
-            OPTION(RECOMPILE);
-            ';
-
-            /* Handle table logging */
-            IF @log_to_table = 1
-            BEGIN
-                SET @insert_sql = N'
-                INSERT INTO
-                    ' + @log_table_pending_tasks + N'
-                (
-                    event_time,
-                    pending_tasks,
-                    entry_point_name,
-                    module_name,
-                    image_base,
-                    size,
-                    address,
-                    entry_point_count
-                )' +
-                    @dsql;
-
-                IF @debug = 1
-                BEGIN
-                    PRINT @insert_sql;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @insert_sql,
-                  N'@max_event_time datetime2(7)',
-                    @max_event_time;
-            END;
-
-            /* Execute the query for client results */
-            IF @log_to_table = 0
-            BEGIN
-                IF @debug = 1
-                BEGIN
-                    PRINT @dsql;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @dsql;
-            END;
-        END;
-    END;/*End pending task entry point details*/
-
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
     BEGIN
@@ -3480,38 +3670,121 @@ AND   ca.utc_timestamp < @end_date';
             outOfMemoryExceptions = r.c.value('@outOfMemoryExceptions', 'bigint'),
             isAnyPoolOutOfMemory = r.c.value('@isAnyPoolOutOfMemory', 'bit'),
             processOutOfMemoryPeriod = r.c.value('@processOutOfMemoryPeriod', 'bigint'),
-            name = r.c.value('(//memoryReport/@name)[1]', 'varchar(128)'),
-            available_physical_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            available_virtual_memory_gb =  CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            available_paging_file_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            working_set_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            percent_of_committed_memory_in_ws = r.c.value('(//memoryReport/entry[@description[.="Percent of Committed Memory in WS"]]/@value)[1]', 'bigint'),
-            page_faults = r.c.value('(//memoryReport/entry[@description[.="Page Faults"]]/@value)[1]', 'bigint'),
-            system_physical_memory_high = r.c.value('(//memoryReport/entry[@description[.="System physical memory high"]]/@value)[1]', 'bigint'),
-            system_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="System physical memory low"]]/@value)[1]', 'bigint'),
-            process_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process physical memory low"]]/@value)[1]', 'bigint'),
-            process_virtual_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process virtual memory low"]]/@value)[1]', 'bigint'),
-            vm_reserved_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Reserved"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            vm_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            locked_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Locked Pages Allocated"]]/@value)[1]', 'bigint'),
-            large_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Large Pages Allocated"]]/@value)[1]', 'bigint'),
-            emergency_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            emergency_memory_in_use_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory In Use"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            target_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Target Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            current_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Current Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Pages Allocated"]]/@value)[1]', 'bigint'),
-            pages_reserved = r.c.value('(//memoryReport/entry[@description[.="Pages Reserved"]]/@value)[1]', 'bigint'),
-            pages_free = r.c.value('(//memoryReport/entry[@description[.="Pages Free"]]/@value)[1]', 'bigint'),
-            pages_in_use = r.c.value('(//memoryReport/entry[@description[.="Pages In Use"]]/@value)[1]', 'bigint'),
-            page_alloc_potential = r.c.value('(//memoryReport/entry[@description[.="Page Alloc Potential"]]/@value)[1]', 'bigint'),
-            numa_growth_phase = r.c.value('(//memoryReport/entry[@description[.="NUMA Growth Phase"]]/@value)[1]', 'bigint'),
-            last_oom_factor = r.c.value('(//memoryReport/entry[@description[.="Last OOM Factor"]]/@value)[1]', 'bigint'),
-            last_os_error = r.c.value('(//memoryReport/entry[@description[.="Last OS Error"]]/@value)[1]', 'bigint'),
-            xml = r.c.query('.')
+            available_physical_memory_gb = CONVERT(bigint, mr.available_physical_memory / 1024 / 1024 / 1024),
+            available_virtual_memory_gb = CONVERT(bigint, mr.available_virtual_memory / 1024 / 1024 / 1024),
+            available_paging_file_gb = CONVERT(bigint, mr.available_paging_file / 1024 / 1024 / 1024),
+            working_set_gb = CONVERT(bigint, mr.working_set / 1024 / 1024 / 1024),
+            percent_of_committed_memory_in_ws = mr.percent_of_committed_memory_in_ws,
+            page_faults = mr.page_faults,
+            system_physical_memory_high = mr.system_physical_memory_high,
+            system_physical_memory_low = mr.system_physical_memory_low,
+            process_physical_memory_low = mr.process_physical_memory_low,
+            process_virtual_memory_low = mr.process_virtual_memory_low,
+            vm_reserved_gb = CONVERT(bigint, mr.vm_reserved / 1024 / 1024),
+            vm_committed_gb = CONVERT(bigint, mr.vm_committed / 1024 / 1024),
+            locked_pages_allocated = mr.locked_pages_allocated,
+            large_pages_allocated = mr.large_pages_allocated,
+            emergency_memory_gb = CONVERT(bigint, mr.emergency_memory / 1024 / 1024),
+            emergency_memory_in_use_gb = CONVERT(bigint, mr.emergency_memory_in_use / 1024 / 1024),
+            target_committed_gb = CONVERT(bigint, mr.target_committed / 1024 / 1024),
+            current_committed_gb = CONVERT(bigint, mr.current_committed / 1024 / 1024),
+            pages_allocated = mr.pages_allocated,
+            pages_reserved = mr.pages_reserved,
+            pages_free = mr.pages_free,
+            pages_in_use = mr.pages_in_use,
+            page_alloc_potential = mr.page_alloc_potential,
+            numa_growth_phase = mr.numa_growth_phase,
+            last_oom_factor = mr.last_oom_factor,
+            last_os_error = mr.last_os_error,
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN r.c.query('.')
+                END
         INTO #memory
         FROM #sp_server_diagnostics_component_result AS s
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
-        WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
+        OUTER APPLY
+        (
+            /*
+            Each entry used to be its own //memoryReport/entry[@description]
+            search of the whole event, 26 of them per row. Shred the
+            entries once and PIVOT them by description instead.
+            Descriptions are unique within an event, so MAX returns the
+            same value the [1] did, and only the 26 values we read are
+            converted.
+            */
+            SELECT
+                available_physical_memory = CONVERT(bigint, p.[Available Physical Memory]),
+                available_virtual_memory = CONVERT(bigint, p.[Available Virtual Memory]),
+                available_paging_file = CONVERT(bigint, p.[Available Paging File]),
+                working_set = CONVERT(bigint, p.[Working Set]),
+                percent_of_committed_memory_in_ws = CONVERT(bigint, p.[Percent of Committed Memory in WS]),
+                page_faults = CONVERT(bigint, p.[Page Faults]),
+                system_physical_memory_high = CONVERT(bigint, p.[System physical memory high]),
+                system_physical_memory_low = CONVERT(bigint, p.[System physical memory low]),
+                process_physical_memory_low = CONVERT(bigint, p.[Process physical memory low]),
+                process_virtual_memory_low = CONVERT(bigint, p.[Process virtual memory low]),
+                vm_reserved = CONVERT(bigint, p.[VM Reserved]),
+                vm_committed = CONVERT(bigint, p.[VM Committed]),
+                locked_pages_allocated = CONVERT(bigint, p.[Locked Pages Allocated]),
+                large_pages_allocated = CONVERT(bigint, p.[Large Pages Allocated]),
+                emergency_memory = CONVERT(bigint, p.[Emergency Memory]),
+                emergency_memory_in_use = CONVERT(bigint, p.[Emergency Memory In Use]),
+                target_committed = CONVERT(bigint, p.[Target Committed]),
+                current_committed = CONVERT(bigint, p.[Current Committed]),
+                pages_allocated = CONVERT(bigint, p.[Pages Allocated]),
+                pages_reserved = CONVERT(bigint, p.[Pages Reserved]),
+                pages_free = CONVERT(bigint, p.[Pages Free]),
+                pages_in_use = CONVERT(bigint, p.[Pages In Use]),
+                page_alloc_potential = CONVERT(bigint, p.[Page Alloc Potential]),
+                numa_growth_phase = CONVERT(bigint, p.[NUMA Growth Phase]),
+                last_oom_factor = CONVERT(bigint, p.[Last OOM Factor]),
+                last_os_error = CONVERT(bigint, p.[Last OS Error])
+            FROM
+            (
+                SELECT
+                    description = en.e.value('@description', 'nvarchar(128)'),
+                    value = en.e.value('@value', 'nvarchar(30)')
+                FROM r.c.nodes('memoryReport/entry') AS en(e)
+            ) AS e
+            PIVOT
+            (
+                MAX(e.value)
+                FOR e.description IN
+                (
+                    [Available Physical Memory],
+                    [Available Virtual Memory],
+                    [Available Paging File],
+                    [Working Set],
+                    [Percent of Committed Memory in WS],
+                    [Page Faults],
+                    [System physical memory high],
+                    [System physical memory low],
+                    [Process physical memory low],
+                    [Process virtual memory low],
+                    [VM Reserved],
+                    [VM Committed],
+                    [Locked Pages Allocated],
+                    [Large Pages Allocated],
+                    [Emergency Memory],
+                    [Emergency Memory In Use],
+                    [Target Committed],
+                    [Current Committed],
+                    [Pages Allocated],
+                    [Pages Reserved],
+                    [Pages Free],
+                    [Pages In Use],
+                    [Page Alloc Potential],
+                    [NUMA Growth Phase],
+                    [Last OOM Factor],
+                    [Last OS Error]
+                )
+            ) AS p
+        ) AS mr
+        WHERE s.component = 'RESOURCE'
+        AND  (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -3570,7 +3843,6 @@ AND   ca.utc_timestamp < @end_date';
                 m.outOfMemoryExceptions,
                 m.isAnyPoolOutOfMemory,
                 m.processOutOfMemoryPeriod,
-                m.name,
                 m.available_physical_memory_gb,
                 m.available_virtual_memory_gb,
                 m.available_paging_file_gb,
@@ -3628,8 +3900,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE m.event_time > @max_event_time';
@@ -3654,7 +3928,6 @@ AND   ca.utc_timestamp < @end_date';
                 outOfMemoryExceptions,
                 isAnyPoolOutOfMemory,
                 processOutOfMemoryPeriod,
-                name,
                 available_physical_memory_gb,
                 available_virtual_memory_gb,
                 available_paging_file_gb,
@@ -3743,7 +4016,12 @@ AND   ca.utc_timestamp < @end_date';
             previously_allocated = w.x.value('(data[@name="previously_allocated"]/value)[1]', 'bigint'),
             broker = w.x.value('(data[@name="broker"]/value)[1]', 'nvarchar(256)'),
             notification = w.x.value('(data[@name="notification"]/value)[1]', 'nvarchar(256)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #memory_broker_info
         FROM #memory_broker AS mb
         CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
@@ -3933,8 +4211,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mbi.event_time > @max_event_time';
@@ -3943,7 +4223,10 @@ AND   ca.utc_timestamp < @end_date';
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
-                mbi.event_time DESC
+                mbi.event_time DESC,
+                mbi.broker_id,
+                mbi.pool_metadata_id,
+                mbi.notification
             OPTION(RECOMPILE);
             ';
 
@@ -4043,7 +4326,12 @@ AND   ca.utc_timestamp < @end_date';
             is_system_physical_memory_low = w.x.value('(data[@name="is_system_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
             is_process_physical_memory_low = w.x.value('(data[@name="is_process_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
             is_process_virtual_memory_low = w.x.value('(data[@name="is_process_virtual_memory_low"]/value)[1]', 'nvarchar(10)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #memory_node_oom_info
         FROM #memory_node_oom AS mno
         CROSS APPLY mno.memory_node_oom.nodes('//event') AS w(x)
@@ -4333,8 +4621,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mnoi.event_time > @max_event_time';
@@ -4429,29 +4719,33 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            spinlockBackoffs = w.x.value('(/event/data[@name="data"]/value/system/@spinlockBackoffs)[1]', 'bigint'),
-            sickSpinlockType = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),
-            sickSpinlockTypeAfterAv = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
-            latchWarnings = w.x.value('(/event/data[@name="data"]/value/system/@latchWarnings)[1]', 'bigint'),
-            isAccessViolationOccurred = w.x.value('(/event/data[@name="data"]/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
-            writeAccessViolationCount = w.x.value('(/event/data[@name="data"]/value/system/@writeAccessViolationCount)[1]', 'bigint'),
-            totalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@totalDumpRequests)[1]', 'bigint'),
-            intervalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@intervalDumpRequests)[1]', 'bigint'),
-            nonYieldingTasksReported = w.x.value('(/event/data[@name="data"]/value/system/@nonYieldingTasksReported)[1]', 'bigint'),
-            pageFaults = w.x.value('(/event/data[@name="data"]/value/system/@pageFaults)[1]', 'bigint'),
-            systemCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@systemCpuUtilization)[1]', 'bigint'),
-            sqlCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@sqlCpuUtilization)[1]', 'bigint'),
-            BadPagesDetected = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesDetected)[1]', 'bigint'),
-            BadPagesFixed = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesFixed)[1]', 'bigint'),
-            xml = w.x.query('.')
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            spinlockBackoffs = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@spinlockBackoffs)[1]', 'bigint'),
+            sickSpinlockType = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),
+            sickSpinlockTypeAfterAv = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
+            latchWarnings = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@latchWarnings)[1]', 'bigint'),
+            isAccessViolationOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
+            writeAccessViolationCount = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@writeAccessViolationCount)[1]', 'bigint'),
+            totalDumpRequests = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@totalDumpRequests)[1]', 'bigint'),
+            intervalDumpRequests = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@intervalDumpRequests)[1]', 'bigint'),
+            nonYieldingTasksReported = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@nonYieldingTasksReported)[1]', 'bigint'),
+            pageFaults = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@pageFaults)[1]', 'bigint'),
+            systemCpuUtilization = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@systemCpuUtilization)[1]', 'bigint'),
+            sqlCpuUtilization = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sqlCpuUtilization)[1]', 'bigint'),
+            BadPagesDetected = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@BadPagesDetected)[1]', 'bigint'),
+            BadPagesFixed = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@BadPagesFixed)[1]', 'bigint'),
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "SYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        WHERE wi.component = 'SYSTEM'
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -4553,8 +4847,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE h.event_time > @max_event_time';
@@ -4654,7 +4950,7 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    sm.scheduler_monitor.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             sql_cpu_utilization = v.sql_cpu_utilization,
             other_process_cpu =
@@ -4663,23 +4959,51 @@ AND   ca.utc_timestamp < @end_date';
             memory_utilization = v.memory_utilization,
             page_faults = v.page_faults,
             working_set_delta_mb = v.working_set_delta_mb,
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN sm.scheduler_monitor.query('/event')
+                END
         INTO #scheduler_issues
         FROM #scheduler_monitor AS sm
-        CROSS APPLY sm.scheduler_monitor.nodes('//event') AS w(x)
-        CROSS APPLY
+        OUTER APPLY
         (
+            /*
+            One pass over the event's data elements, PIVOTed by name. A
+            separate (data[@name="..."]/value)[1] per column walked all
+            ten data elements again for each of the five columns.
+            */
             SELECT
-                sql_cpu_utilization = w.x.value('(data[@name="process_utilization"]/value)[1]', 'integer'),
-                system_idle = w.x.value('(data[@name="system_idle"]/value)[1]', 'integer'),
-                memory_utilization = w.x.value('(data[@name="memory_utilization"]/value)[1]', 'integer'),
-                page_faults = w.x.value('(data[@name="page_faults"]/value)[1]', 'bigint'),
+                sql_cpu_utilization = CONVERT(integer, p.process_utilization),
+                system_idle = CONVERT(integer, p.system_idle),
+                memory_utilization = CONVERT(integer, p.memory_utilization),
+                page_faults = CONVERT(bigint, p.page_faults),
                 working_set_delta_mb =
                     CONVERT
                     (
                         decimal(19, 2),
-                        w.x.value('(data[@name="working_set_delta"]/value)[1]', 'bigint') / 1048576.
+                        CONVERT(bigint, p.working_set_delta) / 1048576.
                     )
+            FROM
+            (
+                SELECT
+                    name = dt.d.value('@name', 'nvarchar(60)'),
+                    value = dt.d.value('(value/text())[1]', 'nvarchar(30)')
+                FROM sm.scheduler_monitor.nodes('/event/data') AS dt(d)
+            ) AS d
+            PIVOT
+            (
+                MAX(d.value)
+                FOR d.name IN
+                (
+                    process_utilization,
+                    system_idle,
+                    memory_utilization,
+                    page_faults,
+                    working_set_delta
+                )
+            ) AS p
         ) AS v
         WHERE
         (
@@ -4795,8 +5119,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE si.event_time > @max_event_time';
@@ -4891,11 +5217,18 @@ AND   ca.utc_timestamp < @end_date';
             data element — reading the data axis returns NULL for every
             event, which blanked these two columns for all severe
             errors. session_id further up reads the action axis the
-            same way.
+            same way. DB_NAME(0) returns the current database, so
+            errors raised outside any database (database_id 0) were
+            labeled with the caller's database; NULLIF leaves them NULL.
             */
-            database_name = DB_NAME(w.x.value('(action[@name="database_id"]/value)[1]', 'integer')),
+            database_name = DB_NAME(NULLIF(w.x.value('(action[@name="database_id"]/value)[1]', 'integer'), 0)),
             database_id = w.x.value('(action[@name="database_id"]/value)[1]', 'integer'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #error_info
         FROM #error_reported AS er
         CROSS APPLY er.error_reported.nodes('//event') AS w(x)
@@ -5000,8 +5333,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE ei.event_time > @max_event_time';
@@ -5011,7 +5346,8 @@ AND   ca.utc_timestamp < @end_date';
             SET @dsql = @dsql + N'
             ORDER BY
                 ei.event_time DESC,
-                ei.severity DESC
+                ei.severity DESC,
+                ei.error_number
             OPTION(RECOMPILE);
             ';
 
@@ -5181,14 +5517,18 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('(//@timestamp)[1]', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
+            human_events_xml = wi.sp_server_diagnostics_component_result.query('/event/data/value/queryProcessing/blockingTasks/blocked-process-report')
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        WHERE wi.component = 'QUERY_PROCESSING'
+        AND   wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+        /*
+        No @warnings_only filter here. It used to keep a blocked process
+        report only when the QUERY_PROCESSING component was in a WARNING
+        state, and that state follows pending tasks, not blocking, so
+        @warnings_only = 1 dropped most of the blocking.
+        */
         OPTION(RECOMPILE);
 
         IF @debug = 1
@@ -5209,44 +5549,133 @@ AND   ca.utc_timestamp < @end_date';
 
         SELECT
             bx.event_time,
-            currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
-            spid = bd.value('(process/@spid)[1]', 'integer'),
-            ecid = bd.value('(process/@ecid)[1]', 'integer'),
+            currentdbname = pa.currentdbname,
+            spid = pa.spid,
+            ecid = pa.ecid,
             query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-            wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-            lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-            lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-            status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-            priority = bd.value('(process/@priority)[1]', 'integer'),
-            transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-            client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-            host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
-            login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
-            isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-            log_used = bd.value('(process/@logused)[1]', 'bigint'),
-            clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-            clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
-            process_id = bd.value('(process/@id)[1]', 'sysname'),
-            scheduler_id = bd.value('(process/@schedulerid)[1]', 'bigint'),
-            kpid = bd.value('(process/@kpid)[1]', 'bigint'),
-            sbid = bd.value('(process/@sbid)[1]', 'bigint'),
-            last_attention = bd.value('(process/@lastattention)[1]', 'datetime2'),
-            xactid = bd.value('(process/@xactid)[1]', 'bigint'),
-            currentdb = bd.value('(process/@currentdb)[1]', 'bigint'),
-            lock_timeout = bd.value('(process/@lockTimeout)[1]', 'bigint'),
-            host_pid = bd.value('(process/@hostpid)[1]', 'bigint'),
-            task_priority = bd.value('(process/@taskpriority)[1]', 'bigint'),
-            owner_id = bd.value('(process/@ownerId)[1]', 'bigint'),
-            transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
-            last_tran_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
-            xdes = bd.value('(process/@XDES)[1]', 'sysname'),
-            lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
+            wait_time = pa.wait_time,
+            lastbatchstarted = pa.lastbatchstarted,
+            lastbatchcompleted = pa.lastbatchcompleted,
+            wait_resource = pa.wait_resource,
+            status = pa.status,
+            priority = pa.priority,
+            transaction_count = pa.transaction_count,
+            client_app = pa.client_app,
+            host_name = pa.host_name,
+            login_name = pa.login_name,
+            isolation_level = pa.isolation_level,
+            log_used = pa.log_used,
+            clientoption1 = pa.clientoption1,
+            clientoption2 = pa.clientoption2,
+            process_id = pa.process_id,
+            scheduler_id = pa.scheduler_id,
+            kpid = pa.kpid,
+            sbid = pa.sbid,
+            last_attention = pa.last_attention,
+            xactid = pa.xactid,
+            currentdb = pa.currentdb,
+            lock_timeout = pa.lock_timeout,
+            host_pid = pa.host_pid,
+            task_priority = pa.task_priority,
+            owner_id = pa.owner_id,
+            transaction_name = pa.transaction_name,
+            last_tran_started = pa.last_tran_started,
+            xdes = pa.xdes,
+            lock_mode = pa.lock_mode,
             activity = 'blocked',
             blocked_process_report = bd.query('.')
         INTO #blocked
         FROM #blocking_xml AS bx
         OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocked-process') AS bd(bd)
+        OUTER APPLY
+        (
+            /*
+            One pass over the process attributes, PIVOTed by name. A
+            separate value('(process/@...)[1]') per column walked the
+            whole process element, stack frames and all, 32 times per
+            row. The names compare in Latin1_General_BIN2, so they stay
+            case-sensitive the way the XPath was.
+            */
+            SELECT
+                currentdbname = CONVERT(sysname, p.currentdbname),
+                spid = CONVERT(integer, p.spid),
+                ecid = CONVERT(integer, p.ecid),
+                wait_time = CONVERT(bigint, p.waittime),
+                lastbatchstarted = CONVERT(datetime2, p.lastbatchstarted),
+                lastbatchcompleted = CONVERT(datetime2, p.lastbatchcompleted),
+                wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+                status = CONVERT(nvarchar(10), p.status),
+                priority = CONVERT(integer, p.priority),
+                transaction_count = CONVERT(integer, p.trancount),
+                client_app = CONVERT(nvarchar(256), p.clientapp),
+                host_name = CONVERT(nvarchar(256), p.hostname),
+                login_name = CONVERT(nvarchar(256), p.loginname),
+                isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+                log_used = CONVERT(bigint, p.logused),
+                clientoption1 = CONVERT(bigint, p.clientoption1),
+                clientoption2 = CONVERT(bigint, p.clientoption2),
+                process_id = CONVERT(sysname, p.id),
+                scheduler_id = CONVERT(bigint, p.schedulerid),
+                kpid = CONVERT(bigint, p.kpid),
+                sbid = CONVERT(bigint, p.sbid),
+                last_attention = CONVERT(datetime2, p.lastattention),
+                xactid = CONVERT(bigint, p.xactid),
+                currentdb = CONVERT(bigint, p.currentdb),
+                lock_timeout = CONVERT(bigint, p.lockTimeout),
+                host_pid = CONVERT(bigint, p.hostpid),
+                task_priority = CONVERT(bigint, p.taskpriority),
+                owner_id = CONVERT(bigint, p.ownerId),
+                transaction_name = CONVERT(nvarchar(1024), p.transactionname),
+                last_tran_started = CONVERT(datetime2, p.lasttranstarted),
+                xdes = CONVERT(sysname, p.XDES),
+                lock_mode = CONVERT(nvarchar(10), p.lockMode)
+            FROM
+            (
+                SELECT
+                    name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                    value = pat.a.value('.', 'nvarchar(1024)')
+                FROM bd.bd.nodes('process[1]/@*') AS pat(a)
+            ) AS a
+            PIVOT
+            (
+                MAX(a.value)
+                FOR a.name IN
+                (
+                    currentdbname,
+                    spid,
+                    ecid,
+                    waittime,
+                    lastbatchstarted,
+                    lastbatchcompleted,
+                    waitresource,
+                    status,
+                    priority,
+                    trancount,
+                    clientapp,
+                    hostname,
+                    loginname,
+                    isolationlevel,
+                    logused,
+                    clientoption1,
+                    clientoption2,
+                    id,
+                    schedulerid,
+                    kpid,
+                    sbid,
+                    lastattention,
+                    xactid,
+                    currentdb,
+                    lockTimeout,
+                    hostpid,
+                    taskpriority,
+                    ownerId,
+                    transactionname,
+                    lasttranstarted,
+                    XDES,
+                    lockMode
+                )
+            ) AS p
+        ) AS pa
         WHERE bd.exist('process/@spid') = 1
         AND   (bd.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE, MAXDOP 1);
@@ -5285,44 +5714,133 @@ AND   ca.utc_timestamp < @end_date';
 
         SELECT
             bx.event_time,
-            currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
-            spid = bg.value('(process/@spid)[1]', 'integer'),
-            ecid = bg.value('(process/@ecid)[1]', 'integer'),
+            currentdbname = pa.currentdbname,
+            spid = pa.spid,
+            ecid = pa.ecid,
             query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-            wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-            last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-            last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-            status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-            priority = bg.value('(process/@priority)[1]', 'integer'),
-            transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-            client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-            host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
-            login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
-            isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-            log_used = bg.value('(process/@logused)[1]', 'bigint'),
-            clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-            clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
-            process_id = bg.value('(process/@id)[1]', 'sysname'),
-            scheduler_id = bg.value('(process/@schedulerid)[1]', 'bigint'),
-            kpid = bg.value('(process/@kpid)[1]', 'bigint'),
-            sbid = bg.value('(process/@sbid)[1]', 'bigint'),
-            last_attention = bg.value('(process/@lastattention)[1]', 'datetime2'),
-            xactid = bg.value('(process/@xactid)[1]', 'bigint'),
-            currentdb = bg.value('(process/@currentdb)[1]', 'bigint'),
-            lock_timeout = bg.value('(process/@lockTimeout)[1]', 'bigint'),
-            host_pid = bg.value('(process/@hostpid)[1]', 'bigint'),
-            task_priority = bg.value('(process/@taskpriority)[1]', 'bigint'),
-            owner_id = bg.value('(process/@ownerId)[1]', 'bigint'),
-            transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
-            last_tran_started = bg.value('(process/@lasttranstarted)[1]', 'datetime2'),
-            xdes = bg.value('(process/@XDES)[1]', 'sysname'),
-            lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
+            wait_time = pa.wait_time,
+            last_transaction_started = pa.last_transaction_started,
+            last_transaction_completed = pa.last_transaction_completed,
+            wait_resource = pa.wait_resource,
+            status = pa.status,
+            priority = pa.priority,
+            transaction_count = pa.transaction_count,
+            client_app = pa.client_app,
+            host_name = pa.host_name,
+            login_name = pa.login_name,
+            isolation_level = pa.isolation_level,
+            log_used = pa.log_used,
+            clientoption1 = pa.clientoption1,
+            clientoption2 = pa.clientoption2,
+            process_id = pa.process_id,
+            scheduler_id = pa.scheduler_id,
+            kpid = pa.kpid,
+            sbid = pa.sbid,
+            last_attention = pa.last_attention,
+            xactid = pa.xactid,
+            currentdb = pa.currentdb,
+            lock_timeout = pa.lock_timeout,
+            host_pid = pa.host_pid,
+            task_priority = pa.task_priority,
+            owner_id = pa.owner_id,
+            transaction_name = pa.transaction_name,
+            last_tran_started = pa.last_tran_started,
+            xdes = pa.xdes,
+            lock_mode = pa.lock_mode,
             activity = 'blocking',
             blocked_process_report = bg.query('.')
         INTO #blocking
         FROM #blocking_xml AS bx
         OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocking-process') AS bg(bg)
+        OUTER APPLY
+        (
+            /*
+            One pass over the process attributes, PIVOTed by name. A
+            separate value('(process/@...)[1]') per column walked the
+            whole process element, stack frames and all, 32 times per
+            row. The names compare in Latin1_General_BIN2, so they stay
+            case-sensitive the way the XPath was.
+            */
+            SELECT
+                currentdbname = CONVERT(sysname, p.currentdbname),
+                spid = CONVERT(integer, p.spid),
+                ecid = CONVERT(integer, p.ecid),
+                wait_time = CONVERT(bigint, p.waittime),
+                last_transaction_started = CONVERT(datetime2, p.lastbatchstarted),
+                last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+                wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+                status = CONVERT(nvarchar(10), p.status),
+                priority = CONVERT(integer, p.priority),
+                transaction_count = CONVERT(integer, p.trancount),
+                client_app = CONVERT(nvarchar(256), p.clientapp),
+                host_name = CONVERT(nvarchar(256), p.hostname),
+                login_name = CONVERT(nvarchar(256), p.loginname),
+                isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+                log_used = CONVERT(bigint, p.logused),
+                clientoption1 = CONVERT(bigint, p.clientoption1),
+                clientoption2 = CONVERT(bigint, p.clientoption2),
+                process_id = CONVERT(sysname, p.id),
+                scheduler_id = CONVERT(bigint, p.schedulerid),
+                kpid = CONVERT(bigint, p.kpid),
+                sbid = CONVERT(bigint, p.sbid),
+                last_attention = CONVERT(datetime2, p.lastattention),
+                xactid = CONVERT(bigint, p.xactid),
+                currentdb = CONVERT(bigint, p.currentdb),
+                lock_timeout = CONVERT(bigint, p.lockTimeout),
+                host_pid = CONVERT(bigint, p.hostpid),
+                task_priority = CONVERT(bigint, p.taskpriority),
+                owner_id = CONVERT(bigint, p.ownerId),
+                transaction_name = CONVERT(nvarchar(1024), p.transactionname),
+                last_tran_started = CONVERT(datetime2, p.lasttranstarted),
+                xdes = CONVERT(sysname, p.XDES),
+                lock_mode = CONVERT(nvarchar(10), p.lockMode)
+            FROM
+            (
+                SELECT
+                    name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                    value = pat.a.value('.', 'nvarchar(1024)')
+                FROM bg.bg.nodes('process[1]/@*') AS pat(a)
+            ) AS a
+            PIVOT
+            (
+                MAX(a.value)
+                FOR a.name IN
+                (
+                    currentdbname,
+                    spid,
+                    ecid,
+                    waittime,
+                    lastbatchstarted,
+                    lastbatchcompleted,
+                    waitresource,
+                    status,
+                    priority,
+                    trancount,
+                    clientapp,
+                    hostname,
+                    loginname,
+                    isolationlevel,
+                    logused,
+                    clientoption1,
+                    clientoption2,
+                    id,
+                    schedulerid,
+                    kpid,
+                    sbid,
+                    lastattention,
+                    xactid,
+                    currentdb,
+                    lockTimeout,
+                    hostpid,
+                    taskpriority,
+                    ownerId,
+                    transactionname,
+                    lasttranstarted,
+                    XDES,
+                    lockMode
+                )
+            ) AS p
+        ) AS pa
         WHERE bg.exist('process/@spid') = 1
         AND   (bg.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE, MAXDOP 1);
@@ -5621,8 +6139,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE b.event_time > @max_event_time';
@@ -5636,7 +6156,9 @@ AND   ca.utc_timestamp < @end_date';
                         WHEN b.activity = ''blocking''
                         THEN -1
                         ELSE +1
-                    END
+                    END,
+                    b.spid,
+                    b.ecid
                 OPTION(RECOMPILE);
             ';
 
@@ -5728,9 +6250,7 @@ AND   ca.utc_timestamp < @end_date';
                         THEN 'no blocking found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only)
+                             RTRIM(CONVERT(date, @end_date))
                         ELSE 'no blocking found!'
                     END;
             END;
@@ -5816,9 +6336,17 @@ AND   ca.utc_timestamp < @end_date';
             x.event_date,
             x.id,
             x.victim_id,
+            /*
+            The process element carries the name of the database it ran
+            in (currentdbname), so use that. DB_NAME() of the id is a
+            lookup at run time: once a database is dropped and its id
+            reused, an old deadlock showed the new database's name. The
+            lookup is only the fallback when the element has no name.
+            */
             database_name =
-                ISNULL
+                COALESCE
                 (
+                    x.current_database_name,
                     DB_NAME(x.database_id),
                     N'UNKNOWN'
                 ),
@@ -6113,8 +6641,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE dp.event_date > @max_event_time';
@@ -6223,17 +6753,26 @@ AND   ca.utc_timestamp < @end_date';
             stmtstart,
             stmtend
         )
-        SELECT
+        /*
+        #deadlocks_parsed has one row per process per deadlock, so the
+        same frame repeats. DISTINCT matches the blocking branch.
+        */
+        SELECT DISTINCT
             finding =
                 'available plans for deadlocks',
             dp.database_name,
             dp.query_text,
             sql_handle =
                 CONVERT(varbinary(64), e.x.value('@sqlhandle', 'varchar(130)'), 1),
+            /*
+            The plan lookup joins on these offsets, so hard-coded zeros
+            never matched a cached statement. Read them from the frame,
+            with the same defaults as the blocking branch.
+            */
             stmtstart =
-                0,
+                ISNULL(e.x.value('@stmtstart', 'integer'), 0),
             stmtend =
-                0
+                ISNULL(e.x.value('@stmtend', 'integer'), -1)
         FROM #deadlocks_parsed AS dp
         CROSS APPLY dp.process_xml.nodes('//executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS e(x)
         OPTION(RECOMPILE);
@@ -6267,21 +6806,26 @@ AND   ca.utc_timestamp < @end_date';
                 deqs.total_elapsed_time / 1000.,
             avg_elapsed_time =
                 CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+            /* * 1.0 forces decimal division; bigint / integer truncates */
             executions_per_second =
                 ISNULL
                 (
-                    deqs.execution_count /
-                        NULLIF
-                        (
-                            DATEDIFF
+                    CONVERT
+                    (
+                        decimal(38,2),
+                        deqs.execution_count * 1.0 /
+                            NULLIF
                             (
-                                SECOND,
-                                deqs.creation_time,
-                                NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
-                            ),
-                            0
-                        ),
-                        0
+                                DATEDIFF
+                                (
+                                    SECOND,
+                                    deqs.creation_time,
+                                    NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
+                                ),
+                                0
+                            )
+                    ),
+                    0
                 ),
             total_physical_reads_mb =
                 deqs.total_physical_reads * 8. / 1024.,
@@ -6576,8 +7120,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.10',
-    @version_date = '20261001';
+    @version = '7.11',
+    @version_date = '20261101';
 
 IF @help = 1
 BEGIN
@@ -6892,6 +7436,7 @@ CREATE TABLE
     is_view_created bit NOT NULL DEFAULT 0,
     last_checked datetime2(7) NOT NULL DEFAULT '19000101',
     last_updated datetime2(7) NOT NULL DEFAULT '19000101',
+    is_truncation_warned bit NOT NULL DEFAULT 0,
     output_database sysname NOT NULL,
     output_schema sysname NOT NULL,
     output_table nvarchar(400) NOT NULL
@@ -7079,6 +7624,18 @@ keeper_HumanEvents_ sessions are deliberately left out: they exist to
 survive between runs when @keep_alive = 1, and the logging loop polls
 them. Dropping those is only correct under @cleanup = 1, which the
 cleanup label handles separately.
+
+A running one-shot session can belong to someone else's run that is
+still sampling. @seconds_sample is a tinyint, so a run lasts up to
+255 seconds plus the time to shred the results. The old one-minute
+cutoff dropped those live sessions, and the other run came back empty
+with Msg 15151. Stopped sessions are always orphans. A running one-shot
+session ends with the spid of the run that created it
+(HumanEvents_<event_type>_<guid>_<spid>): it is dropped when that spid is
+this run, or is not currently executing sp_HumanEvents. A run on a long
+shred and output phase therefore keeps its session no matter how long it
+takes. A running session from an older version has no spid in its name,
+so it is still treated as an orphan after 10 minutes.
 */
 IF @azure = 0
 BEGIN
@@ -7094,9 +7651,30 @@ BEGIN
     FROM sys.server_event_sessions AS ses
     LEFT JOIN sys.dm_xe_sessions AS dxe
       ON dxe.name = ses.name
+    CROSS APPLY
+    (
+        SELECT
+            owner_spid =
+                TRY_CONVERT
+                (
+                    integer,
+                    RIGHT(ses.name, NULLIF(CHARINDEX(N'_', REVERSE(ses.name)), 0) - 1)
+                )
+    ) AS os
     WHERE ses.name LIKE N'HumanEvents[_]%'
-    AND  (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR    dxe.create_time IS NULL);
+    AND  (dxe.create_time IS NULL
+    OR    (os.owner_spid IS NULL AND dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME()))
+    OR    os.owner_spid = @@SPID
+    OR    (os.owner_spid IS NOT NULL
+           AND NOT EXISTS
+           (
+               SELECT
+                   1/0
+               FROM sys.dm_exec_requests AS r
+               CROSS APPLY sys.dm_exec_input_buffer(r.session_id, r.request_id) AS ib
+               WHERE r.session_id = os.owner_spid
+               AND   ib.event_info LIKE N'%sp[_]HumanEvents%'
+           )));
 END;
 
 IF @azure = 1
@@ -7113,9 +7691,30 @@ BEGIN
     FROM sys.database_event_sessions AS ses
     LEFT JOIN sys.dm_xe_database_sessions AS dxe
       ON dxe.name = ses.name
+    CROSS APPLY
+    (
+        SELECT
+            owner_spid =
+                TRY_CONVERT
+                (
+                    integer,
+                    RIGHT(ses.name, NULLIF(CHARINDEX(N'_', REVERSE(ses.name)), 0) - 1)
+                )
+    ) AS os
     WHERE ses.name LIKE N'HumanEvents[_]%'
-    AND  (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR    dxe.create_time IS NULL);
+    AND  (dxe.create_time IS NULL
+    OR    (os.owner_spid IS NULL AND dxe.create_time < DATEADD(MINUTE, -10, SYSDATETIME()))
+    OR    os.owner_spid = @@SPID
+    OR    (os.owner_spid IS NOT NULL
+           AND NOT EXISTS
+           (
+               SELECT
+                   1/0
+               FROM sys.dm_exec_requests AS r
+               CROSS APPLY sys.dm_exec_input_buffer(r.session_id, r.request_id) AS ib
+               WHERE r.session_id = os.owner_spid
+               AND   ib.event_info LIKE N'%sp[_]HumanEvents%'
+           )));
 END;
 
 IF EXISTS
@@ -7161,7 +7760,11 @@ END;
 
 IF @debug = 1 BEGIN RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT; END;
 
-/* Give sessions super unique names in case more than one person uses it at a time */
+/*
+Give sessions super unique names in case more than one person uses it at a time.
+The name ends with the spid of the run that created it, so the startup cleanup
+can tell a live run's session from an orphan.
+*/
 IF @keep_alive = 0
 BEGIN
     SET @session_name +=
@@ -7174,7 +7777,9 @@ BEGIN
                 (
                     nvarchar(36),
                     NEWID()
-                ),
+                ) +
+                N'_' +
+                CONVERT(nvarchar(11), @@SPID),
                 N'-',
                 N''
             );
@@ -7626,6 +8231,20 @@ BEGIN
     RAISERROR(N'@session_id and @username do not apply to blocking, because a background task raises the blocked process report. sp_HumanEvents collects blocking from every session and user.', 0, 1) WITH NOWAIT;
 END;
 
+/*
+The blocking session filters @object_name on the report's object_id.
+SQL Server fills that in with the table's object_id only for OBJECT
+(table-level) lock waits. KEY waits carry an internal allocation id and
+PAGE and RID waits carry 0, so row and page blocking on the table is
+filtered out before it is collected. Say so instead of returning an
+empty result that looks like no blocking happened.
+*/
+IF  @event_type LIKE N'%lock%'
+AND @object_name <> N''
+BEGIN
+    RAISERROR(N'Warning: with @object_name, blocking is only captured for table-level (OBJECT) lock waits on %s. Reports for key, page and row lock waits do not carry the table''s object_id, so they are not collected. To see that blocking, leave @object_name empty and look at wait_resource.', 10, 1, @fully_formed_babby) WITH NOWAIT;
+END;
+
 /* validatabase name */
 IF @debug = 1 BEGIN RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT; END;
 IF @database_name <> N''
@@ -7769,6 +8388,21 @@ BEGIN
             RAISERROR(N'@output_schema_name can''t blank when outputting to tables or cleaning up', 11, 1) WITH NOWAIT;
             RETURN;
         END;
+END;
+
+/*
+Cleanup has to know where the tables and views are. Without an output
+database the run used to skip the cleanup label and start a capture.
+*/
+IF  @cleanup = 1
+AND
+(
+     @output_database_name = N''
+  OR @output_schema_name = N''
+)
+BEGIN
+    RAISERROR(N'@cleanup = 1 needs @output_database_name and @output_schema_name to find the tables and views to drop. Nothing was cleaned up.', 11, 1) WITH NOWAIT;
+    RETURN;
 END;
 
 
@@ -8106,10 +8740,17 @@ SET @session_filter_waits +=
         ISNULL(@username_filter, N'')
     );
 
-/* For query plans, which can also filter on memory required */
+/*
+For query plans, which can also filter on memory required.
+The app and host filters belong here too: without them, actual plans
+were collected for every application, and their grants were added to
+the totals of the queries the filters did keep.
+*/
 SET @session_filter_query_plans +=
     (
         ISNULL(@query_duration_filter, N'') +
+        ISNULL(@client_app_name_filter, N'') +
+        ISNULL(@client_hostname_filter, N'') +
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
         ISNULL(@username_filter, N'') +
@@ -8282,7 +8923,53 @@ BEGIN
 END;
 ELSE
 BEGIN
-    IF @debug = 1 BEGIN RAISERROR(@session_sql, 0, 1) WITH NOWAIT; END;
+    IF @debug = 1
+    BEGIN
+        /*
+        RAISERROR cuts messages at 2,047 characters, which lost the
+        target and WITH clause of longer sessions, and PRINT cuts at
+        4,000. Print the DDL in tiles of at most 4,000 characters, each
+        ending at the last line break before the boundary so a tile
+        never splits a token, however long the session gets.
+        */
+        DECLARE
+            @print_pos integer = 1,
+            @print_len integer = LEN(@session_sql),
+            @print_take integer = 0,
+            @print_break integer = 0;
+
+        WHILE @print_pos <= @print_len
+        BEGIN
+            SELECT
+                @print_take = 4000,
+                @print_break = 0;
+
+            IF @print_pos + 3999 < @print_len
+            BEGIN
+                /* Position of the last line break inside this tile, counted from the end */
+                SELECT
+                    @print_break =
+                        CHARINDEX
+                        (
+                            NCHAR(10),
+                            REVERSE(SUBSTRING(@session_sql, @print_pos, 4000))
+                        );
+            END;
+
+            /* No line break in the tile means a hard split at 4,000 */
+            IF @print_break > 0
+            BEGIN
+                SELECT
+                    @print_take = 4000 - @print_break;
+            END;
+
+            PRINT SUBSTRING(@session_sql, @print_pos, @print_take);
+
+            /* A tile that ended at a line break skips the break itself */
+            SELECT
+                @print_pos += @print_take + CASE WHEN @print_break > 0 THEN 1 ELSE 0 END;
+        END;
+    END;
     EXECUTE (@session_sql);
 
     /* This starts the event session */
@@ -8411,6 +9098,25 @@ BEGIN
         NULL,
         NULL
     ) AS f;
+END;
+
+
+/*
+sys.dm_xe_session_targets returns about 4 MB of ring buffer XML at
+most, and it returns the oldest events. Past that it marks the XML
+truncated="1" and the newest events are missing, so say so rather than
+return incomplete results that look complete.
+*/
+IF  LOWER(@target_output) = N'ring_buffer'
+AND EXISTS
+(
+    SELECT
+        1/0
+    FROM #x AS x
+    WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+)
+BEGIN
+    RAISERROR(N'Warning: the ring buffer XML for session %s was truncated, so the newest events are missing from these results. Use a shorter @seconds_sample, tighter filters, @skip_plans = 1, or @target_output = N''event_file''.', 10, 1, @session_name) WITH NOWAIT;
 END;
 
 
@@ -8724,17 +9430,25 @@ BEGIN
             q.query_plan_hash_signed,
             q.query_hash_signed,
             q.plan_handle,
+            /*
+            #totals is one row per hash pair. With @skip_plans = 1 the
+            join lets every plan handle of that pair through, so the
+            plan handle stays out of the partition there; otherwise each
+            plan handle came back as its own row carrying the whole
+            pair's totals.
+            */
             n =
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
                         q.query_plan_hash_signed,
                         q.query_hash_signed,
-                        q.plan_handle
+                        CASE
+                            WHEN @skip_plans = 0
+                            THEN q.plan_handle
+                        END
                     ORDER BY
-                        q.query_plan_hash_signed,
-                        q.query_hash_signed,
-                        q.plan_handle
+                        q.event_time DESC
                 )
         FROM #queries AS q
         JOIN #totals AS t
@@ -9528,7 +10242,19 @@ BEGIN
                 ),
                 oa.c.value('@timestamp', 'datetime2')
             ),
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+        /*
+        DB_NAME(0) returns the current database, so a report with
+        database_id 0 (parallel workers waiting on each other) was
+        labeled with the caller's database. The name the event carries
+        comes first, so a reused database_id still shows the name the
+        event was recorded with; DB_NAME is the fallback.
+        */
+        database_name =
+            COALESCE
+            (
+                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+            ),
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -9623,7 +10349,19 @@ BEGIN
                 ),
                 oa.c.value('@timestamp', 'datetime2')
             ),
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+        /*
+        DB_NAME(0) returns the current database, so a report with
+        database_id 0 (parallel workers waiting on each other) was
+        labeled with the caller's database. The name the event carries
+        comes first, so a reused database_id still shows the name the
+        event was recorded with; DB_NAME is the fallback.
+        */
+        database_name =
+            COALESCE
+            (
+                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+            ),
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -9802,7 +10540,7 @@ BEGIN
                 kheb.contentious_object,
                 N'Unresolved: ' +
                 N'database: ' +
-                kheb.database_name +
+                ISNULL(kheb.database_name, N'unknown') +
                 N' object_id: ' +
                 RTRIM(kheb.object_id)
             ),
@@ -10034,7 +10772,9 @@ BEGIN
             WHEN b.activity = 'blocking'
             THEN -1
             ELSE +1
-        END
+        END,
+        b.spid,
+        b.ecid
     OPTION(RECOMPILE);
 
     SELECT DISTINCT
@@ -10059,8 +10799,15 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE (b.database_name = @database_name
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process[@spid = sql:column("b.spid") and @ecid = sql:column("b.ecid")]/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        /*
+        Every #blocks row holds the whole report, so each branch reads
+        only the frames of the process the row describes. Without this,
+        the blocked row's text was paired with the blocker's frames and
+        the blocking row's text with the victim's frames.
+        */
+        WHERE b.activity = 'blocking'
+        AND  (b.database_name = @database_name
                 OR @database_name = N'')
         AND  (b.contentious_object = @object_name
                 OR @object_name = N'')
@@ -10085,7 +10832,8 @@ BEGIN
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE (b.database_name = @database_name
+        WHERE b.activity = 'blocked'
+        AND  (b.database_name = @database_name
                 OR @database_name = N'')
         AND  (b.contentious_object = @object_name
                 OR @object_name = N'')
@@ -10137,14 +10885,15 @@ BEGIN
             deqs.total_logical_writes * 8. / 1024.,
         total_logical_reads_mb =
             deqs.total_logical_reads * 8. / 1024.,
+        /* grant columns are already KB, not 8 KB pages */
         min_grant_mb =
-            deqs.min_grant_kb * 8. / 1024.,
+            deqs.min_grant_kb / 1024.,
         max_grant_mb =
-            deqs.max_grant_kb * 8. / 1024.,
+            deqs.max_grant_kb / 1024.,
         min_used_grant_mb =
-            deqs.min_used_grant_kb * 8. / 1024.,
+            deqs.min_used_grant_kb / 1024.,
         max_used_grant_mb =
-            deqs.max_used_grant_kb * 8. / 1024.,
+            deqs.max_used_grant_kb / 1024.,
         deqs.min_reserved_threads,
         deqs.max_reserved_threads,
         deqs.min_used_threads,
@@ -10749,10 +11498,10 @@ BEGIN
         SELECT N'HumanEvents_Parameterization', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0050006100720061006D00650074006500720069007A006100740069006F006E000D000A00410053000D000A0057004900540048000D000A0020002000200020006300700071002000410053000D000A0028000D000A002000200020002000530045004C004500430054000D000A0020002000200020002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020002000710075006500720079005F0068006100730068002C000D000A002000200020002000200020002000200074006F00740061006C005F0063006F006D00700069006C006500730020003D00200043004F0055004E0054005F0042004900470028002A0029002C000D000A002000200020002000200020002000200070006C0061006E005F0063006F0075006E00740020003D00200043004F0055004E0054002800440049005300540049004E00430054002000710075006500720079005F0070006C0061006E005F00680061007300680029002C000D000A002000200020002000200020002000200074006F00740061006C005F0063006F006D00700069006C0065005F0063007000750020003D002000530055004D00280063006F006D00700069006C0065005F006300700075005F00740069006D0065005F006D00730029002C000D000A00200020002000200020002000200020006100760067005F0063006F006D00700069006C0065005F0063007000750020003D002000410056004700280063006F006D00700069006C0065005F006300700075005F00740069006D0065005F006D00730029002C000D000A00200020002000200020002000200020006D00610078005F0063006F006D00700069006C0065005F0063007000750020003D0020004D0041005800280063006F006D00700069006C0065005F006300700075005F00740069006D0065005F006D00730029002C000D000A002000200020002000200020002000200074006F00740061006C005F0063006F006D00700069006C0065005F006400750072006100740069006F006E0020003D002000530055004D00280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D00730029002C000D000A00200020002000200020002000200020006100760067005F0063006F006D00700069006C0065005F006400750072006100740069006F006E0020003D002000410056004700280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D00730029002C000D000A00200020002000200020002000200020006D00610078005F0063006F006D00700069006C0065005F006400750072006100740069006F006E0020003D0020004D0041005800280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D00730029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A002000200020002000470052004F00550050002000420059000D000A0020002000200020002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020002000710075006500720079005F0068006100730068000D000A0029000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A00200020002000200063002E00640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020006B002E00730071006C005F0074006500780074002C000D000A0020002000200020006B002E00690073005F0070006100720061006D00650074006500720069007A00610062006C0065002C000D000A00200020002000200063002E0074006F00740061006C005F0063006F006D00700069006C00650073002C000D000A00200020002000200063002E0070006C0061006E005F0063006F0075006E0074002C000D000A00200020002000200063002E0074006F00740061006C005F0063006F006D00700069006C0065005F006300700075002C000D000A00200020002000200063002E006100760067005F0063006F006D00700069006C0065005F006300700075002C000D000A00200020002000200063002E006D00610078005F0063006F006D00700069006C0065005F006300700075002C000D000A00200020002000200063002E0074006F00740061006C005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A00200020002000200063002E006100760067005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A00200020002000200063002E006D00610078005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A0020002000200020006B002E00710075006500720079005F0070006100720061006D005F0074007900700065002C000D000A0020002000200020006B002E00690073005F006300610063006800650064002C000D000A0020002000200020006B002E00690073005F007200650063006F006D00700069006C00650064002C000D000A0020002000200020006B002E0063006F006D00700069006C0065005F0063006F00640065002C000D000A0020002000200020006B002E006800610073005F006C00690074006500720061006C0073002C000D000A0020002000200020006B002E0070006100720061006D00650074006500720069007A00650064005F00760061006C007500650073005F0063006F0075006E0074000D000A00460052004F004D002000630070007100200041005300200063000D000A00430052004F005300530020004100500050004C0059000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800310029000D000A00200020002000200020002000200020006B002E002A000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D0020004100530020006B000D000A0020002000200020005700480045005200450020006B002E00710075006500720079005F00680061007300680020003D00200063002E00710075006500720079005F0068006100730068000D000A0020002000200020004F00520044004500520020004200590020006B002E0069006400200044004500530043000D000A00290020004100530020006B000D000A004F00520044004500520020004200590020000D000A00200020002000200063002E0074006F00740061006C005F0063006F006D00700069006C0065007300200044004500530043003B00
         WHERE @parameterization_events = 1;
         INSERT #view_check (view_name, view_definition)
-        SELECT N'HumanEvents_Queries', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0051007500650072006900650073000D000A00410053000D000A0057004900540048000D000A002000200020002000710075006500720079005F006100670067002000410053000D000A0028000D000A002000200020002000530045004C004500430054000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000690073005F0065007800650063007500740069006F006E0020003D00200031002C000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C002000300029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003C003E0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0020002000200020000D000A00200020002000200055004E0049004F004E00200041004C004C000D000A0020002000200020000D000A002000200020002000530045004C004500430054000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000690073005F0065007800650063007500740069006F006E0020003D00200030002C000D000A00200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0077007200690074006500730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F007700720069007400650073005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D0020004E0055004C004C000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003D0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0029002C000D000A00200020002000200074006F00740061006C0073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A002000200020002000200020002000200065007800650063007500740069006F006E00730020003D0020000D000A00200020002000200020002000200020002000200020002000530055004D00280043004F004E005600450052005400280062006900670069006E0074002C00200071002E00690073005F0065007800650063007500740069006F006E00290029002C000D000A00200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006300700075005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0077007200690074006500730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007700720069007400650073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0072006F00770073002C00200030002E00290029002C000D000A00200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006300700075005F006D0073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006400750072006100740069006F006E005F006D0073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0077007200690074006500730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F007700720069007400650073005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F007300700069006C006C0073005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0072006F00770073002C0020003000290029000D000A002000200020002000460052004F004D002000710075006500720079005F00610067006700200041005300200071000D000A002000200020002000470052004F00550050002000420059000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0029002C000D000A002000200020002000710075006500720079005F0072006500730075006C00740073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A0020002000200020002000200020002000710032002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A002000200020002000200020002000200074002E0065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200074002E006100760067005F0072006F00770073002C000D000A002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A002000200020002000200020002000200071002E0064006F0070002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A00200020002000200020002000200020006E0020003D00200052004F0057005F004E0055004D004200450052002800290020004F0056004500520020000D000A0020002000200020002000200020002000200020002000200028000D000A00200020002000200020002000200020002000200020002000200020002000200050004100520054004900540049004F004E002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000200020002000200020004F0052004400450052002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000200029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A0020002000200020004A004F0049004E00200074006F00740061006C007300200041005300200074000D000A00200020002000200020002000200020004F004E002000200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E004400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E004400200071002E0070006C0061006E005F00680061006E0064006C00650020003D00200074002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000430052004F005300530020004100500050004C0059000D000A00200020002000200028000D000A0020002000200020002000200020002000530045004C00450043005400200054004F00500020002800310029000D000A00200020002000200020002000200020002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D002000710032002E00730074006100740065006D0065006E0074000D000A0020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D002000410053002000710032000D000A002000200020002000200020002000200057004800450052004500200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E00440020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E00440020002000200071002E0070006C0061006E005F00680061006E0064006C00650020003D002000710032002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000200020002000200041004E004400200020002000710032002E00730074006100740065006D0065006E00740020004900530020004E004F00540020004E0055004C004C000D000A00200020002000200020002000200020004F00520044004500520020004200590020000D000A00200020002000200020002000200020002000200020002000710032002E006500760065006E0074005F00740069006D006500200044004500530043000D000A00200020002000200029002000410053002000710032000D000A00200020002000200057004800450052004500200071002E00730068006F00770070006C0061006E005F0078006D006C002E0065007800690073007400280027002A002700290020003D00200031000D000A0029000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A00200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A00200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730074006100740065006D0065006E0074005F007400650078007400200041005300200078006D006C0029002C000D000A002000200020002000730071006C005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730071006C005F007400650078007400200041005300200078006D006C0029002C000D000A00200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A00200020002000200071002E0065007800650063007500740069006F006E0073002C000D000A00200020002000200071002E0074006F00740061006C005F006300700075005F006D0073002C000D000A00200020002000200071002E006100760067005F006300700075005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F007700720069007400650073002C000D000A00200020002000200071002E006100760067005F007700720069007400650073002C000D000A00200020002000200071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0072006F00770073002C000D000A00200020002000200071002E006100760067005F0072006F00770073002C000D000A00200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A00200020002000200071002E0064006F0070002C000D000A00200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00460052004F004D002000710075006500720079005F0072006500730075006C0074007300200041005300200071000D000A0057004800450052004500200071002E006E0020003D00200031003B00
+        SELECT N'HumanEvents_Queries', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0051007500650072006900650073000D000A00410053000D000A0057004900540048000D000A002000200020002000710075006500720079005F006100670067002000410053000D000A0028000D000A002000200020002000530045004C004500430054000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000690073005F0065007800650063007500740069006F006E0020003D00200031002C000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C002000300029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003C003E0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0020002000200020000D000A00200020002000200055004E0049004F004E00200041004C004C000D000A0020002000200020000D000A002000200020002000530045004C004500430054000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000690073005F0065007800650063007500740069006F006E0020003D00200030002C000D000A00200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0077007200690074006500730020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F007700720069007400650073005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000490053004E0055004C004C00280071002E006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D0020004E0055004C004C000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003D0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0029002C000D000A00200020002000200074006F00740061006C0073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A002000200020002000200020002000200065007800650063007500740069006F006E00730020003D0020000D000A00200020002000200020002000200020002000200020002000530055004D00280043004F004E005600450052005400280062006900670069006E0074002C00200071002E00690073005F0065007800650063007500740069006F006E00290029002C000D000A00200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006300700075005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0077007200690074006500730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007700720069007400650073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0072006F00770073002C00200030002E00290029002C000D000A00200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D002000410056004700280071002E006100760067005F006300700075005F006D00730029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D002000410056004700280071002E006100760067005F006C006F0067006900630061006C005F007200650061006400730029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D002000410056004700280071002E006100760067005F0070006800790073006900630061006C005F007200650061006400730029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D002000410056004700280071002E006100760067005F006400750072006100740069006F006E005F006D00730029002C000D000A00200020002000200020002000200020006100760067005F0077007200690074006500730020003D002000410056004700280071002E006100760067005F007700720069007400650073005F006D00620029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D002000410056004700280071002E006100760067005F007300700069006C006C0073005F006D00620029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000410056004700280071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620029002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000410056004700280071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620029002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D002000410056004700280071002E006100760067005F0072006F007700730029000D000A002000200020002000460052004F004D002000710075006500720079005F00610067006700200041005300200071000D000A002000200020002000470052004F00550050002000420059000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0029002C000D000A002000200020002000710075006500720079005F0072006500730075006C00740073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A0020002000200020002000200020002000710032002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A002000200020002000200020002000200074002E0065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200074002E006100760067005F0072006F00770073002C000D000A002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A002000200020002000200020002000200071002E0064006F0070002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A00200020002000200020002000200020006E0020003D00200052004F0057005F004E0055004D004200450052002800290020004F0056004500520020000D000A0020002000200020002000200020002000200020002000200028000D000A00200020002000200020002000200020002000200020002000200020002000200050004100520054004900540049004F004E002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000200020002000200020004F0052004400450052002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000200029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A0020002000200020004A004F0049004E00200074006F00740061006C007300200041005300200074000D000A00200020002000200020002000200020004F004E002000200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E004400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E004400200071002E0070006C0061006E005F00680061006E0064006C00650020003D00200074002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000430052004F005300530020004100500050004C0059000D000A00200020002000200028000D000A0020002000200020002000200020002000530045004C00450043005400200054004F00500020002800310029000D000A00200020002000200020002000200020002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D002000710032002E00730074006100740065006D0065006E0074000D000A0020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D002000410053002000710032000D000A002000200020002000200020002000200057004800450052004500200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E00440020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E00440020002000200071002E0070006C0061006E005F00680061006E0064006C00650020003D002000710032002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000200020002000200041004E004400200020002000710032002E00730074006100740065006D0065006E00740020004900530020004E004F00540020004E0055004C004C000D000A00200020002000200020002000200020004F00520044004500520020004200590020000D000A00200020002000200020002000200020002000200020002000710032002E006500760065006E0074005F00740069006D006500200044004500530043000D000A00200020002000200029002000410053002000710032000D000A00200020002000200057004800450052004500200071002E00730068006F00770070006C0061006E005F0078006D006C002E0065007800690073007400280027002A002700290020003D00200031000D000A0029000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A00200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A00200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730074006100740065006D0065006E0074005F007400650078007400200041005300200078006D006C0029002C000D000A002000200020002000730071006C005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730071006C005F007400650078007400200041005300200078006D006C0029002C000D000A00200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A00200020002000200071002E0065007800650063007500740069006F006E0073002C000D000A00200020002000200071002E0074006F00740061006C005F006300700075005F006D0073002C000D000A00200020002000200071002E006100760067005F006300700075005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F007700720069007400650073002C000D000A00200020002000200071002E006100760067005F007700720069007400650073002C000D000A00200020002000200071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0072006F00770073002C000D000A00200020002000200071002E006100760067005F0072006F00770073002C000D000A00200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A00200020002000200071002E0064006F0070002C000D000A00200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00460052004F004D002000710075006500720079005F0072006500730075006C0074007300200041005300200071000D000A0057004800450052004500200071002E006E0020003D00200031003B00
         WHERE @skip_plans = 0;
         INSERT #view_check (view_name, view_definition)
-        SELECT N'HumanEvents_Queries_np', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0051007500650072006900650073005F006E0070000D000A00410053000D000A0057004900540048000D000A002000200020002000710075006500720079005F006100670067002000410053000D000A0028000D000A002000200020002000530045004C004500430054000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000690073005F0065007800650063007500740069006F006E0020003D00200031002C000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C002000300029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003C003E0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0029002C000D000A00200020002000200074006F00740061006C0073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A002000200020002000200020002000200065007800650063007500740069006F006E00730020003D0020000D000A00200020002000200020002000200020002000200020002000530055004D00280043004F004E005600450052005400280062006900670069006E0074002C00200071002E00690073005F0065007800650063007500740069006F006E00290029002C000D000A00200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006300700075005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0077007200690074006500730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007700720069007400650073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0072006F00770073002C00200030002E00290029002C000D000A00200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006300700075005F006D0073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006400750072006100740069006F006E005F006D0073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0077007200690074006500730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F007700720069007400650073005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F007300700069006C006C0073005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0072006F00770073002C0020003000290029000D000A002000200020002000460052004F004D002000710075006500720079005F00610067006700200041005300200071000D000A002000200020002000470052004F00550050002000420059000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0029002C000D000A002000200020002000710075006500720079005F0072006500730075006C00740073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A0020002000200020002000200020002000710032002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A002000200020002000200020002000200074002E0065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200074002E006100760067005F0072006F00770073002C000D000A002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A002000200020002000200020002000200071002E0064006F0070002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A00200020002000200020002000200020006E0020003D00200052004F0057005F004E0055004D004200450052002800290020004F0056004500520020000D000A0020002000200020002000200020002000200020002000200028000D000A00200020002000200020002000200020002000200020002000200020002000200050004100520054004900540049004F004E002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000200020002000200020004F0052004400450052002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000200029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A0020002000200020004A004F0049004E00200074006F00740061006C007300200041005300200074000D000A002000200020002000200020004F004E002000200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200041004E004400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A0020002000200020004F00550054004500520020004100500050004C0059000D000A00200020002000200028000D000A0020002000200020002000200020002000530045004C00450043005400200054004F00500020002800310029000D000A00200020002000200020002000200020002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D002000710032002E00730074006100740065006D0065006E0074000D000A0020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D002000410053002000710032000D000A002000200020002000200020002000200057004800450052004500200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E00440020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E004400200020002000710032002E00730074006100740065006D0065006E00740020004900530020004E004F00540020004E0055004C004C000D000A00200020002000200020002000200020004F00520044004500520020004200590020000D000A00200020002000200020002000200020002000200020002000710032002E006500760065006E0074005F00740069006D006500200044004500530043000D000A00200020002000200029002000410053002000710032000D000A0029000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A00200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730074006100740065006D0065006E0074005F007400650078007400200041005300200078006D006C0029002C000D000A002000200020002000730071006C005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730071006C005F007400650078007400200041005300200078006D006C0029002C000D000A00200020002000200071002E0065007800650063007500740069006F006E0073002C000D000A00200020002000200071002E0074006F00740061006C005F006300700075005F006D0073002C000D000A00200020002000200071002E006100760067005F006300700075005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F007700720069007400650073002C000D000A00200020002000200071002E006100760067005F007700720069007400650073002C000D000A00200020002000200071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0072006F00770073002C000D000A00200020002000200071002E006100760067005F0072006F00770073002C000D000A00200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00460052004F004D002000710075006500720079005F0072006500730075006C0074007300200041005300200071000D000A0057004800450052004500200071002E006E0020003D00200031003B00
+        SELECT N'HumanEvents_Queries_np', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0051007500650072006900650073005F006E0070000D000A00410053000D000A0057004900540048000D000A002000200020002000710075006500720079005F006100670067002000410053000D000A0028000D000A002000200020002000530045004C004500430054000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000690073005F0065007800650063007500740069006F006E0020003D00200031002C000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007700720069007400650073005F006D00620020003D002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E0029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004E0055004C004C002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C002000300029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003C003E0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0029002C000D000A00200020002000200074006F00740061006C0073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200065007800650063007500740069006F006E00730020003D0020000D000A00200020002000200020002000200020002000200020002000530055004D00280043004F004E005600450052005400280062006900670069006E0074002C00200071002E00690073005F0065007800650063007500740069006F006E00290029002C000D000A00200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A002000200020002000200020002000200074006F00740061006C005F006300700075005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006300700075005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006C006F0067006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0070006800790073006900630061006C005F007200650061006400730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006400750072006100740069006F006E005F006D00730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0077007200690074006500730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007700720069007400650073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F007300700069006C006C0073005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A002000200020002000200020002000200074006F00740061006C005F0072006F007700730020003D002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0072006F00770073002C00200030002E00290029002C000D000A00200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A00200020002000200020002000200020006100760067005F006300700075005F006D00730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006300700075005F006D0073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006C006F0067006900630061006C005F007200650061006400730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0070006800790073006900630061006C005F007200650061006400730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006400750072006100740069006F006E005F006D00730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006400750072006100740069006F006E005F006D0073002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0077007200690074006500730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F007700720069007400650073005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F007300700069006C006C0073005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F007300700069006C006C0073005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D00620020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290029002C000D000A00200020002000200020002000200020006100760067005F0072006F007700730020003D0020004100560047002800490053004E0055004C004C00280071002E006100760067005F0072006F00770073002C0020003000290029000D000A002000200020002000460052004F004D002000710075006500720079005F00610067006700200041005300200071000D000A002000200020002000470052004F00550050002000420059000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A0029002C000D000A002000200020002000710075006500720079005F0072006500730075006C00740073002000410053000D000A0028000D000A002000200020002000530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A0020002000200020002000200020002000710032002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A002000200020002000200020002000200074002E0065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200074002E0074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200074002E006100760067005F0072006F00770073002C000D000A002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A002000200020002000200020002000200071002E0064006F0070002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A00200020002000200020002000200020006E0020003D00200052004F0057005F004E0055004D004200450052002800290020004F0056004500520020000D000A0020002000200020002000200020002000200020002000200028000D000A00200020002000200020002000200020002000200020002000200020002000200050004100520054004900540049004F004E002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200020002000200020002000200020002000200020004F0052004400450052002000420059000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E006500760065006E0074005F00740069006D006500200044004500530043000D000A0020002000200020002000200020002000200020002000200029000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A0020002000200020004A004F0049004E00200074006F00740061006C007300200041005300200074000D000A002000200020002000200020004F004E002000200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200041004E004400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A0020002000200020004F00550054004500520020004100500050004C0059000D000A00200020002000200028000D000A0020002000200020002000200020002000530045004C00450043005400200054004F00500020002800310029000D000A00200020002000200020002000200020002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D002000710032002E00730074006100740065006D0065006E0074000D000A0020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D002000410053002000710032000D000A002000200020002000200020002000200057004800450052004500200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E00440020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A002000200020002000200020002000200041004E004400200020002000710032002E00730074006100740065006D0065006E00740020004900530020004E004F00540020004E0055004C004C000D000A00200020002000200020002000200020004F00520044004500520020004200590020000D000A00200020002000200020002000200020002000200020002000710032002E006500760065006E0074005F00740069006D006500200044004500530043000D000A00200020002000200029002000410053002000710032000D000A0029000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A00200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000730074006100740065006D0065006E0074005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730074006100740065006D0065006E0074005F007400650078007400200041005300200078006D006C0029002C000D000A002000200020002000730071006C005F00740065007800740020003D0020000D000A00200020002000200020002000200020005400520059005F004300410053005400280071002E00730071006C005F007400650078007400200041005300200078006D006C0029002C000D000A00200020002000200071002E0065007800650063007500740069006F006E0073002C000D000A00200020002000200071002E0074006F00740061006C005F006300700075005F006D0073002C000D000A00200020002000200071002E006100760067005F006300700075005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200071002E0074006F00740061006C005F007700720069007400650073002C000D000A00200020002000200071002E006100760067005F007700720069007400650073002C000D000A00200020002000200071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200071002E0074006F00740061006C005F0072006F00770073002C000D000A00200020002000200071002E006100760067005F0072006F00770073002C000D000A00200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00460052004F004D002000710075006500720079005F0072006500730075006C0074007300200041005300200071000D000A0057004800450052004500200071002E006E0020003D00200031003B00
         WHERE @skip_plans = 1;
         INSERT #view_check (view_name, view_definition)
         SELECT N'HumanEvents_RecompilesByDatabaseAndObject', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F005200650063006F006D00700069006C0065007300420079004400610074006100620061007300650041006E0064004F0062006A006500630074000D000A00410053000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A0020002000200020006D0069006E005F006500760065006E0074005F00740069006D00650020003D0020004D0049004E0028006500760065006E0074005F00740069006D00650029002C000D000A0020002000200020006D00610078005F006500760065006E0074005F00740069006D00650020003D0020004D004100580028006500760065006E0074005F00740069006D00650029002C000D000A002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020006F0062006A006500630074005F006E0061006D00650020003D0020000D000A002000200020002000200020002000200043004100530045000D000A002000200020002000200020002000200020002000200020005700480045004E0020006F0062006A006500630074005F006E0061006D00650020003D0020004E00270027000D000A002000200020002000200020002000200020002000200020005400480045004E0020004E0027004E002F00410027000D000A0020002000200020002000200020002000200020002000200045004C005300450020006F0062006A006500630074005F006E0061006D0065000D000A002000200020002000200020002000200045004E0044002C000D000A00200020002000200074006F00740061006C005F0063006F006D00700069006C006500730020003D00200043004F0055004E0054005F0042004900470028002A0029002C000D000A00200020002000200074006F00740061006C005F0063006F006D00700069006C0065005F0063007000750020003D002000530055004D00280063006F006D00700069006C0065005F006300700075005F006D00730029002C000D000A0020002000200020006100760067005F0063006F006D00700069006C0065005F0063007000750020003D002000410056004700280063006F006D00700069006C0065005F006300700075005F006D00730029002C000D000A0020002000200020006D00610078005F0063006F006D00700069006C0065005F0063007000750020003D0020004D0041005800280063006F006D00700069006C0065005F006300700075005F006D00730029002C000D000A00200020002000200074006F00740061006C005F0063006F006D00700069006C0065005F006400750072006100740069006F006E0020003D002000530055004D00280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D00730029002C000D000A0020002000200020006100760067005F0063006F006D00700069006C0065005F006400750072006100740069006F006E0020003D002000410056004700280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D00730029002C000D000A0020002000200020006D00610078005F0063006F006D00700069006C0065005F006400750072006100740069006F006E0020003D0020004D0041005800280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D00730029000D000A00460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A00470052004F00550050002000420059000D000A002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020006F0062006A006500630074005F006E0061006D0065000D000A004F005200440045005200200042005900200074006F00740061006C005F0063006F006D00700069006C0065007300200044004500530043003B00
@@ -11123,7 +11872,12 @@ FROM
                     ), oa.c.value(''@timestamp'', ''datetime2'')
                 ),
             activity = ''blocked'',
-            database_name = DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer'')),
+            database_name =
+                COALESCE
+                (
+                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
+                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
+                ),
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
             transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
@@ -11174,7 +11928,12 @@ FROM
                     oa.c.value(''@timestamp'', ''datetime2'')
                 ),
             activity = ''blocking'',
-            database_name = DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer'')),
+            database_name =
+                COALESCE
+                (
+                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
+                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
+                ),
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
             transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
@@ -11532,6 +12291,40 @@ ORDER BY
                     NULL,
                     NULL
                 ) AS f;
+            END;
+
+            /*
+            The same ring buffer cap as the one-shot path, and worse
+            here: truncated XML holds only the oldest events, so once
+            those are logged the @date_filter watermark rejects
+            everything SQL Server returns, and nothing newer from this
+            session is ever logged. Warn once per session.
+            */
+            IF  LOWER(@target_output) = N'ring_buffer'
+            AND EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #x AS x
+                WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+            )
+            AND EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #human_events_worker AS hew
+                WHERE hew.id = @min_id
+                AND   hew.is_truncation_warned = 0
+            )
+            BEGIN
+                RAISERROR(N'Warning: the ring buffer XML for session %s is truncated. SQL Server returns only the oldest events, so newer events from this session are not logged. Recreate the session with @target_output = N''event_file'' and run this collector with @target_output = N''event_file'', or use @skip_plans = 1 or tighter filters.', 10, 1, @event_type_check) WITH NOWAIT;
+
+                UPDATE
+                    hew
+                SET
+                    hew.is_truncation_warned = 1
+                FROM #human_events_worker AS hew
+                WHERE hew.id = @min_id;
             END;
 
             /*
@@ -12024,7 +12817,7 @@ ALTER PROCEDURE
     dbo.sp_HumanEventsBlockViewer
 (
     @session_name sysname = N'keeper_HumanEvents_blocking', /*Event session name*/
-    @target_type sysname = NULL, /*ring buffer, file, or table*/
+    @target_type sysname = NULL, /*ring_buffer, event_file, or table*/
     @start_date datetime2 = NULL, /*when to start looking for blocking*/
     @end_date datetime2 = NULL, /*when to stop looking for blocking*/
     @database_name sysname = NULL, /*target a specific database*/
@@ -12055,8 +12848,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.10',
-    @version_date = '20261001';
+    @version = '5.11',
+    @version_date = '20261101';
 
 IF @help = 1
 BEGIN
@@ -12079,7 +12872,7 @@ BEGIN
         description =
             CASE ap.name
                  WHEN N'@session_name' THEN 'name of the extended event session to pull from'
-                 WHEN N'@target_type' THEN 'target type of the extended event session (ring buffer, file) or ''table'' to read from a table'
+                 WHEN N'@target_type' THEN 'target type of the extended event session (ring_buffer, event_file) or ''table'' to read from a table; NULL detects it from the session'
                  WHEN N'@start_date' THEN 'filter by date'
                  WHEN N'@end_date' THEN 'filter by date'
                  WHEN N'@database_name' THEN 'filter by database name'
@@ -12118,7 +12911,7 @@ BEGIN
                  WHEN N'@log_database_name' THEN N'any valid database name'
                  WHEN N'@log_schema_name' THEN N'any valid schema name'
                  WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
-                 WHEN N'@log_retention_days' THEN N'a positive integer'
+                 WHEN N'@log_retention_days' THEN N'a positive integer, or 0 to keep logs indefinitely'
                  WHEN N'@max_blocking_events' THEN N'0 to 2147483647 (0 = unlimited)'
                  WHEN N'@skip_execution_plans' THEN N'0 or 1'
                  WHEN N'@help' THEN '0 or 1'
@@ -12249,11 +13042,13 @@ AND @session_name NOT LIKE N'system%health'
 /*
 Table-source mode reads blocked process report XML somebody already
 captured into a table, so the server's CURRENT threshold setting has
-no bearing on it. The exemption checks @target_table AND @target_column
-because table-mode routing guarantees both by the time any work
-happens: supplying either one auto-promotes @target_type to table mode
-further down, and a call with only one of the two routes to table mode
-and fails its parameter validation before any reading starts.
+no bearing on it. The exemption needs both @target_table and
+@target_column, because both are required to pass the table validation
+further down. It is only a threshold exemption: a call that supplies
+only one of the two is not exempt, so it meets this check first. When
+the threshold is set, it then reaches the promotion to table mode
+below (either parameter promotes unless the session is system_health)
+and fails that validation before any reading starts.
 */
 AND (@target_table IS NULL OR @target_column IS NULL)
 BEGIN
@@ -12357,7 +13152,8 @@ DECLARE
     @mdsql nvarchar(max) = N'',
     @actual_start_date datetime2(7),
     @actual_end_date datetime2(7),
-    @actual_event_count bigint;
+    @actual_event_count bigint,
+    @reports_read bigint;
 
 /*Use some sane defaults for input parameters*/
 IF @debug = 1
@@ -12461,6 +13257,46 @@ BEGIN
     FROM {table_check};
 END;';
 
+/*
+Normalize @target_type: trim first, so trailing spaces are not turned
+into underscores, then convert inner spaces. The parameter comment and
+help used to spell these "ring buffer" and "file", and those values
+matched no branch below, so the run read nothing and reported 0 total events without an
+error. Accept those spellings and reject anything else. NULL stays NULL
+and is auto-detected further down.
+*/
+SELECT
+    @target_type =
+        CASE LOWER(REPLACE(LTRIM(RTRIM(@target_type)), N' ', N'_'))
+            WHEN N'file'
+            THEN N'event_file'
+            WHEN N'ringbuffer'
+            THEN N'ring_buffer'
+            ELSE LOWER(REPLACE(LTRIM(RTRIM(@target_type)), N' ', N'_'))
+        END;
+
+IF @target_type NOT IN
+   (
+       N'event_file',
+       N'ring_buffer',
+       N'table'
+   )
+BEGIN
+    RAISERROR(N'@target_type must be event_file, ring_buffer, or table (or NULL to detect it from the session). You passed: %s', 11, 1, @target_type) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+A misspelled @database_name used to return an empty report with no hint
+why. It is a warning, not an error: reports keep the name of a database
+that has since been dropped, and filtering on that name is legitimate.
+*/
+IF  @database_name IS NOT NULL
+AND DB_ID(@database_name) IS NULL
+BEGIN
+    RAISERROR(N'Warning: there is no database named %s on this server. Only blocked process reports recorded under that name (for example, from a database that was dropped) will match.', 10, 1, @database_name) WITH NOWAIT;
+END;
+
 IF @debug = 1
 AND @is_system_health = 0
 BEGIN
@@ -12508,11 +13344,20 @@ SELECT
     @is_system_health_msg =
         CONVERT(nchar(1), @is_system_health);
 
-/*Change this here in case someone leave it NULL*/
+/*
+Change this here in case someone leave it NULL.
+Either table parameter promotes to table mode, so a call that names only
+one of them fails the table validation below. Requiring both here meant
+a lone @target_table or @target_column was ignored without a word and
+the XE session was read instead.
+*/
 IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL
 AND ISNULL(@target_schema, N'dbo') IS NOT NULL
-AND @target_table IS NOT NULL
-AND @target_column IS NOT NULL
+AND
+(
+     @target_table IS NOT NULL
+  OR @target_column IS NOT NULL
+)
 AND @is_system_health = 0
 BEGIN
     SET @target_type = N'table';
@@ -12721,6 +13566,8 @@ BEGIN
         @log_database_name = ISNULL(@log_database_name, DB_NAME()),
         /* Default schema name to dbo if not specified */
         @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+        /* An explicit NULL prefix walks past the length guard and QUOTENAME(NULL) silently no-ops every logging statement */
+        @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'HumanEventsBlockViewer'),
         @log_retention_days =
             CASE
                 WHEN @log_retention_days < 0
@@ -13650,7 +14497,9 @@ BEGIN
             WHEN b.activity = 'blocking'
             THEN -1
             ELSE +1
-        END
+        END,
+        b.spid,
+        b.ecid
     OPTION(RECOMPILE);
 
     /*
@@ -13738,21 +14587,26 @@ BEGIN
             deqs.total_elapsed_time / 1000.,
         avg_elapsed_time_ms =
             CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+        /* * 1.0 forces decimal division; bigint / integer truncates */
         executions_per_second =
             ISNULL
             (
-                deqs.execution_count /
-                    NULLIF
-                    (
-                        DATEDIFF
+                CONVERT
+                (
+                    decimal(38,2),
+                    deqs.execution_count * 1.0 /
+                        NULLIF
                         (
-                            SECOND,
-                            deqs.creation_time,
-                            NULLIF(deqs.last_execution_time, '19000101')
-                        ),
-                        0
-                    ),
-                    0
+                            DATEDIFF
+                            (
+                                SECOND,
+                                deqs.creation_time,
+                                NULLIF(deqs.last_execution_time, '19000101')
+                            ),
+                            0
+                        )
+                ),
+                0
             ),
         total_physical_reads_mb =
             deqs.total_physical_reads * 8. / 1024.,
@@ -14002,7 +14856,20 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    /*
+    The name the event recorded comes first: reports can be days old,
+    and by then the database may be dropped (DB_NAME returned NULL) or
+    its id reused by another database (DB_NAME returned the wrong
+    name). DB_NAME(0) returns the current database, so reports with
+    database_id 0 (parallel workers waiting on each other) were
+    attributed to the calling database; NULLIF leaves those NULL.
+    */
+    database_name =
+        COALESCE
+        (
+            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+        ),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -14135,7 +15002,20 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    /*
+    The name the event recorded comes first: reports can be days old,
+    and by then the database may be dropped (DB_NAME returned NULL) or
+    its id reused by another database (DB_NAME returned the wrong
+    name). DB_NAME(0) returns the current database, so reports with
+    database_id 0 (parallel workers waiting on each other) were
+    attributed to the calling database; NULLIF leaves those NULL.
+    */
+    database_name =
+        COALESCE
+        (
+            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+        ),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -14988,7 +15868,9 @@ ORDER BY
         WHEN b.activity = ''blocking''
         THEN -1
         ELSE +1
-    END
+    END,
+    b.spid,
+    b.ecid
 OPTION(RECOMPILE);';
 
 /* Handle table logging */
@@ -15095,8 +15977,15 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process[@spid = sql:column("b.spid") and @ecid = sql:column("b.ecid")]/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        /*
+        Every #blocks row holds the whole report, so each branch reads
+        only the frames of the process the row describes. Without this,
+        the blocked row's text was paired with the blocker's frames and
+        the blocking row's text with the victim's frames.
+        */
+        WHERE b.activity = 'blocking'
+        AND
         (
             (b.database_name = @database_name
                 OR @database_name IS NULL)
@@ -15126,7 +16015,8 @@ BEGIN
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE
+        WHERE b.activity = 'blocked'
+        AND
         (
             (b.database_name = @database_name
                 OR @database_name IS NULL)
@@ -15165,21 +16055,26 @@ BEGIN
             deqs.total_elapsed_time / 1000.,
         avg_elapsed_time_ms =
             CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+        /* * 1.0 forces decimal division; bigint / integer truncates */
         executions_per_second =
             ISNULL
             (
-                deqs.execution_count /
-                    NULLIF
-                    (
-                        DATEDIFF
+                CONVERT
+                (
+                    decimal(38,2),
+                    deqs.execution_count * 1.0 /
+                        NULLIF
                         (
-                            SECOND,
-                            deqs.creation_time,
-                            NULLIF(deqs.last_execution_time, '19000101')
-                        ),
-                        0
-                    ),
-                    0
+                            DATEDIFF
+                            (
+                                SECOND,
+                                deqs.creation_time,
+                                NULLIF(deqs.last_execution_time, '19000101')
+                            ),
+                            0
+                        )
+                ),
+                0
             ),
         total_physical_reads_mb =
             deqs.total_physical_reads * 8. / 1024.,
@@ -15318,23 +16213,73 @@ BEGIN
 
     BlockingRollup:
 
-    /* Capture actual date range and event count from the data */
+    /*
+    Capture the actual date range and report count from what is shown.
+    #blocks has one 'blocked' row per blocked process report and per
+    blocking process, so a report with two simultaneous blockers has two
+    rows. Counting the rows overstated the header (2 reports printed as
+    3 total events) and could print "limited to most recent 2" next to
+    a count of 3. Count the distinct reports instead: a report is one
+    blocked process in one monitor pass at one event time. The old
+    count, COUNT_BIG(DISTINCT monitor_loop) over #blocked, counted
+    monitor passes (one pass can raise several reports) and was taken
+    before the @database_name and @object_name filters, so the header
+    counted reports the output did not show. The "limited to most
+    recent" note compares @max_blocking_events with the events read,
+    before any filter, because that is what the limit applies to.
+    #blocking_xml holds one row per event read, which is what the TOP
+    limits.
+    */
     SELECT
-        @actual_start_date = MIN(event_time),
-        @actual_end_date = MAX(event_time),
-        @actual_event_count = COUNT_BIG(DISTINCT monitor_loop)
-    FROM #blocked
-    WHERE event_time IS NOT NULL;
+        @actual_start_date = MIN(x.event_time),
+        @actual_end_date = MAX(x.event_time),
+        @actual_event_count = COUNT_BIG(*)
+    FROM
+    (
+        SELECT DISTINCT
+            b.event_time,
+            b.monitor_loop,
+            b.blocked_desc
+        FROM #blocks AS b
+        WHERE b.activity = 'blocked'
+        AND   b.event_time IS NOT NULL
+        AND  (b.contentious_object = @object_name
+              OR @object_name IS NULL)
+    ) AS x;
+
+    SELECT
+        @reports_read = COUNT_BIG(*)
+    FROM #blocking_xml AS bx;
 
     /*
     Use original dates if no data found. The originals are NULL when
     the caller relied on the default window, and a NULL here
     concatenated the entire header finding away on an empty capture —
-    so fall through to the always-populated defaulted dates.
+    so fall through to the always-populated defaulted dates. Those are
+    shifted to UTC for the XML filter, so shift them back to local time
+    to match the event times and the caller's own dates.
     */
     SELECT
-        @actual_start_date = ISNULL(@actual_start_date, ISNULL(@start_date_original, @start_date)),
-        @actual_end_date = ISNULL(@actual_end_date, ISNULL(@end_date_original, @end_date)),
+        @actual_start_date =
+            ISNULL
+            (
+                @actual_start_date,
+                ISNULL
+                (
+                    @start_date_original,
+                    DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), @start_date)
+                )
+            ),
+        @actual_end_date =
+            ISNULL
+            (
+                @actual_end_date,
+                ISNULL
+                (
+                    @end_date_original,
+                    DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), @end_date)
+                )
+            ),
         @actual_event_count = ISNULL(@actual_event_count, 0);
 
     IF @debug = 1
@@ -15369,7 +16314,7 @@ BEGIN
             N' total events' +
             CASE
                 WHEN @max_blocking_events > 0
-                AND  @actual_event_count >= @max_blocking_events
+                AND  @reports_read >= @max_blocking_events
                 THEN N', limited to most recent ' +
                      CONVERT(nvarchar(30), @max_blocking_events) +
                      N')'
@@ -16743,7 +17688,7 @@ BEGIN
                   14
               ) +
             N' [dd hh:mm:ss] of lock wait time in database ' +
-            b.database_name,
+            ISNULL(b.database_name, N'unknown'),
        sort_order =
            ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
     FROM b AS b
@@ -16875,8 +17820,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.10',
-        @version_date = '20261001';
+        @version = '2.11',
+        @version_date = '20261101';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -17182,6 +18127,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* sys.stats.is_incremental (SQL 2014+, Azure SQL DB, and Managed Instance) */
+        @supports_incremental_statistics bit =
+            CASE
+                /* Azure SQL DB or Managed Instance */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
+                THEN 1
+                /* SQL Server 2014+ */
+                WHEN CONVERT
+                     (
+                         integer,
+                         SUBSTRING
+                         (
+                             CONVERT
+                             (
+                                 varchar(20),
+                                 SERVERPROPERTY('ProductVersion')
+                             ),
+                             1,
+                             2
+                         )
+                     ) >= 12
+                THEN 1
+                ELSE 0
+            END,
         @is_azure_sql_db bit =
             CASE
                 WHEN CONVERT
@@ -17192,6 +18161,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* Availability group metadata is only worth asking for where an AG can exist, and never on Azure SQL DB */
+        @is_hadr_enabled bit =
+            CASE
+                WHEN CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('IsHadrEnabled')
+                     ) = 1
+                AND  CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('EngineEdition')
+                     ) <> 5
+                THEN 1
+                ELSE 0
+            END,
+        /* Why an availability group secondary was skipped, and what to do about it */
+        @read_intent_reason nvarchar(100) = N'Read-intent-only secondary, reconnect with ApplicationIntent=ReadOnly',
+        @non_readable_reason nvarchar(100) = N'Non-readable secondary, use the primary or a readable secondary',
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -17204,6 +18192,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM sys.dm_os_sys_info AS osi
         ),
         @database_cursor CURSOR,
+        @usage_window_days integer = 0, /* This database's usage window, set per database before Rule 1 */
+        @usage_since_server_start bit = 0,
+        @skip_unused_rule bit = 0,
         @current_database_name sysname,
         @current_database_id integer,
         @error_msg nvarchar(2048),
@@ -17313,6 +18304,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
+        /* sys.indexes.type, so a script can tell a table whose base is a clustered columnstore index (5) */
+        index_type tinyint NOT NULL,
         can_compress bit NOT NULL
     );
 
@@ -17436,6 +18429,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_indexed_view integer NOT NULL,
         is_foreign_key bit NULL,
         is_foreign_key_reference bit NULL,
+        /*
+        Whether a foreign key is BACKED BY this index, which is
+        sys.foreign_keys.key_index_id and not a property of any column.
+        is_foreign_key_reference above says only that some foreign key points at
+        this column, so it cannot tell which of two indexes on that column the
+        key actually depends on. ALTER INDEX ... DISABLE against the backing
+        index disables the foreign key too, and only prints a warning, so every
+        rule that picks a loser has to leave this index alone.
+        */
+        is_foreign_key_backing bit NULL,
         key_ordinal tinyint NOT NULL,
         index_column_id integer NOT NULL,
         is_descending_key bit NOT NULL,
@@ -17443,6 +18446,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition nvarchar(max) NULL,
         is_max_length integer NOT NULL,
         optimize_for_sequential_key bit NOT NULL,
+        /*
+        Index options that CREATE INDEX ... WITH (DROP_EXISTING = ON) resets to
+        OFF unless the WITH list names them again: sys.indexes.ignore_dup_key and
+        the no_recompute flag of the statistics sys.stats keeps for the index
+        (stats_id = index_id). Every script that rebuilds through DROP_EXISTING has
+        to carry them, or a duplicate insert that used to be skipped with a warning
+        starts failing with error 2601, and statistics someone froze on purpose
+        start updating on their own again.
+        */
+        ignore_dup_key bit NOT NULL,
+        no_recompute bit NOT NULL,
+        /*
+        Three more that DROP_EXISTING resets: ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS
+        go back to ON, and STATISTICS_INCREMENTAL (sys.stats.is_incremental) goes
+        back to OFF.
+        */
+        allow_page_locks bit NOT NULL,
+        allow_row_locks bit NOT NULL,
+        is_incremental bit NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
         user_lookups bigint NOT NULL,
@@ -17657,6 +18679,71 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (database_id, schema_id, object_id, index_id, can_compress)
     );
 
+    /*
+    The indexes the foreign key guard took a DISABLE away from.
+
+    Written by the guard and read by its reporting insert, so the report can
+    tell the two kinds of kept index apart. An index a foreign key is backed by
+    can also be the legitimate WINNER of a dedupe pair, with its duplicate
+    disabled as normal; saying "kept because of a foreign key" there would claim
+    the guard did something it never did. Only the rows the guard changed are in
+    here.
+
+    Accumulates across databases like #index_analysis does, which needs no
+    per-database filter of its own: index_hash is built from database_id,
+    object_id and index_id, so a row cannot match an index in another database.
+    */
+    CREATE TABLE
+        #foreign_key_kept
+    (
+        index_hash varbinary(32) NOT NULL PRIMARY KEY CLUSTERED
+    );
+
+    /*
+    The keepers that have to take over IGNORE_DUP_KEY from a structure the scripts
+    remove, and the loser each one takes it from (#916).
+
+    A pair is only ever in here because the keeper won for a reason that outranks
+    IGNORE_DUP_KEY, which today means a foreign key is backed by it, or because the
+    rule that settled the pair does not read index_priority at all - Rule 7 always
+    keeps the nonclustered index and drops the constraint. Where the IGNORE_DUP_KEY
+    structure wins its own pair on the term above, nothing needs carrying: the one
+    that stays is already the one that skips.
+
+    Separate from #index_analysis because two later blocks read it - the WITH list
+    of a rebuilt keeper and the script for one that is not rebuilt - and an EXISTS
+    written twice is two places to get it wrong. index_hash is built from
+    database_id, object_id and index_id, so this accumulates across databases
+    without a filter of its own.
+    */
+    CREATE TABLE
+        #ignore_dup_key_carried
+    (
+        index_hash varbinary(32) NOT NULL PRIMARY KEY CLUSTERED,
+        loser_index_name sysname NOT NULL,
+        /*
+        ALTER INDEX ... SET (IGNORE_DUP_KEY = ON) is REFUSED against the index that
+        backs a unique constraint: measured on SQL Server 2022 CU27, error 1979,
+        "Cannot use index option ignore_dup_key to alter index '...' as it enforces
+        a primary or unique constraint". So a constraint keeper cannot be given the
+        option after the fact, and no script may be written for one.
+
+        No shape reaches that today, and the term above is why: a constraint keeper
+        only arises in Rule 7.5b, which pairs two constraints, and there the one
+        with IGNORE_DUP_KEY outranks the strict one (450 against 50 plus whatever
+        usage it has, which caps at 400). The only term that could lift a strict
+        constraint over it is the foreign key one, and the rules exclude a column a
+        foreign key references from that pairing anyway - tested, a pair of unique
+        constraints on a referenced column reaches no dedupe rule and gets only a
+        compression row.
+
+        Carried as a column rather than trusted to stay unreachable, because it is
+        the ordering of two magic numbers that makes it so, and the cost of being
+        wrong is a generated script that fails. The filter is one predicate.
+        */
+        keeper_is_unique_constraint bit NOT NULL
+    );
+
     CREATE TABLE
         #index_cleanup_results
     (
@@ -17676,6 +18763,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_rows bigint NULL, /* Number of rows in the index */
         index_reads bigint NULL, /* Total reads (seeks + scans + lookups) */
         index_writes bigint NULL, /* Total writes */
+        partition_number integer NULL, /* Set only on per-partition compression rows, which share everything else */
         script nvarchar(max) NULL /* Script to execute the action */
     );
 
@@ -17690,7 +18778,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         base_key_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
         winning_index_name sysname NULL,
-        index_list nvarchar(max) NULL,
         /* Hash columns for optimized matching */
         scope_hash AS
             CONVERT
@@ -17750,6 +18837,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         server_uptime_days integer NULL,
         uptime_warning bit NULL,
+        usage_since datetime2(0) NULL, /* DATABASE rows only */
+        usage_since_reason nvarchar(500) NULL, /* DATABASE rows only */
         tables_analyzed integer NULL,
         index_count integer NULL,
         total_size_gb decimal(38, 4) NULL,
@@ -17811,7 +18900,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #databases
     (
         database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
-        database_id integer NOT NULL
+        database_id integer NOT NULL,
+        /* Each database's own usage window, filled in once #databases is populated */
+        usage_since datetime2(0) NULL,
+        usage_since_reason nvarchar(500) NULL,
+        usage_window_days integer NULL,
+        skip_unused_rule bit NULL
+    );
+
+    /*
+    Last restore of each database being analyzed, from msdb.dbo.restorehistory.
+    Empty where that table is unavailable (Azure SQL DB, no permission).
+    */
+    CREATE TABLE
+        #database_restores
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
+        last_restore_date datetime NOT NULL
+    );
+
+    /*
+    Databases analyzed here that are availability group primaries with at least
+    one readable secondary. Reads on a secondary are not counted in this
+    replica's index usage stats.
+    */
+    CREATE TABLE
+        #ag_primary_readable_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
@@ -17819,6 +18935,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         reason nvarchar(100) NOT NULL
+    );
+
+    /*
+    Databases on this replica that are availability group secondaries the current
+    session cannot open, with how the local replica treats connections to its
+    secondary role (READ_ONLY or NO). Empty unless the lookup below finds some.
+    */
+    CREATE TABLE
+        #ag_secondary_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
+        secondary_role_allow_connections nvarchar(60) NOT NULL
     );
 
     CREATE TABLE
@@ -17870,7 +18998,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
-        should_include_filter_columns bit NOT NULL
+        should_include_filter_columns bit NOT NULL,
+        /* Built inside the database loop, while that database's #index_details and the rest are loaded */
+        create_index_script nvarchar(max) NULL
     );
 
     CREATE CLUSTERED INDEX
@@ -18085,6 +19215,56 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RETURN;
     END;
 
+    /*
+    A database on an availability group secondary reads as "no access" to
+    HAS_DBACCESS when the session has not asked for read intent, which is not a
+    permissions problem and must not be reported as one. Find the databases on
+    this replica that are secondaries this session cannot open, and whether the
+    local replica takes read-intent connections to its secondary role (READ_ONLY)
+    or no direct connections at all (NO), so the messages below can say which.
+
+    Dynamic SQL, so the procedure still compiles where these views and
+    functions do not exist. TRY/CATCH, so a permission error or anything else
+    that goes wrong learns nothing and leaves the generic no-access message.
+    */
+    IF @is_hadr_enabled = 1
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                d.name,
+                ar.secondary_role_allow_connections_desc
+            FROM sys.databases AS d
+            JOIN sys.availability_replicas AS ar
+              ON ar.replica_id = d.replica_id
+            WHERE d.replica_id IS NOT NULL
+            AND   ISNULL(HAS_DBACCESS(d.name), 0) = 0
+            AND   sys.fn_hadr_is_primary_replica(d.name) = 0
+            AND   ar.secondary_role_allow_connections_desc IN (N''READ_ONLY'', N''NO'')
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #ag_secondary_databases
+            WITH
+                (TABLOCK)
+            (
+                database_name,
+                secondary_role_allow_connections
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Availability group lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
     /* Build the #databases table */
     IF @get_all_databases = 0
     BEGIN
@@ -18152,9 +19332,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND ISNULL(HAS_DBACCESS(@database_name), 0) = 0
             BEGIN
                 SET @error_msg =
-                    N'The current login has no access to database ' +
-                    QUOTENAME(@database_name) +
-                    N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;';
+                    CASE
+                        /* An availability group secondary taking read-intent connections only: the login is fine, the session is not */
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #ag_secondary_databases AS ag
+                                 WHERE ag.database_name = @database_name
+                                 AND   ag.secondary_role_allow_connections = N'READ_ONLY'
+                             )
+                        THEN N'Database ' +
+                             QUOTENAME(@database_name) +
+                             N' is on an availability group secondary that only accepts read-intent connections, and this session did not ask for read intent. Reconnect with ApplicationIntent=ReadOnly (sqlcmd -K ReadOnly, or Export-SqlResults -ReadOnlyIntent) and run this again.'
+                        /* An availability group secondary that does not accept connections at all */
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #ag_secondary_databases AS ag
+                                 WHERE ag.database_name = @database_name
+                                 AND   ag.secondary_role_allow_connections = N'NO'
+                             )
+                        THEN N'Database ' +
+                             QUOTENAME(@database_name) +
+                             N' is on an availability group secondary that does not allow connections to its databases. Run this against the primary replica or a readable secondary.'
+                        ELSE N'The current login has no access to database ' +
+                             QUOTENAME(@database_name) +
+                             N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;'
+                    END;
 
                 RAISERROR(@error_msg, 16, 1);
                 RETURN;
@@ -18258,8 +19464,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             d.name,
-            reason = N'No database access for current login'
+            reason =
+                CASE
+                    /* Availability group secondaries say what the session needs, not what the login lacks */
+                    WHEN ag.secondary_role_allow_connections = N'READ_ONLY'
+                    THEN @read_intent_reason
+                    WHEN ag.secondary_role_allow_connections = N'NO'
+                    THEN @non_readable_reason
+                    ELSE N'No database access for current login'
+                END
         FROM sys.databases AS d
+        LEFT JOIN #ag_secondary_databases AS ag
+          ON ag.database_name = d.name
         WHERE d.database_id > 4
         AND   d.state = 0
         AND   d.is_in_standby = 0
@@ -18317,6 +19533,50 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET @error_msg = N'';
             END;
         END;
+
+        /*
+        The same warning for availability group secondaries this session cannot
+        read. They carry their own skip reasons, so the warning above, which
+        tells the reader to grant permissions, no longer names them.
+        */
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #requested_but_skipped_databases AS rbs
+               WHERE rbs.reason IN (@read_intent_reason, @non_readable_reason)
+           )
+        BEGIN
+            SET @error_msg = N'';
+
+            SELECT
+                @error_msg =
+                    @error_msg +
+                    rbs.database_name +
+                    N' (' +
+                    rbs.reason +
+                    N'), '
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.reason IN (@read_intent_reason, @non_readable_reason)
+            ORDER BY
+                rbs.database_name
+            OPTION(RECOMPILE);
+
+            IF DATALENGTH(@error_msg) > 0
+            BEGIN
+                SET @error_msg = LEFT(@error_msg, DATALENGTH(@error_msg) / 2 - 2);
+
+                SET @error_msg =
+                    N'Skipping these availability group secondaries - this session cannot read them: ' +
+                    @error_msg +
+                    N'.';
+
+                RAISERROR(@error_msg, 10, 1) WITH NOWAIT;
+
+                /* Reset for subsequent uses below. */
+                SET @error_msg = N'';
+            END;
+        END;
     END;
 
     /* Check for empty database list */
@@ -18325,6 +19585,211 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('No valid databases found to process.', 16, 1);
         RETURN;
     END;
+
+    /*
+    Each database's own usage window. Index usage stats start over when the
+    server starts, and also when a database is restored or created, so the
+    window is the latest of those three moments. The server start alone is
+    the right answer only for a database that is older than the server uptime.
+
+    The restore lookup is dynamic SQL in a TRY/CATCH: msdb.dbo.restorehistory
+    does not exist on Azure SQL DB, and a login that cannot read it falls back
+    to create_date instead of failing the run.
+    */
+    IF @is_azure_sql_db = 0
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                rh.destination_database_name,
+                MAX(rh.restore_date)
+            FROM msdb.dbo.restorehistory AS rh
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #databases AS db
+                WHERE db.database_name COLLATE DATABASE_DEFAULT = rh.destination_database_name COLLATE DATABASE_DEFAULT
+            )
+            GROUP BY
+                rh.destination_database_name
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #database_restores
+            WITH
+                (TABLOCK)
+            (
+                database_name,
+                last_restore_date
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Restore history lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
+    /*
+    On an availability group primary, reads on a readable secondary are not
+    counted in this replica's usage stats. Find the databases here that are
+    primaries with at least one readable secondary (READ_ONLY or ALL), so the
+    DATABASE row can say so. Same dynamic SQL and TRY/CATCH reasoning as the
+    lookup above: a failure learns nothing and adds no note.
+    */
+    IF @is_hadr_enabled = 1
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                d.name
+            FROM sys.databases AS d
+            JOIN sys.availability_replicas AS lr
+              ON lr.replica_id = d.replica_id
+            WHERE d.replica_id IS NOT NULL
+            AND   sys.fn_hadr_is_primary_replica(d.name) = 1
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #databases AS db
+                      WHERE db.database_name = d.name
+                  )
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM sys.availability_replicas AS ar
+                      WHERE ar.group_id = lr.group_id
+                      AND   ar.replica_id <> lr.replica_id
+                      AND   ar.secondary_role_allow_connections_desc IN (N''READ_ONLY'', N''ALL'')
+                  )
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #ag_primary_readable_databases
+            WITH
+                (TABLOCK)
+            (
+                database_name
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Availability group readable secondary lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
+    /*
+    The reason names the moment that set the window. A restore under a new
+    name also creates the database a moment after the restore is logged, so
+    a create_date within 60 seconds of the winning time is credited to the
+    restore when there is one. A restore over an existing database keeps the
+    old create_date, and only the restore history shows it.
+    */
+    UPDATE
+        db
+    SET
+        db.usage_since = CONVERT(datetime2(0), w.usage_since),
+        db.usage_window_days =
+            DATEDIFF
+            (
+                DAY,
+                w.usage_since,
+                SYSDATETIME()
+            ),
+        db.usage_since_reason =
+            CASE
+                WHEN c.restore_date >= DATEADD(SECOND, -60, w.usage_since)
+                THEN N'Database restore'
+                WHEN c.create_date >= DATEADD(SECOND, -60, w.usage_since)
+                THEN N'Database create'
+                ELSE N'Server start'
+            END
+    FROM #databases AS db
+    CROSS JOIN sys.dm_os_sys_info AS osi
+    LEFT JOIN sys.databases AS sd
+      ON sd.name = db.database_name
+    LEFT JOIN #database_restores AS dr
+      ON dr.database_name = db.database_name
+    CROSS APPLY
+    (
+        SELECT
+            restore_date = dr.last_restore_date,
+            create_date = sd.create_date,
+            server_start = osi.sqlserver_start_time
+    ) AS c
+    CROSS APPLY
+    (
+        SELECT
+            usage_since =
+                (
+                    SELECT
+                        MAX(v.usage_since)
+                    FROM
+                    (
+                        VALUES
+                            (c.restore_date),
+                            (c.create_date),
+                            (c.server_start)
+                    ) AS v (usage_since)
+                )
+    ) AS w
+    OPTION(RECOMPILE);
+
+    /*
+    Per database, the unused index rule needs more than 7 days of usage data.
+    @dedupe_only is already 1 here when the server itself was started 7 days
+    ago or less, or when the caller asked for it: those cases skip the rule for
+    every database and are not repeated per database.
+    */
+    UPDATE
+        db
+    SET
+        db.skip_unused_rule =
+            CASE
+                WHEN @dedupe_only = 0
+                AND  db.usage_window_days <= 7
+                THEN 1
+                ELSE 0
+            END,
+        db.usage_since_reason =
+            db.usage_since_reason +
+            CASE
+                WHEN @dedupe_only = 0
+                AND  db.usage_window_days <= 7
+                THEN N'. Unused Index rule skipped for this database: only ' +
+                     CONVERT(nvarchar(10), db.usage_window_days) +
+                     N' days of usage data (7 days or less)'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #ag_primary_readable_databases AS ag
+                         WHERE ag.database_name = db.database_name
+                     )
+                THEN N'. Availability group primary with readable secondaries: reads on the secondaries are not counted'
+                ELSE N''
+            END
+    FROM #databases AS db
+    OPTION(RECOMPILE);
 
     /* Show database list in debug mode */
     IF @debug = 1
@@ -18366,12 +19831,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN d.database_id <= 4
                     THEN 'System database'
                     WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    AND  ag.secondary_role_allow_connections = N'READ_ONLY'
+                    THEN @read_intent_reason
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    AND  ag.secondary_role_allow_connections = N'NO'
+                    THEN @non_readable_reason
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
                     THEN 'No database access for current login'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
         LEFT JOIN sys.databases AS d
           ON id.database_name = d.name
+        LEFT JOIN #ag_secondary_databases AS ag
+          ON ag.database_name = d.name
         WHERE NOT EXISTS
               (
                   SELECT
@@ -18481,13 +19954,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         TRUNCATE TABLE
             #include_subset_dedupe;
         TRUNCATE TABLE
-            #computed_columns_analysis;
-        TRUNCATE TABLE
-            #check_constraints_analysis;
-        TRUNCATE TABLE
-            #filtered_index_columns_analysis;
-        TRUNCATE TABLE
             #merged_includes;
+
+        /*
+        #computed_columns_analysis, #check_constraints_analysis and
+        #filtered_index_columns_analysis are NOT reset here. They are the advisory
+        findings, returned after the loop like #index_analysis, and keyed by
+        database_id. Resetting them each pass left only the last database's
+        findings when @get_all_databases = 1, and none at all once a later
+        database without the @table_name object was reached.
+        */
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
@@ -18550,6 +20026,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = o.name,
             index_id = i.index_id,
             index_name = ISNULL(i.name, o.name + N''.Heap''),
+            index_type = i.type,
             can_compress =
                 CASE
                     WHEN p.index_id > 0
@@ -18710,6 +20187,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_id,
         index_name,
+        index_type,
         can_compress
     )
     EXECUTE sys.sp_executesql
@@ -19368,12 +20846,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     definition as ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY
     NONCLUSTERED. That code was unreachable until this CASE was fixed.
 
-    Keep prose out of the string literal below. Everything up to the first
-    CONVERT(nvarchar(max), ...) concatenates as nvarchar(4000), so padding
-    it silently truncates the batch mid-statement instead of failing loudly.
+    Keep prose out of the string literal below. Without a max type on the
+    left, everything up to the first CONVERT(nvarchar(max), ...) concatenates as
+    nvarchar(4000), so padding it silently truncates the batch mid-statement
+    instead of failing loudly. The empty nvarchar(max) the assignment starts from
+    makes the whole concatenation nvarchar(max), which is what let the
+    ignore_dup_key and no_recompute columns fit.
     */
     SELECT
-        @sql = N'
+        @sql = CONVERT(nvarchar(max), N'') + N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
@@ -19422,6 +20903,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        is_foreign_key_backing =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.foreign_keys AS fk
+                         WHERE fk.referenced_object_id = i.object_id
+                         AND   fk.key_index_id = i.index_id
+                     )
+                THEN 1
+                ELSE 0
+            END,
         ic.key_ordinal,
         ic.index_column_id,
         ic.is_descending_key,
@@ -19448,6 +20942,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         optimize_for_sequential_key = ISNULL(i.optimize_for_sequential_key, 0),'
             ELSE N'
         optimize_for_sequential_key = 0,'
+        END + N'
+        ignore_dup_key = ISNULL(i.ignore_dup_key, 0),
+        no_recompute =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.stats AS st
+                         WHERE st.object_id = i.object_id
+                         AND   st.stats_id = i.index_id
+                         AND   st.no_recompute = 1
+                     )
+                THEN 1
+                ELSE 0
+            END,
+        allow_page_locks = ISNULL(i.allow_page_locks, 1),
+        allow_row_locks = ISNULL(i.allow_row_locks, 1),' +
+        CASE
+            WHEN @supports_incremental_statistics = 1
+            THEN N'
+        is_incremental =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.stats AS st
+                         WHERE st.object_id = i.object_id
+                         AND   st.stats_id = i.index_id
+                         AND   st.is_incremental = 1
+                     )
+                THEN 1
+                ELSE 0
+            END,'
+            ELSE N'
+        is_incremental = 0,'
         END + N'
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
@@ -19574,6 +21105,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_indexed_view,
         is_foreign_key,
         is_foreign_key_reference,
+        is_foreign_key_backing,
         key_ordinal,
         index_column_id,
         is_descending_key,
@@ -19581,6 +21113,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition,
         is_max_length,
         optimize_for_sequential_key,
+        ignore_dup_key,
+        no_recompute,
+        allow_page_locks,
+        allow_row_locks,
+        is_incremental,
         user_seeks,
         user_scans,
         user_lookups,
@@ -20103,122 +21640,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
 
-        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
-    END;
-
-    /* Analyze filtered indexes to identify columns used in filters that should be included */
-    SELECT
-        @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.filter_definition,
-        missing_included_columns =
-            (
-                SELECT
-                    STUFF
-                    (
-                        (
-                            /* Find column names mentioned in filter_definition that aren''t already key or included columns */
-                            SELECT
-                                N'', '' +
-                                QUOTENAME(c.name)
-                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                            WHERE c.object_id = ia.object_id
-                            AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
-                            AND   NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM #index_details AS id
-                                WHERE id.object_id = ia.object_id
-                                AND   id.index_id = ia.index_id
-                                AND   id.column_id = c.column_id
-                            )
-                            GROUP BY
-                                c.name
-                            FOR
-                                XML
-                                PATH(''''),
-                                TYPE
-                        ).value(''text()[1]'',''nvarchar(max)''),
-                        1,
-                        2,
-                        N''''
-                    )
-            ),
-        should_include_filter_columns =
-            CASE
-                WHEN EXISTS
-                (
-                    /* Check if any columns mentioned in filter_definition aren''t already in the index */
-                    SELECT
-                        1/0
-                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                    WHERE c.object_id = ia.object_id
-                    AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
-                    AND   NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id
-                        WHERE id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
-                        AND   id.column_id = c.column_id
-                    )
-                )
-                THEN 1
-                ELSE 0
-            END
-    FROM #index_analysis AS ia
-    WHERE ia.filter_definition IS NOT NULL
-    AND   ia.database_id = @current_database_id
-    OPTION(RECOMPILE);';
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
-        PRINT @sql;
-    END;
-
-    INSERT INTO
-        #filtered_index_columns_analysis
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        object_id,
-        table_name,
-        index_id,
-        index_name,
-        filter_definition,
-        missing_included_columns,
-        should_include_filter_columns
-    )
-    EXECUTE sys.sp_executesql
-        @sql,
-      N'@current_database_id integer',
-        @current_database_id;
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#filtered_index_columns_analysis',
-            fica.*
-        FROM #filtered_index_columns_analysis AS fica
-        OPTION(RECOMPILE);
-
         RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
     END;
 
@@ -20284,6 +21705,58 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 50  /* Indexes with includes get priority over those without */
                 ELSE 0
             END /* Prefer indexes with included columns */
+            +
+            /*
+            Two properties the score could not see, so a pair holding one of them was
+            settled on index_name - by the alphabet (#917, #916). A foreign key is backed
+            by this index, and IGNORE_DUP_KEY decides what an insert of a duplicate key
+            does. Removing either structure changes something a caller did not ask to
+            change: the key gets disabled with its backing index, or inserts that used to
+            skip a duplicate start failing.
+
+            Where the two terms sit, and why:
+
+            Each has to outrank every term that can DIFFER between the two structures of
+            a pair, which is the seek (200), the scan (100) and the include (50) terms,
+            350 together. 400 clears that.
+
+            The foreign key term then has to outrank the IGNORE_DUP_KEY one plus those
+            three, 750, because the ORDER of the two decides the case where one structure
+            backs a key and the other skips duplicates. Measured on SQL Server 2022 CU27:
+            keeping the index the key is backed by and giving it IGNORE_DUP_KEY leaves the
+            key enabled and trusted, still skips a duplicate parent key, and still refuses
+            an orphan child with 547 - while keeping the other one and disabling this one
+            makes that same insert fail with 2601. So 800.
+
+            Neither term reaches the clustered index's 1000 on its own. Their SUM can pass
+            it, and that is not reachable: a clustered index and a primary key carry
+            is_eligible_for_dedupe = 0 and never enter a pair. Keeping the sums under 1000
+            is not possible anyway - the ordering above forces the foreign key term past
+            700, and a unique index already carries 500.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_fkb
+                    WHERE id_fkb.index_hash = #index_analysis.index_hash
+                    AND   id_fkb.is_foreign_key_backing = 1
+                ) THEN 800
+                ELSE 0
+            END /* A foreign key is backed by this index */
+            +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = #index_analysis.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                ) THEN 400
+                ELSE 0
+            END /* This structure is the one that skips a duplicate key */
     WHERE #index_analysis.database_id = @current_database_id
     OPTION(RECOMPILE);
 
@@ -20296,16 +21769,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
-    /* Rule 1: Identify unused indexes */
-    IF @dedupe_only = 0
+    /*
+    Rule 1: Identify unused indexes
+
+    The skip is per database: a database restored or created 7 days ago or
+    less has too little usage data to call anything unused, even on a server
+    that has been up for months. The warning label follows the same window.
+    When the window is the server start, the label is the same as ever.
+    */
+    SELECT
+        @usage_window_days = ISNULL(d.usage_window_days, CONVERT(integer, @uptime_days)),
+        @usage_since_server_start =
+            CASE
+                WHEN d.usage_since_reason LIKE N'Server start%'
+                THEN 1
+                ELSE 0
+            END,
+        @skip_unused_rule = ISNULL(d.skip_unused_rule, 0)
+    FROM #databases AS d
+    WHERE d.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    IF  @dedupe_only = 0
+    AND @skip_unused_rule = 0
     BEGIN
         UPDATE
             #index_analysis
         SET
             #index_analysis.consolidation_rule =
                 CASE
-                    WHEN @uptime_warning = 1
+                    WHEN @usage_window_days < 14
+                    AND  @usage_since_server_start = 1
                     THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
+                    WHEN @usage_window_days < 14
+                    THEN 'Unused Index (WARNING: Database usage window < 14 days - usage data may be incomplete)'
                     ELSE 'Unused Index'
                 END,
             #index_analysis.action = N'DISABLE'
@@ -20854,6 +22351,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         them, emitting a broken INCLUDE list while the paired DISABLE still ran.
         Reading the columns directly also removes the need to escape entities for
         the XML round-trip.
+
+        The no-op check before the MERGE SCRIPT compares this list with one it
+        builds the same way: QUOTENAME(column_name), joined with ', ', in
+        column_name order. Change the format here and it has to change there.
         */
         merged_includes =
             STUFF
@@ -21048,6 +22549,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_details AS id2
         WHERE id2.scope_hash = ia1.scope_hash
         AND   id2.is_unique_constraint = 1
+        /*
+        The constraint has to be a different index from ia1. ia1 can itself be
+        a unique constraint, and without this it matched its own index: the
+        two key sets are identical by definition, so every unique constraint in
+        the database qualified, and was reported KEPT as a replacement when no
+        other index shared its keys. Two constraints with the same keys still
+        match each other, which is what Rule 7.5b needs.
+        */
+        AND   id2.index_hash <> ia1.index_hash
         AND NOT EXISTS
         (
             /* Verify key columns match between index and unique constraint.
@@ -21630,10 +23140,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id2.index_hash = ia2.index_hash
             AND   id1.key_ordinal = 1
         )
-        /* Same set of key columns but in different order */
+        /*
+        Same set of key columns but in different order.
+
+        Both directions of EXCEPT have to come back empty for the two sets to be
+        identical. One direction only proves that the first index's keys are
+        all in the second, so an index with a subset of the other's keys passed
+        whenever its name happened to sort first (pairs are visited once, lower
+        name first) and was skipped whenever it sorted second: the label
+        depended on the index names, and went to pairs whose key columns differ.
+        */
         AND NOT EXISTS
         (
-            /* Make sure the sets of key columns are exactly the same */
+            /* Every key column of the first index is a key column of the second */
             SELECT
                 id1.column_name
             FROM #index_details AS id1
@@ -21649,6 +23168,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE id2.index_hash = ia2.index_hash
             AND   id2.is_included_column = 0
             AND   id2.key_ordinal > 0
+        )
+        AND NOT EXISTS
+        (
+            /* And every key column of the second index is a key column of the first */
+            SELECT
+                id2.column_name
+            FROM #index_details AS id2
+            WHERE id2.index_hash = ia2.index_hash
+            AND   id2.is_included_column = 0
+            AND   id2.key_ordinal > 0
+
+            EXCEPT
+
+            SELECT
+                id1.column_name
+            FROM #index_details AS id1
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id1.is_included_column = 0
+            AND   id1.key_ordinal > 0
         )
         /* But the order is different (excluding the first column) */
         AND EXISTS
@@ -21812,8 +23350,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         base_key_columns,
         filter_definition,
-        winning_index_name,
-        index_list
+        winning_index_name
     )
     SELECT
         ia.database_id,
@@ -21823,7 +23360,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name = MAX(ia.table_name),
         base_key_columns = ia.key_columns,
         filter_definition = ISNULL(ia.filter_definition, N''),
-        /* Choose the index with most included columns as the winner (or first alphabetically if tied) */
+        /* Choose a unique index first, then one a foreign key or IGNORE_DUP_KEY depends on, then the most included columns, then the first alphabetically */
         winning_index_name =
             (
                 SELECT TOP (1)
@@ -21834,38 +23371,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   candidate.action = N'MERGE INCLUDES'
                 AND   candidate.consolidation_rule = N'Key Duplicate'
                 ORDER BY
+                    /*
+                    A unique index first. Rule 5 leaves more than one candidate
+                    when an index's arbitrary partner was not the unique one, and
+                    disabling the unique index for a non-unique duplicate drops
+                    the uniqueness with nothing in the output to say so (#918)
+                    */
+                    candidate.is_unique DESC,
+                    /*
+                    Then the index a foreign key is backed by, then the one that
+                    skips duplicate keys: the two terms index_priority gained in
+                    #917 and #916, in the same order. Rule 5 leaves this step more
+                    than one candidate when three or more indexes share a key, and
+                    without them a plain unique index with more includes won here.
+                    The guard then kept the foreign key's index and the keeper took
+                    over IGNORE_DUP_KEY, so nothing broke, but the wrong index was
+                    rebuilt and the right one was reported as a duplicate.
+                    */
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_fkb
+                            WHERE id_fkb.index_hash = candidate.index_hash
+                            AND   id_fkb.is_foreign_key_backing = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_idk
+                            WHERE id_idk.index_hash = candidate.index_hash
+                            AND   id_idk.ignore_dup_key = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
                     /* Then prefer indexes with more included columns (by length as a proxy) */
                     LEN(ISNULL(candidate.included_columns, '')) DESC,
                     /* Then alphabetically for stability */
                     candidate.index_name
-            ),
-        /* Build a list of other indexes in this group */
-        index_list =
-            STUFF
-            (
-              (
-                SELECT
-                    N', ' +
-                    inner_ia.index_name
-                FROM #index_analysis AS inner_ia
-                WHERE inner_ia.scope_hash = ia.scope_hash
-                  AND inner_ia.key_filter_hash = ia.key_filter_hash
-                  AND inner_ia.action = N'MERGE INCLUDES'
-                  AND inner_ia.consolidation_rule = N'Key Duplicate'
-                GROUP BY
-                    inner_ia.index_name,
-                    inner_ia.scope_hash,
-                    inner_ia.key_filter_hash
-                ORDER BY
-                    inner_ia.index_name
-                FOR
-                    XML
-                    PATH(''),
-                    TYPE
-              ).value('.', 'nvarchar(max)'),
-              1,
-              2,
-              ''
             )
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
@@ -21904,22 +23454,92 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
-    /* Update the winning index's superseded_by to list all other indexes */
+    /*
+    Point every key duplicate loser at its group's winner.
+
+    Rule 5 updates each index through a join to all of its duplicates, so each
+    index takes its action and its target from one partner, whichever row the
+    join applied. A loser can therefore point at an index that is itself being
+    disabled: a partner Rule 5 disabled in favor of a third index, or a
+    candidate the statement above just disabled. The single-winner merge below
+    and the unwind after the foreign key guard both find a winner's losers by
+    target_index_name, so a loser pointing at another loser could have its
+    includes merged into no index, and the report named an index that is going
+    away as its replacement.
+
+    After the statement above, each group holds one MERGE INCLUDES row, its
+    winner. Only a loser whose target is another key duplicate loser moves, so
+    a Rule 7.6 duplicate that points at its MAKE UNIQUE winner stays put.
+    */
     UPDATE
         ia
     SET
-        ia.superseded_by = N'Supersedes ' +
-        REPLACE
-        (
-            kdd.index_list,
-            ia.index_name + N', ',
-            N''
-        ) /* Remove self from list if present */
+        ia.target_index_name = winner.index_name
     FROM #index_analysis AS ia
-    JOIN #key_duplicate_dedupe AS kdd
-      ON  ia.scope_hash = kdd.scope_hash
-      AND ia.key_filter_hash = kdd.key_filter_hash
-    WHERE ia.index_name = kdd.winning_index_name
+    JOIN #index_analysis AS target_loser
+      ON  target_loser.scope_hash = ia.scope_hash
+      AND target_loser.index_name = ia.target_index_name
+    JOIN #index_analysis AS winner
+      ON  winner.scope_hash = ia.scope_hash
+      AND winner.key_filter_hash = ia.key_filter_hash
+    WHERE ia.action = N'DISABLE'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   target_loser.action = N'DISABLE'
+    AND   target_loser.consolidation_rule = N'Key Duplicate'
+    AND   winner.action = N'MERGE INCLUDES'
+    AND   winner.consolidation_rule = N'Key Duplicate'
+    AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    /*
+    Write each winner's "Supersedes <index>" text from the losers that now
+    point at it, so it names every index the winner replaces and never the
+    winner itself. Editing a list of the group's candidates with REPLACE left
+    the winner in its own list when its name sorted last, and Rule 5's text
+    names only the one partner each index was paired with.
+
+    Built from #index_analysis rows rather than by editing text, like the
+    unwind after the foreign key guard, so a name that contains another
+    index's name cannot be cut in the wrong place.
+    */
+    UPDATE
+        ia
+    SET
+        ia.superseded_by =
+            N'Supersedes ' +
+            sp.loser_part
+    FROM #index_analysis AS ia
+    CROSS APPLY
+    (
+        SELECT
+            loser_part =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_loser.index_name
+                        FROM #index_analysis AS ia_loser
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.key_filter_hash = ia.key_filter_hash
+                        AND   ia_loser.action = N'DISABLE'
+                        AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                        AND   ia_loser.target_index_name = ia.index_name
+                        ORDER BY
+                            ia_loser.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS sp
+    WHERE ia.action = N'MERGE INCLUDES'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   sp.loser_part IS NOT NULL
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
@@ -22275,25 +23895,371 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
-    /* Update winning indexes that don't actually need changes to have action = N'KEEP' */
+    /*
+    Record the keepers that have to take over IGNORE_DUP_KEY from a loser (#916).
+
+    Two unique structures on the same keys can differ in IGNORE_DUP_KEY, and
+    removing the one that has it changes what an insert of a duplicate key does:
+    measured on 2022 CU27, SQL Server skips the row while either structure skips
+    it, and raises 2601 once the last one is gone. The term above makes the
+    skipper win its own pair, so the common case needs nothing carried. Two
+    things still reach here:
+
+      - A pair the skipper LOSES, which today means a foreign key is backed by
+        the other structure. That term outranks this one on purpose - keeping the
+        index the key depends on and giving it IGNORE_DUP_KEY is the one outcome
+        where nothing changes, measured in both directions.
+      - Rule 7, which does not read index_priority at all: it keeps the
+        nonclustered index and drops the constraint whichever of them skips.
+
+    Collected here, before the rules' losers are read by anything else, and
+    consumed in two places: the WITH list of a keeper that is being rebuilt
+    anyway, and an ALTER INDEX ... SET for one that is not.
+    */
+    INSERT INTO
+        #ignore_dup_key_carried
+    WITH
+        (TABLOCK)
+    (
+        index_hash,
+        loser_index_name,
+        keeper_is_unique_constraint
+    )
+    SELECT
+        ia_keep.index_hash,
+        loser_index_name =
+            MIN(ia_loser.index_name),
+        keeper_is_unique_constraint =
+            MAX(CONVERT(integer, id_keep.is_unique_constraint))
+    FROM #index_analysis AS ia_keep
+    JOIN #index_details AS id_keep
+      ON id_keep.index_hash = ia_keep.index_hash
+    JOIN #index_analysis AS ia_loser
+      ON  ia_loser.scope_hash = ia_keep.scope_hash
+      AND ia_loser.target_index_name = ia_keep.index_name
+      AND ia_loser.index_name <> ia_keep.index_name
+    JOIN #index_details AS id_loser
+      ON id_loser.index_hash = ia_loser.index_hash
+    WHERE ia_keep.database_id = @current_database_id
+    AND   ia_loser.action = N'DISABLE'
+    /* The loser skips duplicates and the keeper does not, so the behaviour would change */
+    AND   id_loser.ignore_dup_key = 1
+    AND   id_keep.ignore_dup_key = 0
+    GROUP BY
+        ia_keep.index_hash
+    OPTION(RECOMPILE);
+
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('%I64d keeper(s) have to take over IGNORE_DUP_KEY', 0, 0, @rc) WITH NOWAIT;
+    END;
+
+    /*
+    Never disable an index that a foreign key is backed by.
+
+    A foreign key names its backing index in sys.foreign_keys.key_index_id, and
+    ALTER INDEX ... DISABLE against that index disables the foreign key too. SQL
+    Server only prints a warning, so the cleanup script looks like it worked
+    while the key stops being enforced: measured on 2022 CU27, the key is left
+    is_disabled = 1 and is_not_trusted = 1, and an INSERT naming a parent row
+    that does not exist succeeds from then on.
+
+    The per-column is_foreign_key_reference flag the dedupe rules already check
+    cannot answer this. It says a key points at the COLUMN, so with two unique
+    indexes on the same column it is 1 for both and tells us nothing about which
+    one the key depends on. That is the pair in the repro: the key is backed by
+    the index the rules disabled.
+
+    This sits after every rule rather than inside each one. The rules pick a
+    loser in nine places, by priority, by width and by name, and a guard in each
+    is a guard the tenth rule can be written without.
+
+    Clearing superseded_by on the LOSER row below changes nothing, because a
+    loser's superseded_by is already NULL: the claim "Supersedes <index>" and the
+    merged include list both live on the WINNER's row, which still carries them
+    after this statement. The statement after it unwinds the winners, so no
+    keeper is left claiming it supersedes an index that is staying, or getting a
+    MERGE SCRIPT that adds the includes of an index that is staying.
+
+    consolidation_rule and target_index_name are deliberately LEFT ALONE. The
+    rule still matched, and the reporting insert below reads both to say which
+    index this one duplicates, so a reader learns the pair exists instead of
+    seeing the index pass silently. The action is what decides what happens to
+    it, and that is now KEEP.
+
+    Both indexes are kept when the loser backs a key. Promoting the other one
+    instead is not safe to do blindly: when both back keys there is no loser to
+    pick at all, and that is the case this would get wrong.
+
+    Only DISABLE is reverted. MERGE INCLUDES rebuilds its index through
+    DROP_EXISTING with the key columns intact, so the key keeps its backing
+    index and the foreign key is never touched.
+    */
+    UPDATE
+        ia
+    SET
+        ia.action = N'KEEP',
+        ia.superseded_by = NULL
+    OUTPUT
+        inserted.index_hash
+    INTO #foreign_key_kept
+        (index_hash)
+    FROM #index_analysis AS ia
+    WHERE ia.action = N'DISABLE'
+    AND   ia.database_id = @current_database_id
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_fkb
+        WHERE id_fkb.index_hash = ia.index_hash
+        AND   id_fkb.is_foreign_key_backing = 1
+    )
+    OPTION(RECOMPILE);
+
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Kept %I64d index(es) a foreign key is backed by', 0, 0, @rc) WITH NOWAIT;
+    END;
+
+    /*
+    Unwind the winners of the indexes the guard just kept.
+
+    A winner's include list and its "Supersedes <index>" text were built while
+    the loser was still going to be disabled. With the loser staying, a winner
+    left alone would be rebuilt with includes it has no reason to absorb, and its
+    report would claim it supersedes an index that is staying.
+
+    Each affected winner gets its include list rebuilt from its own includes plus
+    those of the losers still being disabled, and its superseded_by rebuilt from
+    the same losers. A MERGE INCLUDES winner left with no loser goes back to KEEP.
+    A MAKE UNIQUE winner is not reverted: it still replaces its constraint.
+
+    Both strings come from #index_details and #index_analysis rows rather than
+    from editing the old text, so a name that contains another index's name, or a
+    comma, cannot be cut in the wrong place.
+    */
+    UPDATE
+        ia
+    SET
+        ia.included_columns =
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        QUOTENAME(idc.column_name)
+                    FROM #index_details AS idc
+                    WHERE idc.is_included_column = 1
+                    AND
+                    (
+                        /* The winner's own includes */
+                        idc.index_hash = ia.index_hash
+                        /* Plus those of the losers still being disabled */
+                        OR EXISTS
+                           (
+                               SELECT
+                                   1/0
+                               FROM #index_analysis AS ia_loser
+                               WHERE ia_loser.scope_hash = ia.scope_hash
+                               AND   ia_loser.action = N'DISABLE'
+                               AND   ia_loser.target_index_name = ia.index_name
+                               AND   ia_loser.consolidation_rule IN
+                                     (
+                                         N'Key Subset',
+                                         N'Key Duplicate'
+                                     )
+                               AND   ia_loser.index_hash = idc.index_hash
+                           )
+                    )
+                    /* A column already in the winner's key doesn't need including */
+                    AND NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS idk
+                        WHERE idk.index_hash = ia.index_hash
+                        AND   idk.is_included_column = 0
+                        AND   idk.column_name = idc.column_name
+                    )
+                    GROUP BY
+                        idc.column_name
+                    ORDER BY
+                        idc.column_name
+                    FOR
+                        XML
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]', 'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        ia.superseded_by =
+            NULLIF
+            (
+                ISNULL(sp.constraint_part, N'') +
+                CASE
+                    WHEN sp.constraint_part IS NOT NULL
+                    AND  sp.loser_part IS NOT NULL
+                    THEN N', '
+                    ELSE N''
+                END +
+                ISNULL(N'Supersedes ' + sp.loser_part, N''),
+                N''
+            ),
+        ia.action =
+            CASE
+                WHEN ia.action = N'MERGE INCLUDES'
+                AND  sp.loser_part IS NULL
+                THEN N'KEEP'
+                ELSE ia.action
+            END
+    FROM #index_analysis AS ia
+    CROSS APPLY
+    (
+        SELECT
+            loser_part =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_loser.index_name
+                        FROM #index_analysis AS ia_loser
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.action = N'DISABLE'
+                        AND   ia_loser.target_index_name = ia.index_name
+                        AND   ia_loser.consolidation_rule IN
+                              (
+                                  N'Key Subset',
+                                  N'Key Duplicate'
+                              )
+                        ORDER BY
+                            ia_loser.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                ),
+            constraint_part =
+                N'Will replace constraint ' +
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_uc.index_name
+                        FROM #index_analysis AS ia_uc
+                        WHERE ia_uc.scope_hash = ia.scope_hash
+                        AND   ia_uc.action = N'DISABLE'
+                        AND   ia_uc.consolidation_rule = N'Unique Constraint Replacement'
+                        AND   ia_uc.target_index_name = ia.index_name
+                        ORDER BY
+                            ia_uc.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS sp
+    WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    AND   ia.database_id = @current_database_id
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_kept
+        JOIN #foreign_key_kept AS fkk
+          ON fkk.index_hash = ia_kept.index_hash
+        WHERE ia_kept.scope_hash = ia.scope_hash
+        AND   ia_kept.target_index_name = ia.index_name
+        AND   ia_kept.consolidation_rule IN
+              (
+                  N'Key Subset',
+                  N'Key Duplicate'
+              )
+    )
+    OPTION(RECOMPILE);
+
+    /*
+    Update winning indexes that don't actually need changes to have action = N'KEEP'.
+
+    A MERGE SCRIPT rebuilds the whole index through DROP_EXISTING, which is a lot
+    of work on a large table, so it is only worth emitting when it changes the
+    index: the merged include list differs from the index's current one, or a
+    MAKE UNIQUE row turns a non-unique index into a unique one. Options such as
+    compression are covered by the compression row below, which an index reaches
+    once it is KEEP, so no compression advice is lost.
+
+    The merged list is compared with the index's own includes, rebuilt from
+    #index_details in the same order the list was built in. The check this
+    replaces asked whether Rule 6 had recorded merged includes for the index, but
+    Rule 6 records a row for every Key Superset winner whether or not the list
+    changed, and the check only ever looked at MERGE INCLUDES rows, so it missed
+    both a superset that already covers its subset and a unique index that
+    already replaces its constraint.
+
+    Every statement that writes included_columns builds the list the same way:
+    QUOTENAME(column_name), joined with ', ', in column_name order. That covers
+    Rule 6, the other merges, and the winner unwind above. If one of them ever
+    orders the list differently, an unchanged list stops matching here, and the
+    index gets a MERGE SCRIPT that changes nothing again. Keep them in step.
+    */
     UPDATE
         ia
     SET
         /* Change action to 'KEEP' for indexes that don't need to be modified */
         ia.action = N'KEEP'
     FROM #index_analysis AS ia
-    WHERE ia.action = N'MERGE INCLUDES'
-    AND   ia.superseded_by IS NOT NULL
-    /* Only change to KEEP if Rule 6 didn't compute merged includes for this index */
-    AND NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #merged_includes AS mi
-        WHERE mi.scope_hash = ia.scope_hash
-        AND   mi.index_name = ia.index_name
-    )
+    WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     AND   ia.database_id = @current_database_id
+    /* A MAKE UNIQUE row only changes the index when it is not unique yet */
+    AND
+    (
+         ia.action = N'MERGE INCLUDES'
+      OR ia.is_unique = 1
+    )
+    /* The merged include list is the index's own include list */
+    AND   ISNULL(ia.included_columns, N'') =
+          ISNULL
+          (
+              STUFF
+              (
+                  (
+                      SELECT
+                          N', ' +
+                          QUOTENAME(idc.column_name)
+                      FROM #index_details AS idc
+                      WHERE idc.index_hash = ia.index_hash
+                      AND   idc.is_included_column = 1
+                      GROUP BY
+                          idc.column_name
+                      ORDER BY
+                          idc.column_name
+                      FOR
+                          XML
+                          PATH(''),
+                          TYPE
+                  ).value('text()[1]', 'nvarchar(max)'),
+                  1,
+                  2,
+                  N''
+              ),
+              N''
+          )
     OPTION(RECOMPILE);
 
     /* Insert merge scripts for indexes */
@@ -22383,14 +24349,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N''
             END +
             N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            SQL Server refuses CREATE INDEX ... WITH (DROP_EXISTING = ON, ONLINE = ON)
+            on a table whose base is a clustered columnstore index: measured on 2022
+            CU27, Msg 35352. The paired DISABLE still runs, so the loser's columns
+            would be covered by nothing. ALTER INDEX ... REBUILD WITH (ONLINE = ON) is
+            accepted on the same table, and a nonclustered columnstore index does not
+            cause the error, so only this case is written offline.
+            */
             CASE
                 WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
                 THEN N'ON'
                 ELSE N'OFF'
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
                 END +
             CASE
@@ -22404,6 +24387,93 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id_ofsk.optimize_for_sequential_key = 1
                 )
                 THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
+            /*
+            DROP_EXISTING resets both options below to OFF, so carry them. The index
+            also carries IGNORE_DUP_KEY from any structure of its pair the scripts
+            remove, not only from a unique constraint a MAKE UNIQUE row replaces
+            (#914, generalised by #916): whatever is going away, the structure that
+            takes over enforcing uniqueness has to keep skipping the duplicates it
+            used to skip, or those inserts start failing with error 2601.
+
+            #ignore_dup_key_carried is the whole population - a keeper that does not
+            skip with a loser that does - so this arm and the ALTER INDEX ... SET row
+            below read one definition rather than two that can drift apart. The
+            keeper's own flag still stands on its own: an index that already skips
+            keeps doing so through the rebuild whether or not it won a pair.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = ia.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                )
+                OR EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #ignore_dup_key_carried AS idkc
+                    WHERE idkc.index_hash = ia.index_hash
+                    AND   idkc.keeper_is_unique_constraint = 0
+                )
+                THEN N', IGNORE_DUP_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_nrc
+                    WHERE id_nrc.index_hash = ia.index_hash
+                    AND   id_nrc.no_recompute = 1
+                )
+                THEN N', STATISTICS_NORECOMPUTE = ON'
+                ELSE N''
+            END +
+            /*
+            DROP_EXISTING resets these three as well: row and page locks back to
+            allowed, and incremental statistics back to OFF. Only a value that
+            differs from the default needs naming.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
                 ELSE N''
             END +
             N')' +
@@ -22448,7 +24518,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
@@ -22528,6 +24598,91 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia.index_name
         OPTION(RECOMPILE);
     END;
+
+    /*
+    Hand IGNORE_DUP_KEY to a keeper that is not being rebuilt (#916).
+
+    A keeper that gets a MERGE SCRIPT already carries the option in its WITH list
+    above, so this row is for the rest: a plain KEEP, and the Rule 7 index that
+    replaces a constraint and was already unique, which #914 writes no script for
+    because the rebuild would add neither a column nor uniqueness.
+
+    sort_order 6, between the merge scripts (5) and the disables (20), and that
+    ordering is the point rather than cosmetics: while either structure skips a
+    duplicate, SQL Server skips it, so the keeper has to be skipping BEFORE the
+    loser is disabled. Run the other way round, an insert between the two
+    statements fails with 2601.
+
+    Measured on 2022 CU27: ALTER INDEX ... SET (IGNORE_DUP_KEY = ON) against a
+    plain unique index is accepted, leaves sys.indexes.ignore_dup_key = 1, and the
+    index then skips a duplicate for a single-row and a 500-row insert alike. The
+    constraint keeper that cannot take it never reaches here - it is filtered out
+    below, and its pair was left alone by the guard above.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, IGNORE_DUP_KEY', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        script,
+        additional_info
+    )
+    SELECT
+        result_type = 'IGNORE_DUP_KEY',
+        sort_order = 6,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = N'IGNORE_DUP_KEY SCRIPT',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        script =
+            N'ALTER INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' SET (IGNORE_DUP_KEY = ON);',
+        additional_info =
+            N'Takes over IGNORE_DUP_KEY from ' +
+            idkc.loser_index_name +
+            N', which the scripts remove. Without it, an insert of a duplicate key starts failing with error 2601 instead of skipping the row. Run this before the DISABLE script.'
+    FROM #index_analysis AS ia
+    JOIN #ignore_dup_key_carried AS idkc
+      ON idkc.index_hash = ia.index_hash
+    WHERE ia.database_id = @current_database_id
+    AND   idkc.keeper_is_unique_constraint = 0
+    /* A rebuilt keeper carries the option in its own WITH list instead */
+    AND   ia.action NOT IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    /* The loser has to actually be going away: either guard may have kept it */
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_loser
+        WHERE ia_loser.scope_hash = ia.scope_hash
+        AND   ia_loser.target_index_name = ia.index_name
+        AND   ia_loser.action = N'DISABLE'
+    )
+    OPTION(RECOMPILE);
 
     /* Insert disable scripts for unneeded indexes */
     IF @debug = 1
@@ -22979,6 +25134,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       OR id.is_primary_key = 1
     )
     AND   ce.can_compress = 1 /* Only those eligible for compression */
+    AND   fo.can_compress = 1 /* One #filtered_objects row per index, not one per partition compression mix */
     AND   fo.database_id = @current_database_id
     /* Only add if not already in #index_analysis */
     AND   NOT EXISTS
@@ -23078,7 +25234,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
             CASE
@@ -23117,7 +25273,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
@@ -23246,7 +25402,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_size_gb,
         index_rows,
         index_reads,
-        index_writes
+        index_writes,
+        partition_number
     )
     SELECT DISTINCT
         result_type = 'COMPRESS_PARTITION',
@@ -23271,30 +25428,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 nvarchar(20),
                 ps.partition_number
             ) +
-            N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            A single-partition rebuild accepts only SORT_IN_TEMPDB, MAXDOP, ONLINE,
+            the compression options, RESUMABLE and WAIT_AT_LOW_PRIORITY. FILLFACTOR
+            and OPTIMIZE_FOR_SEQUENTIAL_KEY are refused with Msg 155 (measured on
+            2022 CU27), and the rebuild keeps the index's own values for both.
+            */
+            N' WITH (SORT_IN_TEMPDB = ON, ONLINE = ' +
             CASE
                 WHEN @online = 1
                 THEN N'ON'
                 ELSE N'OFF'
             END +
-                        CASE
+            CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
+            END +
             N');',
             N'Compression type: Per Partition | Partition: ' +
             CONVERT
@@ -23326,7 +25476,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.total_rows,
         index_reads =
             (id.user_seeks + id.user_scans + id.user_lookups),
-        id.user_updates
+        id.user_updates,
+        ps.partition_number
     FROM #index_analysis AS ia
     JOIN #partition_stats AS ps
       ON ia.index_hash = ps.index_hash
@@ -23339,6 +25490,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE
         /* Only partitioned indexes */
         ps.partition_function_name IS NOT NULL
+        /* Only partitions still uncompressed, the same test #filtered_objects makes for a whole index */
+    AND  ps.data_compression_desc = N'NONE'
         /* Indexes that are not being disabled or merged */
     AND  (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
@@ -23474,6 +25627,95 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
+    /*
+    Indexes a foreign key is backed by, which a dedupe rule had picked as the
+    loser before the guard above kept them.
+
+    Reported rather than passed over in silence: without this the index reaches
+    the results only through its compression row, where consolidation_rule is
+    N/A, so a reader is never told that a duplicate pair exists on the table or
+    that something stopped it from being cleaned up. Both of those are decisions
+    only the reader can make, and they need the pair named to make them.
+
+    A row of its own, after the compression insert and before the KEPT one, so
+    neither is changed: the compression recommendation still reaches the results
+    exactly as it did, and the generic "This index is being kept" row the KEPT
+    insert would otherwise emit is replaced by this one, which says why.
+
+    Driven by #foreign_key_kept, the rows the guard actually changed, and not by
+    is_foreign_key_backing. An index a foreign key is backed by can also win its
+    pair on merit, with the duplicate disabled as normal, and this row would then
+    credit the guard with a decision the rules had already made correctly.
+
+    The foreign key is not named here. Its name lives in the target database's
+    sys.foreign_keys, which only the collection's dynamic SQL can read, and
+    #index_details carries the fact and not the name.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, FOREIGN KEY BACKED', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        additional_info,
+        original_index_definition,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT DISTINCT
+        result_type = 'KEPT',
+        sort_order = 94, /* Between NEEDS REVIEW and the other kept indexes */
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'KEPT - FOREIGN KEY',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        additional_info =
+            N'A foreign key is backed by this index, so disabling it would disable the key too. Kept for that reason, although it matched ' +
+            ISNULL(ia.consolidation_rule, N'(unknown)') +
+            N' with ' +
+            ISNULL(ia.target_index_name, N'(unknown)') +
+            N'. Review the pair by hand if you want the duplicate gone.',
+        /* Original index definition for validation */
+        ia.original_index_definition,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps
+      ON ia.index_hash = ps.index_hash
+    LEFT JOIN #index_details AS id
+      ON  id.index_hash = ia.index_hash
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE ia.database_id = @current_database_id
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #foreign_key_kept AS fkk
+        WHERE fkk.index_hash = ia.index_hash
+    )
+    OPTION(RECOMPILE);
 
     /* Insert kept indexes into results - Consolidated all kept indexes logic in one place */
     IF @debug = 1
@@ -23587,7 +25829,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.object_id,
             ps.index_id,
             ps.partition_function_name
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
@@ -23629,6 +25871,370 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     )
     AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
+    END;
+
+    /*
+    Analyze filtered indexes to identify columns used in filters that should be included.
+
+    A column is referenced by the filter when its bracketed name is in the
+    filter text, because filter_definition always stores column names in
+    brackets: ([SiteID]=(1)). Matching the bare name as a substring found [ID]
+    inside [SiteID] and recommended a column the filter never mentions. CHARINDEX
+    and not LIKE, since in a LIKE pattern the brackets are a character class.
+
+    This runs after every rule and every script, because the finding has to
+    describe the index the scripts leave behind. Run ahead of the rules, it
+    named a filter column that a merge was about to add, so its script listed
+    the column twice (Msg 1909), and it scripted indexes the same run disables:
+    CREATE INDEX ... WITH (DROP_EXISTING = ON) rebuilds a disabled index, so the
+    script undid the DISABLE. Now a column counts as present when the index
+    has it or takes it over from a loser it absorbs - the same losers the
+    include merges read - and an index the run disables gets no finding.
+
+    CONVERT to nvarchar(max) first, so the concatenation below cannot be cut
+    off at 4,000 characters.
+    */
+    SELECT
+        @sql = CONVERT(nvarchar(max), N'') + N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    SELECT DISTINCT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Column names in filter_definition that the index will not carry */
+                            SELECT
+                                N'', '' +
+                                QUOTENAME(c.name)
+                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_analysis AS ia_loser
+                                JOIN #index_details AS id_loser
+                                  ON id_loser.index_hash = ia_loser.index_hash
+                                WHERE ia_loser.scope_hash = ia.scope_hash
+                                AND   ia_loser.target_index_name = ia.index_name
+                                AND   ia_loser.action = N''DISABLE''
+                                AND   ia_loser.consolidation_rule IN
+                                      (
+                                          N''Key Subset'',
+                                          N''Key Duplicate''
+                                      )
+                                AND   id_loser.is_included_column = 1
+                                AND   id_loser.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR
+                                XML
+                                PATH(''''),
+                                TYPE
+                        ).value(''text()[1]'',''nvarchar(max)''),
+                        1,
+                        2,
+                        N''''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* The same test: a filter column the index will not carry */
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_analysis AS ia_loser
+                        JOIN #index_details AS id_loser
+                          ON id_loser.index_hash = ia_loser.index_hash
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.target_index_name = ia.index_name
+                        AND   ia_loser.action = N''DISABLE''
+                        AND   ia_loser.consolidation_rule IN
+                              (
+                                  N''Key Subset'',
+                                  N''Key Duplicate''
+                              )
+                        AND   id_loser.is_included_column = 1
+                        AND   id_loser.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    AND   ia.database_id = @current_database_id
+    /* An index this run disables gets no finding */
+    AND   ISNULL(ia.action, N'''') <> N''DISABLE''
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
+        PRINT SUBSTRING(@sql,    1, 4000);
+        PRINT SUBSTRING(@sql, 4001, 4000);
+    END;
+
+    INSERT INTO
+        #filtered_index_columns_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        index_id,
+        index_name,
+        filter_definition,
+        missing_included_columns,
+        should_include_filter_columns
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@current_database_id integer',
+        @current_database_id;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#filtered_index_columns_analysis',
+            fica.*
+        FROM #filtered_index_columns_analysis AS fica
+        OPTION(RECOMPILE);
+    END;
+
+    /*
+    Script the filtered-index findings for this database, now, while its
+    #index_details, #partition_stats, #compression_eligibility and #filtered_objects
+    are loaded. The findings are returned after the loop, and a script built there
+    read those tables when they held only the last database's rows, so with
+    @get_all_databases = 1 every other database's script lost its compression, its
+    index options and its filegroup or partition scheme.
+    */
+    UPDATE
+        fica
+    SET
+        /*
+        Rebuild the index with the filter columns appended to the INCLUDE
+        list, using DROP_EXISTING so the existing index is replaced in a
+        single statement. Pieces are reused from #index_analysis, so the
+        key columns, existing includes, and filter all match the original.
+        The WITH options and partition ON clause mirror the merge/create
+        scripts so this advice stays consistent with the rest of the tool.
+        */
+        fica.create_index_script =
+            N'CREATE ' +
+            CASE
+                WHEN ia.is_unique = 1
+                THEN N'UNIQUE '
+                ELSE N''
+            END +
+            N'NONCLUSTERED INDEX ' +
+            QUOTENAME(fica.index_name) +
+            N' ON ' +
+            QUOTENAME(fica.database_name) +
+            N'.' +
+            QUOTENAME(fica.schema_name) +
+            N'.' +
+            QUOTENAME(fica.table_name) +
+            N' (' +
+            ia.key_columns +
+            N') INCLUDE (' +
+            CASE
+                WHEN ia.included_columns IS NOT NULL
+                AND  LEN(ia.included_columns) > 0
+                THEN ia.included_columns + N', ' + fica.missing_included_columns
+                ELSE fica.missing_included_columns
+            END +
+            N')' +
+            CASE
+                WHEN fica.filter_definition IS NOT NULL
+                THEN N' WHERE ' + fica.filter_definition
+                ELSE N''
+            END +
+            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /* Offline on a clustered columnstore table, for the reason given at the MERGE SCRIPT (Msg 35352) */
+            CASE
+                WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
+                THEN N'ON'
+                ELSE N'OFF'
+            END +
+            CASE
+                WHEN ce.can_compress = 1
+                THEN N', DATA_COMPRESSION = PAGE'
+                ELSE N''
+            END +
+            CASE
+                WHEN @supports_optimize_for_sequential_key = 1
+                AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_ofsk
+                    WHERE id_ofsk.index_hash = ia.index_hash
+                    AND   id_ofsk.optimize_for_sequential_key = 1
+                )
+                THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = ia.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                )
+                THEN N', IGNORE_DUP_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_nrc
+                    WHERE id_nrc.index_hash = ia.index_hash
+                    AND   id_nrc.no_recompute = 1
+                )
+                THEN N', STATISTICS_NORECOMPUTE = ON'
+                ELSE N''
+            END +
+            /* The other three DROP_EXISTING resets, as in the MERGE SCRIPT */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
+                ELSE N''
+            END +
+            N')' +
+            CASE
+                WHEN ps.partition_function_name IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on) +
+                     N'(' +
+                     ISNULL(ps.partition_columns, N'') +
+                     N')'
+                WHEN ps.built_on IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on)
+                ELSE N''
+            END +
+            N';'
+    FROM #filtered_index_columns_analysis AS fica
+    JOIN #index_analysis AS ia
+      ON  ia.database_id = fica.database_id
+      AND ia.schema_id = fica.schema_id
+      AND ia.object_id = fica.object_id
+      AND ia.index_id = fica.index_id
+    LEFT JOIN
+    (
+        /* One row per index carrying its storage/partition layout */
+        SELECT
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats AS ps
+        GROUP BY
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) AS ps
+      ON ps.index_hash = ia.index_hash
+    LEFT JOIN #compression_eligibility AS ce
+      ON ce.index_hash = ia.index_hash
+    WHERE fica.should_include_filter_columns = 1
+    AND   fica.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /*
@@ -23991,6 +26597,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.database_name
     OPTION(RECOMPILE);
 
+    /* This database's own usage window goes on its DATABASE row, and nowhere else */
+    UPDATE
+        irs
+    SET
+        irs.usage_since = d.usage_since,
+        irs.usage_since_reason = d.usage_since_reason
+    FROM #index_reporting_stats AS irs
+    JOIN #databases AS d
+      ON d.database_name = irs.database_name
+    WHERE irs.summary_level = 'DATABASE'
+    AND   irs.database_name = @current_database_name
+    OPTION(RECOMPILE);
+
     /*
     The server-wide SUMMARY row is generated after the database cursor
     completes (see below), rolling up every DATABASE row so the top line
@@ -24169,7 +26788,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     irs.schema_name,
                     irs.table_name,
                     irs.index_name,
-                    irs.script_type
+                    irs.script_type,
+                    /* NULL on every row but the per-partition ones, which would otherwise collapse to one partition */
+                    irs.partition_number
                 ORDER BY
                     irs.result_type DESC
             ) AS rn
@@ -24261,7 +26882,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Then by database, schema, table, index name for consistent ordering */
         ir.schema_name,
         ir.table_name,
-        ir.index_name
+        ir.index_name,
+        ir.partition_number
     OPTION(RECOMPILE);
 
     /*
@@ -24320,7 +26942,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         x.avg_lock_wait_ms,
         x.latch_wait_count,
         x.daily_latch_waits_saved,
-        x.avg_latch_wait_ms
+        x.avg_latch_wait_ms,
+        x.usage_since,
+        x.usage_since_reason
     FROM
     (
         /* ===== SUMMARY LEVEL ===== */
@@ -24415,6 +27039,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             latch_wait_count = 'N/A',
             daily_latch_waits_saved = 'N/A',
             avg_latch_wait_ms = 'N/A',
+            usage_since = CONVERT(datetime2(0), NULL),
+            usage_since_reason = CONVERT(nvarchar(500), NULL),
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 0,
@@ -24537,6 +27163,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
                     ELSE '0'
                 END,
+            usage_since = irs.usage_since,
+            usage_since_reason = irs.usage_since_reason,
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 1,
@@ -24638,6 +27266,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 FORMAT(ISNULL(irs.user_lookups, 0), 'N0') +
                 ' lookups)',
             writes = FORMAT(ISNULL(irs.total_writes, 0), 'N0'),
+            /*
+            The per-day columns divide by the table's own database usage
+            window, the same window the Unused Index rule used, because the
+            usage and operational counters restart when a database is
+            restored or created. Server uptime is the fallback.
+            */
             daily_write_ops_saved =
                 CASE
                     WHEN ISNULL(irs.unused_indexes, 0) > 0
@@ -24654,7 +27288,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -24704,7 +27342,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -24759,7 +27401,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -24795,12 +27441,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
                     ELSE '0'
                 END,
+            usage_since = CONVERT(datetime2(0), NULL),
+            usage_since_reason = CONVERT(nvarchar(500), NULL),
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 2,
             sort_unused_size = ISNULL(irs.unused_size_gb, 0),
             sort_total_size = ISNULL(irs.total_size_gb, 0)
         FROM #index_reporting_stats AS irs
+        LEFT JOIN #databases AS d
+          ON d.database_name = irs.database_name
         WHERE irs.summary_level = 'TABLE'
     ) AS x
     ORDER BY
@@ -24891,82 +27541,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.filter_definition,
             ia.original_index_definition,
             fica.missing_included_columns,
-            /*
-            Rebuild the index with the filter columns appended to the INCLUDE
-            list, using DROP_EXISTING so the existing index is replaced in a
-            single statement. Pieces are reused from #index_analysis, so the
-            key columns, existing includes, and filter all match the original.
-            The WITH options and partition ON clause mirror the merge/create
-            scripts so this advice stays consistent with the rest of the tool.
-            */
-            create_index_script =
-                N'CREATE ' +
-                CASE
-                    WHEN ia.is_unique = 1
-                    THEN N'UNIQUE '
-                    ELSE N''
-                END +
-                N'NONCLUSTERED INDEX ' +
-                QUOTENAME(fica.index_name) +
-                N' ON ' +
-                QUOTENAME(fica.database_name) +
-                N'.' +
-                QUOTENAME(fica.schema_name) +
-                N'.' +
-                QUOTENAME(fica.table_name) +
-                N' (' +
-                ia.key_columns +
-                N') INCLUDE (' +
-                CASE
-                    WHEN ia.included_columns IS NOT NULL
-                    AND  LEN(ia.included_columns) > 0
-                    THEN ia.included_columns + N', ' + fica.missing_included_columns
-                    ELSE fica.missing_included_columns
-                END +
-                N')' +
-                CASE
-                    WHEN fica.filter_definition IS NOT NULL
-                    THEN N' WHERE ' + fica.filter_definition
-                    ELSE N''
-                END +
-                N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-                CASE
-                    WHEN @online = 1
-                    THEN N'ON'
-                    ELSE N'OFF'
-                END +
-                CASE
-                    WHEN ce.can_compress = 1
-                    THEN N', DATA_COMPRESSION = PAGE'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
-                N')' +
-                CASE
-                    WHEN ps.partition_function_name IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on) +
-                         N'(' +
-                         ISNULL(ps.partition_columns, N'') +
-                         N')'
-                    WHEN ps.built_on IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on)
-                    ELSE N''
-                END +
-                N';',
+            /* Built inside the database loop, for the reason given there */
+            fica.create_index_script,
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
         JOIN #index_analysis AS ia
@@ -24974,24 +27550,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.schema_id = fica.schema_id
           AND ia.object_id = fica.object_id
           AND ia.index_id = fica.index_id
-        LEFT JOIN
-        (
-            /* One row per index carrying its storage/partition layout */
-            SELECT
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-            FROM #partition_stats AS ps
-            GROUP BY
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-        ) AS ps
-          ON ps.index_hash = ia.index_hash
-        LEFT JOIN #compression_eligibility AS ce
-          ON ce.index_hash = ia.index_hash
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,
@@ -25125,8 +27683,8 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '3.10',
-        @version_date = '20261001';
+        @version = '3.11',
+        @version_date = '20261101';
 
     IF @help = 1
     BEGIN
@@ -26129,8 +28687,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.10',
-        @version_date = N'20261001';
+        @version = N'2.11',
+        @version_date = N'20261101';
 
     /*
     Help section, for help.
@@ -26827,6 +29385,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         wait_type
     )
     VALUES
+        (N'BROKER_EVENTHANDLER'),
+        (N'BROKER_RECEIVE_WAITFOR'),
         (N'BROKER_TASK_STOP'),
         (N'BROKER_TO_FLUSH'),
         (N'BROKER_TRANSMITTER'),
@@ -26845,7 +29405,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'LAZYWRITER_SLEEP'),
         (N'LOGMGR_QUEUE'),
         (N'MEMORY_ALLOCATION_EXT'),
+        (N'ONDEMAND_TASK_QUEUE'),
+        (N'PARALLEL_REDO_DRAIN_WORKER'),
+        (N'PARALLEL_REDO_WORKER_WAIT_WORK'),
         (N'PREEMPTIVE_XE_GETTARGETSTATE'),
+        (N'PVS_PREALLOCATE'),
+        (N'PWAIT_DIRECTLOGCONSUMER_GETNEXT'),
+        (N'PWAIT_EXTENSIBILITY_CLEANUP_TASK'),
+        (N'QDS_ASYNC_QUEUE'),
         (N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP'),
         (N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP'),
         (N'REQUEST_FOR_DEADLOCK_SEARCH'),
@@ -26860,6 +29427,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'SLEEP_SYSTEMTASK'),
         (N'SLEEP_TEMPDBSTARTUP'),
         (N'SNI_HTTP_ACCEPT'),
+        (N'SOS_WORK_DISPATCHER'),
         (N'SP_SERVER_DIAGNOSTICS_SLEEP'),
         (N'SQLTRACE_BUFFER_FLUSH'),
         (N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP'),
@@ -26874,7 +29442,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (N'XE_DISPATCHER_JOIN'),
         (N'XE_DISPATCHER_WAIT'),
         (N'XE_LIVE_TARGET_TVF'),
-        (N'XE_TIMER_EVENT');
+        (N'XE_TIMER_EVENT'),
+        (N'XTP_PREEMPTIVE_TASK');
 
     /* Create temp table for database I/O stalls */
     CREATE TABLE
@@ -27066,8 +29635,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'CPU',
             CONVERT(nvarchar(10), osi.cpu_count) +
             N' logical processors, ' +
-            CONVERT(nvarchar(10), osi.hyperthread_ratio) +
-            N' physical cores, ' +
+            /*
+            hyperthread_ratio is logical processors per socket, not a core
+            count. Sockets times cores per socket is the physical core count;
+            if either is not reported, leave the core count out.
+            */
+            ISNULL
+            (
+                CONVERT(nvarchar(10), NULLIF(osi.socket_count * osi.cores_per_socket, 0)) +
+                N' physical cores, ',
+                N''
+            ) +
             CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
             N' NUMA node(s)'
         FROM sys.dm_os_sys_info AS osi;
@@ -27778,7 +30356,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     event_time = t.StartTime,
                     event_class = t.EventClass,
                     event_subclass = t.EventSubClass,
-                    database_name = DB_NAME(t.DatabaseID),
+                    /*
+                    DB_NAME is NULL for a database dropped since the event was
+                    logged, and the NOT NULL database_name in #results then
+                    raises Msg 515 and ends the run. Fall back to the name the
+                    trace row carries, then to the id.
+                    */
+                    database_name =
+                        COALESCE
+                        (
+                            DB_NAME(t.DatabaseID),
+                            t.DatabaseName,
+                            N'database_id ' + CONVERT(nvarchar(11), t.DatabaseID),
+                            N'N/A'
+                        ),
                     database_id = t.DatabaseID,
                     file_name = t.FileName,
                     object_name = t.ObjectName,
@@ -27886,7 +30477,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE N'Slow File Auto Grow'
                     END,
                 database_name = te.database_name,
-                object_name = te.file_name,
+                object_name = ISNULL(te.file_name, N'N/A'),
                 details =
                     N'Auto grow operation took ' +
                     CONVERT(nvarchar(20), te.duration_ms) +
@@ -27931,7 +30522,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE N'File Auto Shrink'
                     END,
                 database_name = te.database_name,
-                object_name = te.file_name,
+                object_name = ISNULL(te.file_name, N'N/A'),
                 details =
                     N'Auto shrink operation occurred on ' +
                     CONVERT(nvarchar(30), te.event_time, 120) +
@@ -27960,6 +30551,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 5003,
                 priority =
                     CASE
+                        WHEN dbcc_cmd.dbcc_pattern = N'DBCC FREEPROCCACHE (plan handle)'
+                        THEN 50 /* Informational: evicts one plan, not the cache */
                         WHEN dbcc_cmd.dbcc_pattern LIKE N'%FREEPROCCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%FREESYSTEMCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%DROPCLEANBUFFERS%'
@@ -27973,15 +30566,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Found ' +
                 CONVERT(nvarchar(20), COUNT_BIG(*)) +
                 N' instances of "' +
-                CASE
-                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
-                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
-                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case */
-                END +
+                dbcc_cmd.dbcc_pattern +
                 N'" between ' +
                 CONVERT(nvarchar(30), MIN(te.event_time), 120) +
                 N' and ' +
@@ -27994,6 +30579,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SELECT dbcc_pattern =
                     CASE
+                        /*
+                        A plan_handle or sql_handle argument (or a variable,
+                        which in practice holds one) evicts a single plan.
+                        A quoted argument names a resource pool and flushes
+                        that pool's whole cache, so it stays with the rest.
+                        */
+                        WHEN te.text_data LIKE N'%FREEPROCCACHE%(%0x%'
+                        OR   te.text_data LIKE N'%FREEPROCCACHE%(%@%'
+                        THEN N'DBCC FREEPROCCACHE (plan handle)'
                         WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
                         WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
                         WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
@@ -28006,16 +30600,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE te.event_class = 116 /* DBCC events */
             AND   te.text_data IS NOT NULL
             GROUP BY
-                dbcc_cmd.dbcc_pattern,
-                CASE
-                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
-                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
-                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just i case*/
-                END
+                dbcc_cmd.dbcc_pattern
             ORDER BY
                 COUNT_BIG(*) DESC;
 
@@ -28290,11 +30875,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OR dows.wait_type = N'IO_RETRY'
             OR dows.wait_type = N'RESMGR_THROTTLED'
         )
-        /* Only include waits that are significant in terms of percentage of uptime or average wait time (>1 second) */
+        /*
+        Only include waits that are significant in terms of percentage of uptime,
+        or average wait time (>1 second) backed by at least 60 seconds of total
+        wait time. Without that floor, a handful of long waits (a few
+        WAIT_AT_LOW_PRIORITY lock waits from an online index rebuild) is enough.
+        */
         AND
         (
              (dows.wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0)) > @significant_wait_threshold_pct
-          OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
+          OR (
+                  (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
+              AND dows.wait_time_ms >= 60000 /* ...and at least 60 seconds in total */
+             )
         );
 
         /* Calculate wait time as percentage of uptime */
@@ -28334,10 +30927,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN
                         CASE
                             WHEN ws.wait_time_percent_of_uptime >= @wait_high_pct
-                            OR   ws.avg_wait_ms >= 1000.0
-                            THEN 20 /* High: dominates uptime, or each wait is very long */
+                            OR   (ws.avg_wait_ms >= 1000.0 AND ws.wait_time_ms >= 60000)
+                            THEN 20 /* High: dominates uptime, or each wait is very long and the total is not trivial */
                             WHEN ws.wait_time_percent_of_uptime >= @wait_medium_pct
-                            OR   ws.avg_wait_ms >= 250.0
+                            OR   (ws.avg_wait_ms >= 250.0 AND ws.wait_time_ms >= 60000)
                             THEN 30 /* Medium */
                             ELSE 40 /* Low */
                         END
@@ -28404,7 +30997,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             url = N'https://erikdarling.com/sp_perfcheck/#WaitStats'
         FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
+        /*
+        Both ways into #wait_stats: a large share of uptime, or a long
+        average wait (the priority CASE above rates those High for
+        resource waits). Filtering on the share alone dropped the second.
+        The long-average path needs at least 60 seconds of total wait time,
+        so a few long waits do not qualify or rate High on their own.
+        */
+        WHERE
+        (
+             ws.wait_time_percent_of_uptime >= @significant_wait_threshold_pct
+          OR (
+                  (ws.wait_time_ms * 1.0 / NULLIF(ws.waiting_tasks_count, 0)) > 1000.0
+              AND ws.wait_time_ms >= 60000
+             )
+        )
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
@@ -28466,7 +31073,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM #benign_waits AS bw
             WHERE bw.wait_type = osw.wait_type
-        );
+        )
+        /*
+        SLEEP_TASK is mostly idle background tasks, so it stays out of the
+        ratio. It is not in #benign_waits because the wait stats check above
+        collects it, and its share of a total that left it out can reach
+        1,000% and overflow #wait_stats.percentage, a decimal(5, 2).
+        */
+        AND   osw.wait_type <> N'SLEEP_TASK';
 
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
         IF @total_wait_time_ms > 0
@@ -29278,15 +31892,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nvarchar(10), COUNT_BIG(*)) +
             N' database files with slow I/O. ' +
             N'Average overall latency: ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) +
+            /* Total stall over total I/O for the location, not an average of per-file averages */
+            CONVERT(nvarchar(10), CONVERT(decimal(10, 2), SUM(i.io_stall_ms) * 1.0 / NULLIF(SUM(i.total_io), 0))) +
             N' ms. ' +
             N'This may indicate an overloaded drive or underlying storage issue.',
         url = N'https://erikdarling.com/sp_perfcheck/#StoragePerformance'
     FROM #io_stats AS i
+    /* The same files 3001 and 3002 report: slow, and over 1000 reads or writes */
     WHERE
     (
-         i.avg_read_latency_ms > @slow_read_ms
-      OR i.avg_write_latency_ms > @slow_write_ms
+         (
+              i.avg_read_latency_ms > @slow_read_ms
+          AND i.num_of_reads > 1000
+         )
+      OR (
+              i.avg_write_latency_ms > @slow_write_ms
+          AND i.num_of_writes > 1000
+         )
     )
     AND  i.drive_location IS NOT NULL
     GROUP BY
@@ -29504,8 +32126,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHEN @azure_sql_db = 1
             THEN N'sys.database_files AS mf
         WHERE DB_NAME() = N''tempdb'';'
-            ELSE N'sys.master_files AS mf
-        WHERE mf.database_id = 2;'
+            /*
+            Current sizes. For tempdb, sys.master_files holds the sizes the
+            files are created with at startup, not what they have grown to.
+            */
+            ELSE N'tempdb.sys.database_files AS mf;'
         END;
 
         IF @debug = 1
@@ -30448,6 +33073,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     @sql,
                   N'@has_tables bit OUTPUT',
                     @has_tables OUTPUT;
+
+                /*
+                A database that AUTO_CLOSE has shut reports settings stored
+                in the database itself wrongly in sys.databases: collation,
+                delayed durability and ledger come back NULL, and ADR comes
+                back 0 even when it is on. #databases was filled from that.
+                Reading sys.databases through the database's own name opens
+                it for the statement, so re-read those columns here.
+                */
+                IF EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #databases AS d
+                    WHERE d.database_id = @current_database_id
+                    AND   d.is_auto_close_on = 1
+                )
+                BEGIN
+                    SET @sql = N'
+                    UPDATE
+                        d
+                    SET
+                        d.collation_name = sd.collation_name,
+                        d.snapshot_isolation_state_desc = ISNULL(sd.snapshot_isolation_state_desc, d.snapshot_isolation_state_desc),
+                        d.is_read_committed_snapshot_on = ISNULL(sd.is_read_committed_snapshot_on, d.is_read_committed_snapshot_on),
+                        d.delayed_durability_desc = sd.delayed_durability_desc' +
+                    CASE
+                        WHEN @has_is_accelerated_database_recovery = 1
+                        THEN N',
+                        d.is_accelerated_database_recovery_on = sd.is_accelerated_database_recovery_on'
+                        ELSE N''
+                    END +
+                    CASE
+                        WHEN @has_is_ledger = 1
+                        THEN N',
+                        d.is_ledger_on = sd.is_ledger_on'
+                        ELSE N''
+                    END + N'
+                    FROM #databases AS d
+                    JOIN ' +
+                    QUOTENAME(@current_database_name) +
+                    N'.sys.databases AS sd
+                      ON sd.database_id = d.database_id
+                    WHERE d.database_id = @current_database_id;';
+
+                    IF @debug = 1
+                    BEGIN
+                        PRINT @sql;
+                    END;
+
+                    EXECUTE sys.sp_executesql
+                        @sql,
+                      N'@current_database_id integer',
+                        @current_database_id;
+                END;
             END TRY
             BEGIN CATCH
                 /* If we can't access it, mark it */
@@ -30672,6 +33352,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_query_store_on = 0
+        /* Query Store cannot be enabled in master or tempdb */
+        AND   d.database_id NOT IN (1, 2)
         /* Skip this check for Azure SQL DB since Query Store is typically always enabled
            and Azure might be reporting is_query_store_on incorrectly */
         AND   @azure_sql_db = 0;
@@ -31261,15 +33943,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     database_name = @current_database_name,
                     object_name = mf.name,
                     details =
-                        ''Transaction log file is using a growth increment of '' +
-                        CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
-                        ''On SQL Server 2022, Azure SQL DB, or Azure MI, transaction logs can use instant file initialization when set to exactly 64 MB. '' +
-                        ''Consider changing the growth increment to 64 MB for improved performance.'',
+                        CASE
+                            WHEN mf.growth = 0
+                            THEN ''Transaction log file has auto-growth turned off. If the log fills and no other log file can grow, writes fail with error 9002. '' +
+                                 ''If that is not deliberate, use a fixed growth increment of 64 MB.''
+                            ELSE ''Transaction log file is using a growth increment of '' +
+                                 CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
+                                 ''On SQL Server 2022, Azure SQL DB, or Azure MI, log growths of up to 64 MB can use instant file initialization; larger growths are zeroed out first. '' +
+                                 ''Consider changing the growth increment to 64 MB for improved performance.''
+                        END,
                     url = N''https://erikdarling.com/sp_perfcheck/#LogGrowthSize''
                 FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
                 WHERE mf.is_percent_growth = 0
                 AND   mf.type_desc = N''LOG''
-                AND   mf.growth * 8.0 / 1024 <> 64;';
+                AND
+                (
+                     mf.growth = 0 /* auto-growth off */
+                  OR mf.growth * 8.0 / 1024 > 64 /* too large for instant file initialization */
+                );';
 
                 IF @debug = 1
                 BEGIN
@@ -31512,8 +34203,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.10',
-    @version_date = '20261001';
+    @version = '6.11',
+    @version_date = '20261101';
 
 
 IF @help = 1
@@ -31577,7 +34268,7 @@ BEGIN
                 WHEN N'@log_database_name' THEN N'any valid database name'
                 WHEN N'@log_schema_name' THEN N'any valid schema name'
                 WHEN N'@log_table_name_prefix' THEN N'any valid identifier, 112 characters or fewer'
-                WHEN N'@log_retention_days' THEN N'a positive integer'
+                WHEN N'@log_retention_days' THEN N'a positive integer, or 0 to keep logs indefinitely'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@troubleshoot_blocking' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'
@@ -33398,9 +36089,31 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             FORMAT(fm.total_read_count, 'N0'),
                         total_write_count =
                             FORMAT(fm.total_write_count, 'N0'),
+                        /*
+                        Total stall over total I/O, the same as the sample
+                        branch. Adding the two averages weighted a handful of
+                        slow writes the same as a million fast reads.
+                        */
                         total_avg_stall_ms =
-                            fm.avg_read_stall_ms +
-                            fm.avg_write_stall_ms
+                            CONVERT
+                            (
+                                decimal(38, 2),
+                                ISNULL
+                                (
+                                    1.0 *
+                                    (
+                                        fm.io_stall_read_ms +
+                                        fm.io_stall_write_ms
+                                    ) /
+                                    NULLIF
+                                    (
+                                        fm.total_read_count +
+                                        fm.total_write_count,
+                                        0
+                                    ),
+                                    0.
+                                )
+                            )
                     FROM @file_metrics AS fm
                     WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
                     OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
@@ -33426,7 +36139,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
                 SELECT
                     drive = N'Nothing to see here',
-                    database_name = N'By default, only >100 ms latency is reported',
+                    database_name = N'Only >' + CONVERT(nvarchar(11), @minimum_disk_latency_ms) + N' ms latency is reported',
                     database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
                     server_hours_uptime = 0,
                     file_size_gb = 0,
@@ -33583,8 +36296,50 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      f.total_read_count  > 0
                   OR f.total_write_count > 0
                 )
+                /*
+                Same latency floor as the non-sample panel
+                */
+                AND
+                (
+                     f.avg_read_stall_ms  > @minimum_disk_latency_ms
+                  OR f.avg_write_stall_ms > @minimum_disk_latency_ms
+                )
+
+                UNION ALL
+
+                SELECT
+                    drive = N'Nothing to see here',
+                    database_name = N'Only >' + CONVERT(nvarchar(11), @minimum_disk_latency_ms) + N' ms latency is reported',
+                    database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
+                    file_size_gb = 0,
+                    avg_read_stall_ms = 0,
+                    avg_write_stall_ms = 0,
+                    total_avg_stall = 0,
+                    avg_read_kb = 0,
+                    avg_write_kb = 0,
+                    total_mb_read = N'0',
+                    total_mb_written = N'0',
+                    total_read_count = N'0',
+                    total_write_count = N'0',
+                    sample_seconds = @sample_seconds
+                WHERE NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM f
+                    WHERE
+                    (
+                         f.total_read_count  > 0
+                      OR f.total_write_count > 0
+                    )
+                    AND
+                    (
+                         f.avg_read_stall_ms  > @minimum_disk_latency_ms
+                      OR f.avg_write_stall_ms > @minimum_disk_latency_ms
+                    )
+                )
                 ORDER BY
-                    f.total_avg_stall DESC
+                    total_avg_stall DESC
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
         END;
@@ -33722,7 +36477,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
             p.cntr_value,
             p.cntr_type
         FROM p
-        WHERE p.cntr_value > 0
+        /*
+        Sample mode keeps zeros: a counter that is 0 in one snapshot and
+        not in the other (Processes blocked 0 -> 1) needs both rows for
+        the comparison below to see the change.
+        */
+        WHERE
+        (
+             p.cntr_value > 0
+          OR @sample_seconds > 0
+        )
         AND   p.object_name LIKE @prefix
         AND   p.instance_name NOT IN
         (
@@ -33769,26 +36533,36 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         dopc.cntr_value,
                         total =
                             FORMAT(dopc.cntr_value, 'N0'),
+                        /*
+                        A per-second rate only means something for cumulative
+                        counters (cntr_type 272696576). Point-in-time gauges
+                        (65792) such as Total Server Memory (KB) or Processes
+                        blocked get NULL instead of value / uptime.
+                        */
                         total_per_second =
-                            FORMAT
-                            (
-                                dopc.cntr_value /
-                                ISNULL
-                                (
-                                    NULLIF
+                            CASE
+                                WHEN dopc.cntr_type = 272696576
+                                THEN
+                                    FORMAT
                                     (
-                                        DATEDIFF
+                                        dopc.cntr_value /
+                                        ISNULL
                                         (
-                                            SECOND,
-                                            dopc.sample_time,
-                                            SYSDATETIME()
+                                            NULLIF
+                                            (
+                                                DATEDIFF
+                                                (
+                                                    SECOND,
+                                                    dopc.sample_time,
+                                                    SYSDATETIME()
+                                                ),
+                                                0
+                                            ),
+                                            1
                                         ),
-                                        0
-                                    ),
-                                    1
-                                ),
-                                'N0'
-                            )
+                                        'N0'
+                                    )
+                            END
                     FROM @dm_os_performance_counters AS dopc
                 )
                 SELECT
@@ -33837,8 +36611,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         total_difference =
                             FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
                         total_difference_per_second =
-                            FORMAT((dopc2.cntr_value - dopc.cntr_value) /
-                            ISNULL(DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 1), 'N0'),
+                            CASE
+                                WHEN dopc.cntr_type = 272696576
+                                THEN
+                                    FORMAT
+                                    (
+                                        (dopc2.cntr_value - dopc.cntr_value) /
+                                        ISNULL
+                                        (
+                                            DATEDIFF
+                                            (
+                                                SECOND,
+                                                dopc.sample_time,
+                                                dopc2.sample_time
+                                            ),
+                                            1
+                                        ),
+                                        'N0'
+                                    )
+                            END,
                         sample_seconds =
                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
                         first_sample_time =
@@ -33853,7 +36644,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       AND dopc.counter_name = dopc2.counter_name
                       AND dopc.instance_name = dopc2.instance_name
                       AND dopc.sample_time < dopc2.sample_time
-                    WHERE (dopc2.cntr_value - dopc.cntr_value) <> 0
+                    /*
+                    Counters that moved, plus point-in-time gauges
+                    (cntr_type 65792) that are not zero. A gauge such as
+                    Memory Grants Pending that sits at the same non-zero
+                    value for the whole sample is pressure, not "no change".
+                    */
+                    WHERE
+                    (
+                         (dopc2.cntr_value - dopc.cntr_value) <> 0
+                      OR
+                      (
+                           dopc2.cntr_type = 65792
+                       AND dopc2.cntr_value > 0
+                      )
+                    )
                 )
                 SELECT
                     p.object_name,
@@ -33961,9 +36766,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                                 osi.cpu_count
                                             FROM sys.dm_os_sys_info AS osi
                                         )
-                                FROM sys.master_files AS mf
-                                WHERE mf.database_id = 2
-                                AND   mf.type = 0
+                                /*
+                                Current sizes. sys.master_files holds the sizes
+                                tempdb is created with at startup, not what the
+                                files have grown to since.
+                                */
+                                FROM tempdb.sys.database_files AS mf
+                                WHERE mf.type = 0
                                 FOR XML
                                     PATH('tempdb_configuration'),
                                     TYPE
@@ -34846,7 +37655,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             deqmg.session_id,
             database_name =
-                DB_NAME(deqp.dbid),
+                DB_NAME(ISNULL(der.database_id, deqp.dbid)),
             [dd hh:mm:ss.mss] =
                 CASE
                     WHEN e.elapsed_time_ms < 0
@@ -36005,8 +38814,45 @@ OPTION(MAXDOP 1, RECOMPILE);',
         );
 
         /*
+        Table variable to hold who blocks whom, one row per session pair.
+        sys.sysprocesses has one row per execution context, so a parallel
+        query with two threads waiting on the same blocker shows up twice;
+        walking sysprocesses directly repeated the session once per thread
+        and counted it more than once in blocked_session_count.
+        */
+        DECLARE
+            @blocking_edges table
+        (
+            session_id smallint NOT NULL,
+            blocking_session_id smallint NOT NULL,
+            PRIMARY KEY
+                (blocking_session_id, session_id)
+        );
+
+        /*
+        blocked > 0 only: sysprocesses reports negative values for sessions that wait
+        on no session (-2 orphaned distributed transaction, -3 deferred recovery,
+        -4 latch owner not known). Kept as edges they made a lead blocker look blocked.
+        */
+        INSERT
+            @blocking_edges
+        (
+            session_id,
+            blocking_session_id
+        )
+        SELECT DISTINCT
+            session_id = sp.spid,
+            blocking_session_id = sp.blocked
+        FROM sys.sysprocesses AS sp
+        WHERE sp.blocked > 0
+        AND   sp.blocked <> sp.spid;
+
+        /*
         Find lead blockers: sessions that are blocking others
-        but not blocked themselves (includes idle sessions with open transactions)
+        but not blocked themselves (includes idle sessions with open transactions).
+        A parallel query whose main thread (blocked = 0) waits on its workers,
+        while a worker waits on another session, is blocked, so it is checked
+        against the edge list rather than its own sysprocesses rows.
         */
         INSERT
             @lead_blockers
@@ -36030,8 +38876,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
               (
                   SELECT
                       1/0
-                  FROM sys.sysprocesses AS sp2
-                  WHERE sp2.blocked = sp.spid
+                  FROM @blocking_edges AS be
+                  WHERE be.blocking_session_id = sp.spid
+              )
+        AND   NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM @blocking_edges AS be
+                  WHERE be.session_id = sp.spid
               );
 
         /*
@@ -36073,8 +38926,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             Recursive: Walk down the blocking chain
             */
             SELECT
-                session_id = sp.spid,
-                blocking_session_id = sp.blocked,
+                session_id = be.session_id,
+                blocking_session_id = be.blocking_session_id,
                 blocking_level = b.blocking_level + 1,
                 top_level_blocker = b.top_level_blocker,
                 blocking_chain =
@@ -36082,21 +38935,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     (
                         nvarchar(4000),
                         REPLICATE(N' > ', b.blocking_level + 1) +
-                        CONVERT(nvarchar(20), sp.blocked) +
+                        CONVERT(nvarchar(20), be.blocking_session_id) +
                         N' blocking ' +
-                        CONVERT(nvarchar(20), sp.spid)
+                        CONVERT(nvarchar(20), be.session_id)
                     ),
                 visited_path =
                     CONVERT
                     (
                         nvarchar(4000),
-                        b.visited_path + CONVERT(nvarchar(20), sp.spid) + N'.'
+                        b.visited_path + CONVERT(nvarchar(20), be.session_id) + N'.'
                     )
             FROM blockers AS b
-            JOIN sys.sysprocesses AS sp
-              ON sp.blocked = b.session_id
+            JOIN @blocking_edges AS be
+              ON be.blocking_session_id = b.session_id
             WHERE b.visited_path NOT LIKE
-                  N'%.' + CONVERT(nvarchar(20), sp.spid) + N'.%'
+                  N'%.' + CONVERT(nvarchar(20), be.session_id) + N'.%'
         ),
             blocking_info
         (
@@ -36139,7 +38992,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 blocked_session_count =
                 (
                     SELECT
-                        COUNT_BIG(*)
+                        COUNT_BIG(DISTINCT b2.session_id)
                     FROM blockers AS b2
                     WHERE b2.visited_path LIKE
                           N'%.' + CONVERT(nvarchar(20), b.session_id) + N'.%'
@@ -36147,9 +39000,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),
                 sp.last_batch,
                 sp.status,
-                wait_type = sp.lastwaittype,
-                wait_time = sp.waittime,
-                wait_resource = sp.waitresource,
+                wait_type = ISNULL(w.lastwaittype, sp.lastwaittype),
+                wait_time = ISNULL(w.waittime, sp.waittime),
+                wait_resource = ISNULL(w.waitresource, sp.waitresource),
                 cpu_time = sp.cpu,
                 physical_io = sp.physical_io,
                 sp.memusage,
@@ -36164,8 +39017,27 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 program_name = sp.program_name,
                 sp.login_time
             FROM blockers AS b
+            /*
+            Session details come from the main thread (ecid 0), which is the
+            only one with the sql_handle and statement offsets. The wait
+            details come from the thread that is blocked by blocking_session_id,
+            which for a parallel query is a worker thread, not ecid 0.
+            */
             JOIN sys.sysprocesses AS sp
-              ON sp.spid = b.session_id
+              ON  sp.spid = b.session_id
+              AND sp.ecid = 0
+            OUTER APPLY
+            (
+                SELECT TOP (1)
+                    spw.lastwaittype,
+                    spw.waittime,
+                    spw.waitresource
+                FROM sys.sysprocesses AS spw
+                WHERE spw.spid = b.session_id
+                AND   spw.blocked = b.blocking_session_id
+                ORDER BY
+                    spw.ecid
+            ) AS w
         )
         /*
         Final SELECT: retrieve SQL text and query plans last for performance
@@ -36494,8 +39366,8 @@ ALTER PROCEDURE
     dbo.sp_QueryReproBuilder
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
-    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
-    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @include_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
     @include_query_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
     @include_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to search for*/
@@ -36510,6 +39382,8 @@ ALTER PROCEDURE
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
+    @top bigint = NULL, /*the number of plans you want to pull back, most recently executed first; NULL means 10, or every matching plan when an @include_ list or @procedure_name is given*/
+    @include_maintenance bit = 0, /*set this bit to 1 to keep index and statistics maintenance plans in the result set*/
     @query_plan_xml xml = NULL, /*a single query plan XML to process directly, bypassing Query Store*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
@@ -36529,8 +39403,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.10',
-    @version_date = '20261001';
+    @version = '1.11',
+    @version_date = '20261101';
 
 /*Help*/
 IF @help = 1
@@ -36554,8 +39428,8 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
-                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
-                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
+                WHEN N'@start_date' THEN 'the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
                 WHEN N'@include_query_ids' THEN 'a list of query ids to search for'
                 WHEN N'@include_query_hashes' THEN 'a list of query hashes to search for'
@@ -36570,6 +39444,8 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@query_text_search_not' THEN 'query text to exclude'
+                WHEN N'@top' THEN 'the number of plans you want to pull back, most recently executed first'
+                WHEN N'@include_maintenance' THEN 'set this bit to 1 to keep index and statistics maintenance plans (index builds, statistics updates, StatMan, DBCC) in the result set'
                 WHEN N'@query_plan_xml' THEN 'a single query plan XML to process directly, bypassing Query Store'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values'
@@ -36597,6 +39473,8 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@include_maintenance' THEN '0 or 1'
                 WHEN N'@query_plan_xml' THEN 'a valid ShowPlanXML document; when supplied, all Query Store filters are ignored'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
@@ -36624,6 +39502,8 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@query_text_search_not' THEN 'NULL'
+                WHEN N'@top' THEN '10, or every matching plan when an @include_ list or @procedure_name is given'
+                WHEN N'@include_maintenance' THEN '0'
                 WHEN N'@query_plan_xml' THEN 'NULL'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
@@ -36701,10 +39581,16 @@ DECLARE
     @azure bit = 0,
     @sql_2017 bit = 0,
     @sql_2022_views bit = 0,
+    @procedure_variants_single nvarchar(max) = N'',
+    @procedure_variants_wildcard nvarchar(max) = N'',
     @new bit = 0,
     @current_table nvarchar(100),
     @include_plans_seeded bit = 0,
-    @match nvarchar(max) = N'';
+    @match nvarchar(max) = N'',
+    @psp_message nvarchar(max) = N'',
+    @list_parameter sysname = NULL,
+    @list_item nvarchar(4000) = NULL,
+    @list_is_binary bit = 0;
 
 /*
 Attempt at overloading procedure name so it can accept a schema.procedure or
@@ -36977,6 +39863,13 @@ SELECT
 
 /*
 Convert dates to UTC for filtering
+
+A value without a time zone offset arrives as +00:00 and is taken as
+local server time, so it is moved by the server's UTC difference. A value
+with an offset other than +00:00 is already an exact point in time, and
+moving it again shifted the window by the server's UTC difference a
+second time. Those are only switched to +00:00. An explicit +00:00 cannot
+be told apart from no offset, so it is still taken as local time.
 */
 SELECT
     @start_date =
@@ -36994,6 +39887,9 @@ SELECT
                         SYSUTCDATETIME()
                     )
                 )
+            WHEN @start_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @start_date) <> 0
+            THEN SWITCHOFFSET(@start_date_original, N'+00:00')
             WHEN @start_date IS NOT NULL
             THEN
                 DATEADD
@@ -37023,6 +39919,9 @@ SELECT
                         )
                     )
                 )
+            WHEN @end_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @end_date) <> 0
+            THEN SWITCHOFFSET(@end_date_original, N'+00:00')
             WHEN @end_date IS NOT NULL
             THEN
                 DATEADD
@@ -37061,6 +39960,20 @@ BEGIN
 END;
 
 /*
+@top limits the run to the most recently executed plans. Left NULL, it
+becomes 10 as in sp_QuickieStore, unless an @include_ list or
+@procedure_name names the plans or queries to build repros for: then every
+matching plan comes back (see below, after the lists are cleaned up). Without a limit, a busy database
+gives thousands of repros and hundreds of MB of output (14,930 repros,
+797 MB, more than two minutes, on one test database).
+*/
+IF @top < 1
+BEGIN
+    RAISERROR('@top must be at least 1. Leave it NULL for 10 plans, or for every matching plan when an @include_ list or @procedure_name is given', 10, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
 NULLIF blank strings to NULL for consistent handling.
 @procedure_schema and @procedure_name are cleaned up earlier, alongside the
 procedure name parsing that depends on them.
@@ -37089,7 +40002,158 @@ SELECT
     @query_text_search =
         NULLIF(@query_text_search, ''),
     @query_text_search_not =
-        NULLIF(@query_text_search_not, '');
+        NULLIF(@query_text_search_not, ''),
+    @include_maintenance =
+        ISNULL(@include_maintenance, 0);
+
+/*
+Line breaks and tabs separate list items the way commas do, so a list
+pasted one value per line works. The lists are split on commas only, and
+an id next to a line break passed the check below and then failed to
+convert to bigint with a bare Msg 8114. The empty items this leaves
+between a comma and a line break are skipped, like any empty item.
+*/
+SELECT
+    @include_plan_ids =
+        REPLACE(REPLACE(REPLACE(@include_plan_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_query_ids =
+        REPLACE(REPLACE(REPLACE(@include_query_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_query_hashes =
+        REPLACE(REPLACE(REPLACE(@include_query_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_plan_hashes =
+        REPLACE(REPLACE(REPLACE(@include_plan_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_sql_handles =
+        REPLACE(REPLACE(REPLACE(@include_sql_handles, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_plan_ids =
+        REPLACE(REPLACE(REPLACE(@ignore_plan_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_query_ids =
+        REPLACE(REPLACE(REPLACE(@ignore_query_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_query_hashes =
+        REPLACE(REPLACE(REPLACE(@ignore_query_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_plan_hashes =
+        REPLACE(REPLACE(REPLACE(@ignore_plan_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_sql_handles =
+        REPLACE(REPLACE(REPLACE(@ignore_sql_handles, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N',');
+
+/*
+The default @top, once blank lists are NULL: 10 plans, unless an @include_
+list or @procedure_name asks for specific plans or queries, which all come
+back
+*/
+IF  @top IS NULL
+AND @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+BEGIN
+    SELECT
+        @top = 10;
+END;
+
+/*
+Check the id, hash, and handle lists before they are used, so a typo gets a
+message that names the parameter and the value instead of a bare Msg 8114
+from a conversion inside dynamic SQL. Ids are whole numbers; hashes and
+handles are hex that starts with 0x (CONVERT style 1 needs the 0x).
+*/
+IF @query_plan_xml IS NULL
+BEGIN
+    SELECT TOP (1)
+        @list_parameter = l.parameter_name,
+        @list_item =
+            CASE
+                WHEN l.list_value LIKE N'%[<&]%'
+                THEN l.list_value
+                ELSE i.item
+            END,
+        @list_is_binary = l.is_binary
+    FROM
+    (
+        VALUES
+            (N'@include_plan_ids', @include_plan_ids, 0),
+            (N'@include_query_ids', @include_query_ids, 0),
+            (N'@ignore_plan_ids', @ignore_plan_ids, 0),
+            (N'@ignore_query_ids', @ignore_query_ids, 0),
+            (N'@include_query_hashes', @include_query_hashes, 1),
+            (N'@include_plan_hashes', @include_plan_hashes, 1),
+            (N'@include_sql_handles', @include_sql_handles, 1),
+            (N'@ignore_query_hashes', @ignore_query_hashes, 1),
+            (N'@ignore_plan_hashes', @ignore_plan_hashes, 1),
+            (N'@ignore_sql_handles', @ignore_sql_handles, 1)
+    ) AS l (parameter_name, list_value, is_binary)
+    CROSS APPLY
+    (
+        SELECT
+            x =
+                CASE
+                    WHEN l.list_value NOT LIKE N'%[<&]%'
+                    THEN CONVERT
+                         (
+                             xml,
+                             N'<x>' +
+                             REPLACE
+                             (
+                                 CONVERT(nvarchar(max), l.list_value),
+                                 N',',
+                                 N'</x><x>'
+                             ) +
+                             N'</x>'
+                         )
+                    ELSE CONVERT(xml, N'<x>?</x>')
+                END
+    ) AS a
+    CROSS APPLY a.x.nodes(N'x') AS b (x)
+    CROSS APPLY
+    (
+        SELECT
+            item =
+                LTRIM(RTRIM(ISNULL(b.x.value(N'(./text())[1]', N'nvarchar(4000)'), N'')))
+    ) AS i
+    WHERE l.list_value IS NOT NULL
+    AND   i.item <> N''
+    AND
+    (
+        l.list_value LIKE N'%[<&]%'
+     OR
+        (
+            l.is_binary = 0
+        AND
+            (
+                LEN(i.item) > 19
+             OR i.item = N'-'
+             OR i.item LIKE N'%[^0-9-]%'
+             OR SUBSTRING(i.item, 2, 4000) LIKE N'%[^0-9]%'
+            )
+        )
+     OR
+        (
+            l.is_binary = 1
+        AND
+            (
+                i.item NOT LIKE N'0[xX]%'
+             OR SUBSTRING(i.item, 3, 4000) LIKE N'%[^0-9a-fA-F]%'
+             OR LEN(i.item) % 2 = 1
+            )
+        )
+    )
+    OPTION(RECOMPILE);
+
+    IF @list_parameter IS NOT NULL
+    BEGIN
+        IF @list_is_binary = 0
+        BEGIN
+            RAISERROR('%s must be a comma separated list of whole numbers, like N''123, 456''. This is not one: %s', 10, 1, @list_parameter, @list_item) WITH NOWAIT;
+        END;
+        ELSE
+        BEGIN
+            RAISERROR('%s must be a comma separated list of hex values that start with 0x, like N''0x2D3C7F502BA2AEE9''. This is not one: %s', 10, 1, @list_parameter, @list_item) WITH NOWAIT;
+        END;
+
+        RETURN;
+    END;
+END;
 
 /*Initialize procedure variables*/
 IF @procedure_name IS NOT NULL
@@ -37122,6 +40186,39 @@ BEGIN
         object_id bigint NOT NULL,
         INDEX object_id CLUSTERED (object_id)
     );
+
+    /*
+    Parameter Sensitive Plan variants are queries of their own with
+    object_id 0, so the procedure filters also take the variants
+    of the procedure's queries, found through their parent query.
+    sys.query_store_query_variant exists on SQL Server 2022+ only.
+    */
+    IF @sql_2022_views = 1
+    BEGIN
+        SELECT
+            @procedure_variants_single = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE qsq_parent.object_id = OBJECT_ID(@procedure_name_quoted)',
+            @procedure_variants_wildcard = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #procedure_object_ids AS poi
+              WHERE poi.object_id = qsq_parent.object_id
+          )';
+    END;
 
     /*Check if procedure exists in Query Store - wildcard procedure name*/
     IF CHARINDEX(N'%', @procedure_name) > 0
@@ -37354,6 +40451,15 @@ CREATE TABLE
 );
 
 /*
+Index and statistics maintenance plans to leave out, as sp_QuickieStore does
+*/
+CREATE TABLE
+    #maintenance_plans
+(
+    plan_id bigint NOT NULL PRIMARY KEY CLUSTERED
+);
+
+/*
 Create Query Store temp tables
 */
 CREATE TABLE
@@ -37371,7 +40477,7 @@ CREATE TABLE
     executions_per_second AS
         ISNULL
         (
-            count_executions /
+            count_executions * 1. /
                 NULLIF
                 (
                     DATEDIFF
@@ -37385,48 +40491,48 @@ CREATE TABLE
             0
         ),
     avg_duration_ms float NULL,
-    last_duration_ms bigint NOT NULL,
-    min_duration_ms bigint NOT NULL,
-    max_duration_ms bigint NOT NULL,
+    last_duration_ms float NOT NULL,
+    min_duration_ms float NOT NULL,
+    max_duration_ms float NOT NULL,
     total_duration_ms AS
         (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
-    last_cpu_time_ms bigint NOT NULL,
-    min_cpu_time_ms bigint NOT NULL,
-    max_cpu_time_ms bigint NOT NULL,
+    last_cpu_time_ms float NOT NULL,
+    min_cpu_time_ms float NOT NULL,
+    max_cpu_time_ms float NOT NULL,
     total_cpu_time_ms AS
         (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
-    last_logical_io_reads_mb bigint NOT NULL,
-    min_logical_io_reads_mb bigint NOT NULL,
-    max_logical_io_reads_mb bigint NOT NULL,
+    last_logical_io_reads_mb float NOT NULL,
+    min_logical_io_reads_mb float NOT NULL,
+    max_logical_io_reads_mb float NOT NULL,
     total_logical_io_reads_mb AS
         (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
-    last_logical_io_writes_mb bigint NOT NULL,
-    min_logical_io_writes_mb bigint NOT NULL,
-    max_logical_io_writes_mb bigint NOT NULL,
+    last_logical_io_writes_mb float NOT NULL,
+    min_logical_io_writes_mb float NOT NULL,
+    max_logical_io_writes_mb float NOT NULL,
     total_logical_io_writes_mb AS
         (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
-    last_physical_io_reads_mb bigint NOT NULL,
-    min_physical_io_reads_mb bigint NOT NULL,
-    max_physical_io_reads_mb bigint NOT NULL,
+    last_physical_io_reads_mb float NOT NULL,
+    min_physical_io_reads_mb float NOT NULL,
+    max_physical_io_reads_mb float NOT NULL,
     total_physical_io_reads_mb AS
         (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
-    last_clr_time_ms bigint NOT NULL,
-    min_clr_time_ms bigint NOT NULL,
-    max_clr_time_ms bigint NOT NULL,
+    last_clr_time_ms float NOT NULL,
+    min_clr_time_ms float NOT NULL,
+    max_clr_time_ms float NOT NULL,
     total_clr_time_ms AS
         (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
     avg_query_max_used_memory_mb float NULL,
-    last_query_max_used_memory_mb bigint NOT NULL,
-    min_query_max_used_memory_mb bigint NOT NULL,
-    max_query_max_used_memory_mb bigint NOT NULL,
+    last_query_max_used_memory_mb float NOT NULL,
+    min_query_max_used_memory_mb float NOT NULL,
+    max_query_max_used_memory_mb float NOT NULL,
     total_query_max_used_memory_mb AS
         (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
@@ -37435,22 +40541,22 @@ CREATE TABLE
     max_rowcount bigint NOT NULL,
     total_rowcount AS
         (avg_rowcount * count_executions),
-    avg_num_physical_io_reads_mb float NULL,
-    last_num_physical_io_reads_mb bigint NULL,
-    min_num_physical_io_reads_mb bigint NULL,
-    max_num_physical_io_reads_mb bigint NULL,
-    total_num_physical_io_reads_mb AS
-        (avg_num_physical_io_reads_mb * count_executions),
+    avg_num_physical_io_reads float NULL,
+    last_num_physical_io_reads float NULL,
+    min_num_physical_io_reads float NULL,
+    max_num_physical_io_reads float NULL,
+    total_num_physical_io_reads AS
+        (avg_num_physical_io_reads * count_executions),
     avg_log_bytes_used_mb float NULL,
-    last_log_bytes_used_mb bigint NULL,
-    min_log_bytes_used_mb bigint NULL,
-    max_log_bytes_used_mb bigint NULL,
+    last_log_bytes_used_mb float NULL,
+    min_log_bytes_used_mb float NULL,
+    max_log_bytes_used_mb float NULL,
     total_log_bytes_used_mb AS
         (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
-    last_tempdb_space_used_mb bigint NULL,
-    min_tempdb_space_used_mb bigint NULL,
-    max_tempdb_space_used_mb bigint NULL,
+    last_tempdb_space_used_mb float NULL,
+    min_tempdb_space_used_mb float NULL,
+    max_tempdb_space_used_mb float NULL,
     total_tempdb_space_used_mb AS
         (avg_tempdb_space_used_mb * count_executions),
     context_settings nvarchar(256) NULL
@@ -37575,42 +40681,54 @@ CREATE TABLE
     query_text_id bigint NOT NULL,
     INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
-    query_sql_text_normalized AS
-        REPLACE
-        (
-            REPLACE
-            (
-                REPLACE
-                (
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            REPLACE
-                            (
-                                query_sql_text,
-                                NCHAR(13),
-                                N' '
-                            ),
-                            NCHAR(10),
-                            N' '
-                        ),
-                        NCHAR(9),
-                        N' '
-                    ),
-                    N' ',
-                    NCHAR(1) + NCHAR(2)
-                ),
-                NCHAR(2) + NCHAR(1),
-                N''
-            ),
-            NCHAR(1) + NCHAR(2),
-            N' '
-        ) PERSISTED,
     query_sql_text_clickable xml NULL,
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
-    has_restricted_text bit NOT NULL
+    has_restricted_text bit NOT NULL,
+    has_control_characters bit NOT NULL DEFAULT 0
+);
+
+/*
+Query text upper-cased with its white space collapsed, for the temp table and
+table variable checks. It is a table of its own, filled once, with a binary
+collation. As a computed column of #query_store_query_text it was computed
+again for every LIKE that read it, eight times per text in each check, and
+a plain column there was stored off-row and searched under the column
+collation.
+*/
+CREATE TABLE
+    #query_text_normalized
+(
+    query_text_id bigint NOT NULL,
+    query_sql_text_normalized nvarchar(max) COLLATE Latin1_General_100_BIN2 NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
+);
+
+/*
+Where the last PLAN PER VALUE( hint starts in the text of a parameter
+sensitive plan variant query, and the text without that hint; only those
+texts have a row
+*/
+CREATE TABLE
+    #psp_hint_starts
+(
+    query_text_id bigint NOT NULL,
+    hint_start bigint NOT NULL,
+    query_sql_text nvarchar(max) NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
+);
+
+/*
+Where the statement starts in each parameterized query text, after its
+(@...) declaration list, for the repro builder
+*/
+CREATE TABLE
+    #repro_text_starts
+(
+    query_text_id bigint NOT NULL,
+    declaration_end bigint NOT NULL,
+    text_start bigint NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
 );
 
 CREATE TABLE
@@ -37645,22 +40763,67 @@ CREATE TABLE
     INDEX plan_id_query_id CLUSTERED (plan_id, query_id)
 );
 
+/*
+Every plan of the queries in #query_store_plan, to build all_plan_ids
+*/
+CREATE TABLE
+    #all_plan_ids
+(
+    query_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    INDEX query_id_plan_id UNIQUE CLUSTERED (query_id, plan_id)
+);
+
+/*
+Each plan converted to xml once, by the too-large check. The embedded
+constants and the final SELECT read it here instead of converting again.
+NULL when the plan text can't be converted.
+*/
+CREATE TABLE
+    #query_plan_xml
+(
+    plan_id bigint NOT NULL,
+    query_plan_xml xml NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
+#query_parameters and #reproduction_warnings are keyed in the order the
+repro builder lists them (by parameter name, and by warning type), so its
+FOR XML subqueries read each plan's rows in order. Keyed on plan_id only,
+each subquery sorted its rows for every plan, carrying the nvarchar(max)
+values and messages through the sort.
+*/
 CREATE TABLE
     #query_parameters
 (
     plan_id bigint NOT NULL,
-    INDEX plan_id CLUSTERED (plan_id),
     parameter_name sysname NULL,
+    INDEX plan_id_parameter_name CLUSTERED (plan_id, parameter_name),
     parameter_data_type sysname NULL,
     parameter_compiled_value nvarchar(max) NULL
+);
+
+/*
+Each plan's parameter values in the order the parameter_values column lists
+them, numbered once, so the final SELECT reads them in order instead of
+sorting every plan's nvarchar(max) values
+*/
+CREATE TABLE
+    #parameter_values
+(
+    plan_id bigint NOT NULL,
+    value_order bigint NOT NULL,
+    parameter_compiled_value nvarchar(max) NULL,
+    PRIMARY KEY CLUSTERED (plan_id, value_order)
 );
 
 CREATE TABLE
     #reproduction_warnings
 (
     plan_id bigint NOT NULL,
-    INDEX plan_id CLUSTERED (plan_id),
     warning_type nvarchar(50) NULL,
+    INDEX plan_id_warning_type CLUSTERED (plan_id, warning_type),
     warning_message nvarchar(max) NULL
 );
 
@@ -37694,6 +40857,52 @@ CREATE TABLE
     param_column sysname NULL,
     param_data_type sysname NULL,
     param_compiled_value nvarchar(max) NULL
+);
+
+/*
+Where each plan's last and first ParameterList start and end in the plan text,
+and where the plan of its first statement ends
+*/
+CREATE TABLE
+    #parameter_list_positions
+(
+    plan_id bigint NOT NULL,
+    last_start bigint NULL,
+    first_start bigint NULL,
+    last_end bigint NULL,
+    first_end bigint NULL,
+    plan_end bigint NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
+Each plan's last and first ParameterList as xml, so the parameter
+extraction searches the plan text and converts each list only once.
+*/
+CREATE TABLE
+    #parameter_lists
+(
+    plan_id bigint NOT NULL,
+    last_parameter_list xml NULL,
+    first_parameter_list xml NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
+Each plan's parameter declaration list from its query text, with the
+parameter boundaries marked by NCHAR(1), for the missing parameter fill.
+needs_xml is set when the list holds a character that XML would parse
+or reject, so those lists are still split through XML.
+*/
+CREATE TABLE
+    #parameter_declarations
+(
+    plan_id bigint NOT NULL,
+    declaration_end bigint NOT NULL,
+    declaration nvarchar(max) NULL,
+    split_text nvarchar(max) COLLATE Latin1_General_100_BIN2 NULL,
+    needs_xml bit NOT NULL DEFAULT 0,
+    INDEX plan_id CLUSTERED (plan_id)
 );
 
 /*
@@ -37983,6 +41192,13 @@ IF @query_plan_xml IS NULL
 BEGIN
 
 /*
+Each list is split by turning it into XML with REPLACE. The list is
+CONVERTed to nvarchar(max) first: REPLACE on an nvarchar(4000) returns at
+most 4000 characters, every comma grows by six, and a list of about 380
+plan ids was cut off mid-element and failed with Msg 9400.
+*/
+
+/*
 Resolve the include filters into #include_plan_ids.
 
 Multiple include filters combine as an INTERSECTION: OR within a single filter's
@@ -37996,6 +41212,10 @@ exactly what the caller asked for, instead of widening back out to every plan
 set with the literal plan ids requested. @match holds the per-filter predicate
 (correlated to a sys.query_store_plan row aliased qsp) used for both seeding and
 intersecting.
+
+The statements here that read Query Store views use hash joins. With few
+rows on the other side, nested loops read the in-memory part of the view
+again for every row (about 15 ms each on one test database).
 */
 IF @include_plan_ids IS NOT NULL
 BEGIN
@@ -38032,7 +41252,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_plan_ids,
+                            CONVERT(nvarchar(max), @include_plan_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38094,7 +41314,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_query_ids,
+                            CONVERT(nvarchar(max), @include_query_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38147,7 +41367,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38179,7 +41399,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38241,7 +41461,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_query_hashes,
+                            CONVERT(nvarchar(max), @include_query_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38298,7 +41518,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38330,7 +41550,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38392,7 +41612,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_plan_hashes,
+                            CONVERT(nvarchar(max), @include_plan_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38442,7 +41662,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38474,7 +41694,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38536,7 +41756,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_sql_handles,
+                            CONVERT(nvarchar(max), @include_sql_handles),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38600,7 +41820,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38632,7 +41852,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -38686,7 +41906,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_plan_ids,
+                            CONVERT(nvarchar(max), @ignore_plan_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38749,7 +41969,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_query_ids,
+                            CONVERT(nvarchar(max), @ignore_query_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38795,7 +42015,7 @@ BEGIN
               FROM #ignore_query_ids AS iqi
               WHERE iqi.query_id = qsp.query_id
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -38859,7 +42079,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_query_hashes,
+                            CONVERT(nvarchar(max), @ignore_query_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -38912,7 +42132,7 @@ BEGIN
                         WHERE iqh.query_hash = qsq.query_hash
                     )
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -38970,7 +42190,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_plan_hashes,
+                            CONVERT(nvarchar(max), @ignore_plan_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -39016,7 +42236,7 @@ BEGIN
               FROM #ignore_plan_hashes AS iph
               WHERE iph.plan_hash = qsp.query_plan_hash
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -39074,7 +42294,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_sql_handles,
+                            CONVERT(nvarchar(max), @ignore_sql_handles),
                             '','',
                             ''</x><x>''
                         ) +
@@ -39134,7 +42354,7 @@ BEGIN
                               )
                     )
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -39250,7 +42470,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -39275,13 +42495,13 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
     SELECT
         @sql += N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -39380,7 +42600,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -39405,13 +42625,13 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
     SELECT
         @sql += N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -39428,8 +42648,95 @@ BEGIN
 END;
 
 /*
+Leave out index and statistics maintenance (index builds, statistics
+updates, StatMan, DBCC, WAITFOR and the like), with the same patterns as
+sp_QuickieStore, so the most recent plans are the ones sp_QuickieStore's
+'recent' sort shows. Only when no @include_ list or @procedure_name is
+given and @include_maintenance is 0: plans and queries asked for by id,
+hash, handle or procedure come back as before, and a StatMan query among
+them still gets its warning.
+
+The patterns are matched under a binary collation on upper-cased text. The
+ones that only look at the start of the text test the first 40 characters,
+which is not a max type; only the two that can match past the start look
+at the whole text.
+*/
+IF
+(
+    @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+AND @include_maintenance = 0
+)
+BEGIN
+    SELECT
+        @sql = @isolation_level,
+        @current_table = N'inserting #maintenance_plans';
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text_start =
+            UPPER(CONVERT(nvarchar(40), qsqt.query_sql_text)) COLLATE Latin1_General_100_BIN2
+) AS u
+WHERE u.query_sql_text_start LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_start LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_start LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''DBCC%''
+OR    u.query_sql_text_start LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_start LIKE N''WAITFOR%''
+OR
+(
+      u.query_sql_text_start LIKE N''CREATE%''
+  AND UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''CREATE%INDEX%''
+)
+OR    UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''%SELECT STATMAN%''
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #maintenance_plans
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+END;
+
+/*
 Populate #query_store_runtime_stats from sys.query_store_runtime_stats
 This aggregates runtime stats for all filtered plan IDs
+
+The averages are weighted by executions: the sum of avg x count_executions
+over the intervals, divided by the sum of count_executions. AVG() of the
+interval averages gave a quiet interval the same weight as a busy one, and
+the total_ columns, which are avg x count_executions, came out wrong with
+it. The last_, min_, and max_ columns are float because the values are
+converted from microseconds and pages to ms and MB, and bigint cut them
+to whole numbers (a 0.8 ms query showed 0).
+
+This and the other statements below that read Query Store views use hash
+joins, so each view is read once, not once per row of the other side.
 */
 SELECT
     @sql = @isolation_level;
@@ -39484,10 +42791,10 @@ WITH
     last_rowcount,
     min_rowcount,
     max_rowcount,
-    avg_num_physical_io_reads_mb,
-    last_num_physical_io_reads_mb,
-    min_num_physical_io_reads_mb,
-    max_num_physical_io_reads_mb,
+    avg_num_physical_io_reads,
+    last_num_physical_io_reads,
+    min_num_physical_io_reads,
+    max_num_physical_io_reads,
     avg_log_bytes_used_mb,
     last_log_bytes_used_mb,
     min_log_bytes_used_mb,
@@ -39498,47 +42805,70 @@ WITH
     max_tempdb_space_used_mb,
     context_settings
 )
+SELECT';
+
+/*
+A separate statement, not + inside the literal above: the pieces of one
+expression are each shorter than 4000 characters, so their sum would be
+cut to nvarchar(4000) before it ever reached @sql.
+*/
+IF @top IS NOT NULL
+BEGIN
+    SELECT
+        @sql += N' TOP (@top)';
+END;
+
 SELECT
+    @sql += N'
     @database_id,
     MAX(qsrs_with_lasts.runtime_stats_id),
     qsrs_with_lasts.plan_id,
     MAX(qsrs_with_lasts.runtime_stats_interval_id),
-    MAX(qsrs_with_lasts.execution_type_desc),
+    /* A plan can have regular, aborted, and exception rows, so list each type it has */
+    STUFF
+    (
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 0 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 3 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 4 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END),
+        1,
+        2,
+        N''''
+    ),
     MIN(qsrs_with_lasts.first_execution_time),
     MAX(qsrs_with_lasts.partitioned_last_execution_time),
     SUM(qsrs_with_lasts.count_executions),
-    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    SUM(qsrs_with_lasts.avg_duration * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
     MIN((qsrs_with_lasts.min_duration / 1000.)),
     MAX((qsrs_with_lasts.max_duration / 1000.)),
-    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    SUM(qsrs_with_lasts.avg_cpu_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
     MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
     MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
-    AVG((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_logical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_logical_io_writes * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    SUM(qsrs_with_lasts.avg_clr_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
     MIN((qsrs_with_lasts.min_clr_time / 1000.)),
     MAX((qsrs_with_lasts.max_clr_time / 1000.)),
     MAX(qsrs_with_lasts.partitioned_last_dop),
     MIN(qsrs_with_lasts.min_dop),
     MAX(qsrs_with_lasts.max_dop),
-    AVG((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_query_max_used_memory * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.),
-    AVG(qsrs_with_lasts.avg_rowcount * 1.),
+    SUM(qsrs_with_lasts.avg_rowcount * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0),
     MAX(qsrs_with_lasts.partitioned_last_rowcount),
     MIN(qsrs_with_lasts.min_rowcount),
     MAX(qsrs_with_lasts.max_rowcount),';
@@ -39547,15 +42877,16 @@ SELECT
 IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
-    AVG((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.),
-    MAX((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.),
-    MIN((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.),
-    MAX((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.),
-    AVG(qsrs_with_lasts.avg_log_bytes_used / 1000000.),
+    /* num_physical_io_reads counts read operations, not pages, so it stays a count */
+    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0),
+    MAX(qsrs_with_lasts.partitioned_last_num_physical_io_reads),
+    MIN(qsrs_with_lasts.min_num_physical_io_reads),
+    MAX(qsrs_with_lasts.max_num_physical_io_reads),
+    SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000000.,
     MAX(qsrs_with_lasts.partitioned_last_log_bytes_used / 1000000.),
     MIN(qsrs_with_lasts.min_log_bytes_used / 1000000.),
     MAX(qsrs_with_lasts.max_log_bytes_used / 1000000.),
-    AVG((qsrs_with_lasts.avg_tempdb_space_used * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_tempdb_space_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_tempdb_space_used * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_tempdb_space_used * 8.) / 1024.),';
@@ -39747,6 +43078,29 @@ BEGIN
     AND   qsrs.last_execution_time < @end_date';
 END;
 
+/*Leave out maintenance plans, before the TOP, when no @include_ list or @procedure_name is given and @include_maintenance is 0*/
+IF
+(
+    @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+AND @include_maintenance = 0
+)
+BEGIN
+    SELECT
+        @sql += N'
+    AND   NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #maintenance_plans AS mp
+              WHERE mp.plan_id = qsrs.plan_id
+          )';
+END;
+
 /*Add include plan IDs filter if specified*/
 IF
 (
@@ -39837,7 +43191,7 @@ BEGIN
                         SELECT
                             qsq.query_id
                         FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
                     )
           )';
 END;
@@ -39868,7 +43222,7 @@ BEGIN
                                 1/0
                             FROM #procedure_object_ids AS poi
                             WHERE poi.object_id = qsq.object_id
-                        )
+                        )' + @procedure_variants_wildcard + N'
                     )
           )';
 END;
@@ -39879,7 +43233,7 @@ GROUP BY
     qsrs_with_lasts.plan_id
 ORDER BY
     MAX(qsrs_with_lasts.partitioned_last_execution_time) DESC
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -39893,11 +43247,13 @@ EXECUTE sys.sp_executesql
   N'@database_id integer,
     @start_date datetimeoffset(7),
     @end_date datetimeoffset(7),
-    @procedure_name_quoted nvarchar(1024)',
+    @procedure_name_quoted nvarchar(1024),
+    @top bigint',
     @database_id,
     @start_date,
     @end_date,
-    @procedure_name_quoted;
+    @procedure_name_quoted,
+    @top;
 
 /*
 Populate #query_store_plan from sys.query_store_plan
@@ -39916,7 +43272,6 @@ WITH
     database_id,
     plan_id,
     query_id,
-    all_plan_ids,
     plan_group_id,
     engine_version,
     compatibility_level,
@@ -39944,24 +43299,6 @@ SELECT
     @database_id,
     qsp.plan_id,
     qsp.query_id,
-    all_plan_ids =
-        STUFF
-        (
-            (
-                SELECT DISTINCT
-                    '', '' +
-                    RTRIM
-                        (qsp_plans.plan_id)
-                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML
-                    PATH(''''),
-                    TYPE
-            ).value(''./text()[1]'', ''varchar(max)''),
-            1,
-            2,
-            ''''
-        ),
     qsp.plan_group_id,
     qsp.engine_version,
     qsp.compatibility_level,
@@ -40013,13 +43350,26 @@ SELECT
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 WHERE qsp.is_online_index_plan = 0';
 
-/*Add date filtering if specified*/
+/*
+Add date filtering if specified.
+
+Keep the plans that have runtime stats in the window. This used to test
+qsp.last_execution_time, which is the last time the plan ran at all, so a
+plan that ran in a past window and again after @end_date was dropped, and
+the window came back empty. #query_store_runtime_stats was filled with the
+same filters and the per-interval window, so its plan ids are the answer.
+*/
 IF @start_date <= @end_date
 BEGIN
     SELECT
         @sql += N'
-AND   qsp.last_execution_time >= @start_date
-AND   qsp.last_execution_time < @end_date';
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_runtime_stats AS qsrs
+          WHERE qsrs.plan_id = qsp.plan_id
+      )';
 END;
 
 /*Add include plan IDs filter if specified*/
@@ -40107,7 +43457,7 @@ AND   qsp.query_id IN
           SELECT
               qsq.query_id
           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
       )';
 END;
 
@@ -40132,16 +43482,22 @@ AND   qsp.query_id IN
                   1/0
               FROM #procedure_object_ids AS poi
               WHERE poi.object_id = qsq.object_id
-          )
+          )' + @procedure_variants_wildcard + N'
       )';
 END;
 
-/*Add final ORDER BY and options*/
+/*
+Add final ORDER BY and options.
+
+The hash joins keep each Query Store view to one read: with few plans in
+#query_store_runtime_stats, nested loops read the in-memory part of
+sys.query_store_plan again for every plan.
+*/
 SELECT
     @sql += N'
 ORDER BY
     qsp.last_execution_time DESC
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -40162,44 +43518,170 @@ EXECUTE sys.sp_executesql
     @procedure_name_quoted;
 
 /*
+all_plan_ids lists every plan of each query. A subquery per plan in the
+insert above read sys.query_store_plan once per plan, and with few plans
+it read the in-memory part of the view again each time (about 15 ms per
+plan on one test database), so read it once here, with a hash join.
+*/
+SELECT
+    @sql = @isolation_level,
+    @current_table = N'inserting #all_plan_ids';
+
+SELECT
+    @sql += N'
+SELECT
+    qsp.query_id,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp2
+          WHERE qsp2.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #all_plan_ids
+WITH
+    (TABLOCK)
+(
+    query_id,
+    plan_id
+)
+EXECUTE sys.sp_executesql
+    @sql;
+
+/*
+The plan ids are listed in numeric order, as sp_QuickieStore lists them
+*/
+SELECT
+    @current_table = N'updating all_plan_ids in #query_store_plan';
+
+UPDATE
+    qsp
+SET
+    qsp.all_plan_ids =
+        STUFF
+        (
+            (
+                SELECT
+                    ', ' +
+                    RTRIM(ap.plan_id)
+                FROM #all_plan_ids AS ap
+                WHERE ap.query_id = qsp.query_id
+                ORDER BY
+                    ap.plan_id
+                FOR XML
+                    PATH(''),
+                    TYPE
+            ).value('./text()[1]', 'varchar(max)'),
+            1,
+            2,
+            ''
+        )
+FROM #query_store_plan AS qsp
+OPTION(RECOMPILE);
+
+/*
 Populate the #query_store_query table with query metadata
 */
 SELECT
     @sql = @isolation_level,
     @current_table = N'inserting #query_store_query';
 
+/*
+Parameter Sensitive Plan variants have object_id 0, so they show
+the object of their parent query instead of Adhoc.
+
+Joins instead of a CROSS APPLY TOP (1) per query, so the hash joins can
+read each Query Store view once: the apply read the in-memory part of
+sys.query_store_query again for every query. The row number keeps the
+latest row of a query, as the TOP (1) did.
+*/
 SELECT
     @sql += N'
 SELECT
     @database_id,
     qsq.query_id,
     qsq.query_text_id,
-    qsq.context_settings_id,
-    qsq.object_id,
+    qsq.context_settings_id,' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+    object_id =
+        ISNULL
+        (
+            psp.parent_object_id,
+            qsq.object_id
+        ),'
+        ELSE N'
+    qsq.object_id,'
+    END + N'
     qsq.query_hash,
     qsq.initial_compile_start_time,
     qsq.last_compile_start_time,
     qsq.last_execution_time
 FROM
 (
-    /*
-    A query with more than one plan would otherwise get a row per plan
-    */
-    SELECT DISTINCT
-        qsp.query_id
-    FROM #query_store_plan AS qsp
-    WHERE qsp.database_id = @database_id
-) AS qsp
-CROSS APPLY
-(
-    SELECT TOP (1)
-        qsq.*
+    SELECT
+        qsq.*,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id
+                ORDER BY
+                    qsq.last_execution_time DESC
+            )
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    WHERE qsq.query_id = qsp.query_id
-    ORDER BY
-        qsq.last_execution_time DESC
-) AS qsq
-OPTION(RECOMPILE);' + @nc10;
+    WHERE EXISTS
+          (
+              /*
+              A query with more than one plan would otherwise get a row per plan
+              */
+              SELECT
+                  1/0
+              FROM #query_store_plan AS qsp
+              WHERE qsp.query_id = qsq.query_id
+              AND   qsp.database_id = @database_id
+          )
+) AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN
+(
+    SELECT
+        qsqv.query_variant_query_id,
+        parent_object_id =
+            MAX(qsq_parent.object_id)
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+      ON qsq_parent.query_id = qsqv.parent_query_id
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_store_plan AS qsp
+              WHERE qsp.query_id = qsqv.query_variant_query_id
+              AND   qsp.database_id = @database_id
+          )
+    GROUP BY
+        qsqv.query_variant_query_id
+) AS psp
+  ON psp.query_variant_query_id = qsq.query_id'
+        ELSE N''
+    END + N'
+WHERE qsq.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -40286,8 +43768,53 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
+XML cannot hold the control characters 0x00 to 0x1F other than tab, line
+feed, and carriage return. One of them in any query text in the window made
+the FOR XML below fail with Msg 6841, and the whole run failed with it.
+Replace them with ? and drop NCHAR(0), the way sp_QuickieCache does, and
+flag the text so its plans get a warning: a string literal that held one
+no longer matches the original.
+*/
+SELECT
+    @current_table = N'replacing control characters in #query_store_query_text';
+
+UPDATE
+    qsqt
+SET
+    qsqt.query_sql_text = x.query_sql_text,
+    qsqt.has_control_characters = 1
+FROM #query_store_query_text AS qsqt
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                qsqt.query_sql_text COLLATE Latin1_General_BIN2,
+            NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'')
+) AS x
+/*
+One pattern search finds the texts that hold one of these characters, so
+the REPLACE chain runs only for them. Comparing the replaced text with
+the original ran all 29 REPLACEs over every text first.
+*/
+WHERE PATINDEX
+      (
+          N'%[' + NCHAR(1) + N'-' + NCHAR(8) + NCHAR(11) + NCHAR(12) + NCHAR(14) + N'-' + NCHAR(31) + N']%',
+          qsqt.query_sql_text COLLATE Latin1_General_BIN2
+      ) > 0
+OR    CHARINDEX(NCHAR(0), qsqt.query_sql_text COLLATE Latin1_General_BIN2) > 0
+OPTION(RECOMPILE);
+
+/*
 Populate the clickable XML column
 */
+SELECT
+    @current_table = N'populating query_sql_text_clickable in #query_store_query_text';
+
 UPDATE qsqt
 SET qsqt.query_sql_text_clickable =
     (
@@ -40332,7 +43859,7 @@ WHERE EXISTS
           FROM #query_store_query AS qsq
           WHERE qsq.context_settings_id = qcs.context_settings_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -40365,7 +43892,14 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
-Update things to get the context settings for each query
+Update things to get the context settings for each query.
+
+Every option is written out as ON or OFF. Writing only the options that
+were ON left the others to whatever the session running the repro had:
+a query captured with ANSI_NULLS OFF ran under ANSI_NULLS ON and returned
+different rows, and a query captured with ARITHABORT OFF (the default for
+most drivers) compiled a plan of its own when run from SSMS, which sets
+ARITHABORT ON.
 */
 SELECT
     @current_table = N'updating context_settings in #query_store_runtime_stats';
@@ -40383,8 +43917,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 1 = 1
-                THEN ', ANSI_PADDING'
-                ELSE ''
+                THEN ', ANSI_PADDING ON'
+                ELSE ', ANSI_PADDING OFF'
             END +
             CASE
                 WHEN
@@ -40393,8 +43927,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 8 = 8
-                THEN ', CONCAT_NULL_YIELDS_NULL'
-                ELSE ''
+                THEN ', CONCAT_NULL_YIELDS_NULL ON'
+                ELSE ', CONCAT_NULL_YIELDS_NULL OFF'
             END +
             CASE
                 WHEN
@@ -40403,8 +43937,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 16 = 16
-                THEN ', ANSI_WARNINGS'
-                ELSE ''
+                THEN ', ANSI_WARNINGS ON'
+                ELSE ', ANSI_WARNINGS OFF'
             END +
             CASE
                 WHEN
@@ -40413,8 +43947,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 32 = 32
-                THEN ', ANSI_NULLS'
-                ELSE ''
+                THEN ', ANSI_NULLS ON'
+                ELSE ', ANSI_NULLS OFF'
             END +
             CASE
                 WHEN
@@ -40423,8 +43957,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 64 = 64
-                THEN ', QUOTED_IDENTIFIER'
-                ELSE ''
+                THEN ', QUOTED_IDENTIFIER ON'
+                ELSE ', QUOTED_IDENTIFIER OFF'
             END +
             CASE
                 WHEN
@@ -40433,8 +43967,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 4096 = 4096
-                THEN ', ARITHABORT'
-                ELSE ''
+                THEN ', ARITHABORT ON'
+                ELSE ', ARITHABORT OFF'
             END +
             CASE
                 WHEN
@@ -40443,8 +43977,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 8192 = 8192
-                THEN ', NUMERIC_ROUNDABORT'
-                ELSE ''
+                THEN ', NUMERIC_ROUNDABORT ON'
+                ELSE ', NUMERIC_ROUNDABORT OFF'
             END,
             2,
             256
@@ -40459,6 +43993,7 @@ JOIN #query_store_query AS qsq
 JOIN #query_context_settings AS qcs
   ON  qsq.context_settings_id = qcs.context_settings_id
   AND qsq.database_id = qcs.database_id
+WHERE qcs.set_options IS NOT NULL
 OPTION(RECOMPILE);
 
 /*
@@ -40478,8 +44013,24 @@ SELECT
     qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
+    /*
+    Weighted like the runtime stats averages. Query Store computes
+    avg_query_wait_time_ms as the total of the interval divided by some number
+    of executions, so total / avg recovers the count Query Store itself
+    averaged over in that interval. That is not always all the
+    executions in the interval: it can be 1, or only the
+    executions that had this wait.
+    SUM(total) / SUM(total / avg) combines the averages Query Store computed.
+    An interval without this wait has no row here, so it adds nothing to the
+    divisor.
+    */
     avg_query_wait_time_ms =
-        AVG(qsws_with_lasts.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms) /
+        NULLIF
+        (
+            SUM(qsws_with_lasts.total_query_wait_time_ms / NULLIF(qsws_with_lasts.avg_query_wait_time_ms, 0)),
+            0
+        ),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
@@ -40614,7 +44165,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qspf.plan_id = qsp.plan_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -40663,7 +44214,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qsqv.query_variant_query_id = qsp.query_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -40685,6 +44236,121 @@ OPTION(RECOMPILE);' + @nc10;
         @sql,
       N'@database_id integer',
         @database_id;
+
+    /*
+    A parameter sensitive plan (PSP) parent query has one plan, the
+    dispatcher, and the dispatcher never runs: Query Store keeps no runtime
+    stats for it, so asking for the parent query or its dispatcher plan came
+    back empty with no reason given. When an include filter picked up a
+    dispatcher plan, say so and name the variant queries to ask for instead.
+    */
+    IF @include_plans_seeded = 1
+    BEGIN
+        CREATE TABLE
+            #psp_parents
+        (
+            parent_query_id bigint NOT NULL,
+            dispatcher_plan_id bigint NOT NULL,
+            query_variant_query_id bigint NOT NULL
+        );
+
+        SELECT
+            @sql = @isolation_level,
+            @current_table = N'checking for parameter sensitive plan parent queries';
+
+        SELECT
+            @sql += N'
+SELECT
+    qsqv.parent_query_id,
+    qsqv.dispatcher_plan_id,
+    qsqv.query_variant_query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #include_plan_ids AS ipi
+          WHERE ipi.plan_id = qsqv.dispatcher_plan_id
+      )
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #psp_parents
+        WITH
+            (TABLOCK)
+        (
+            parent_query_id,
+            dispatcher_plan_id,
+            query_variant_query_id
+        )
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        IF EXISTS
+        (
+            SELECT
+                1/0
+            FROM #psp_parents AS pp
+        )
+        BEGIN
+            SELECT
+                @psp_message =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                NCHAR(10) +
+                                N'Query ' +
+                                RTRIM(pp.parent_query_id) +
+                                N' is a parameter sensitive plan parent. Its dispatcher plan ' +
+                                RTRIM(pp.dispatcher_plan_id) +
+                                N' does not run, so Query Store has no runtime stats and no repro for it. Use its variant queries: @include_query_ids = N''' +
+                                STUFF
+                                (
+                                    (
+                                        SELECT
+                                            N',' +
+                                            RTRIM(pv.query_variant_query_id)
+                                        FROM #psp_parents AS pv
+                                        WHERE pv.parent_query_id = pp.parent_query_id
+                                        ORDER BY
+                                            pv.query_variant_query_id
+                                        FOR XML
+                                            PATH(N''),
+                                            TYPE
+                                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                                    1,
+                                    1,
+                                    N''
+                                ) +
+                                N''''
+                            FROM
+                            (
+                                SELECT DISTINCT
+                                    p.parent_query_id,
+                                    p.dispatcher_plan_id
+                                FROM #psp_parents AS p
+                            ) AS pp
+                            ORDER BY
+                                pp.parent_query_id
+                            FOR XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        1,
+                        N''
+                    );
+
+            RAISERROR(N'%s', 10, 1, @psp_message) WITH NOWAIT;
+        END;
+    END;
 
     /*
     Populate the #query_store_query_hints table
@@ -40711,7 +44377,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qsqh.query_id = qsp.query_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -40744,9 +44410,209 @@ END; /*end of @query_plan_xml IS NULL Query Store population gate*/
 Extract parameters from query plans
 Uses substring extraction for performance,
 avoids casting the full plan to XML
+
+The statement's own ParameterList is the last one in its QueryPlan, after
+the operator tree. Some operators (table-valued functions, XML readers)
+carry a ParameterList of their own earlier in the plan, and reading the
+first one picked up that decoy: it holds no parameters, so the real ones
+were lost and the repro fell back to ? values. Read the last ParameterList,
+and only for plans where it holds no parameters, the first one.
+
+A document can hold more than one statement, such as a multi-statement plan
+passed in @query_plan_xml. The repro uses the first statement's text, so both
+lists are the ones found before the first closing QueryPlan tag, not the last
+ParameterList of the whole document, which belongs to the last statement.
 */
 SELECT
     @current_table = N'extracting parameters from query plans';
+
+/*
+Find where each plan's last and first ParameterList start and end, then
+convert each list to xml once and shred them from #parameter_lists.
+Shredding straight from the expression ran the search of the plan text
+and the conversion again for the .nodes() call and for each .value()
+call. The positions are stored first because one statement that found
+and used them searched the plan text again for each use.
+
+Each search of the plan text is its own statement, and its result is stored
+before the next one uses it. In one statement the optimizer copied each
+search into every expression that used it, so a plan's text was scanned
+again for each use. The last list is found by reversing only the text from
+the first list to the end of the first statement, not the whole plan.
+*/
+INSERT
+    #parameter_list_positions
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    first_start
+)
+SELECT
+    qsp.plan_id,
+    fs.first_start
+FROM #query_store_plan AS qsp
+CROSS APPLY
+(
+    /*
+    Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation.
+    */
+    SELECT
+        first_start =
+            CHARINDEX(N'<ParameterList>', qsp.query_plan COLLATE Latin1_General_100_BIN2)
+) AS fs
+WHERE fs.first_start > 0
+OPTION(RECOMPILE);
+
+/*
+Only the text up to the first closing QueryPlan tag counts: that is the
+first statement's plan, and the statement text is the first statement's too
+*/
+UPDATE
+    plp
+SET
+    plp.plan_end =
+        ISNULL
+        (
+            NULLIF
+            (
+                CHARINDEX(N'</QueryPlan>', qsp.query_plan COLLATE Latin1_General_100_BIN2),
+                0
+            ) + LEN(N'</QueryPlan>') - 1,
+            DATALENGTH(qsp.query_plan) / 2
+        )
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+OPTION(RECOMPILE);
+
+DELETE
+    plp
+FROM #parameter_list_positions AS plp
+WHERE plp.first_start + LEN(N'<ParameterList>') - 1 > plp.plan_end
+OPTION(RECOMPILE);
+
+UPDATE
+    plp
+SET
+    plp.last_start =
+        plp.plan_end -
+        CHARINDEX
+        (
+            REVERSE(N'<ParameterList>'),
+            REVERSE
+            (
+                SUBSTRING
+                (
+                    qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                    plp.first_start,
+                    plp.plan_end - plp.first_start + 1
+                )
+            )
+        ) -
+        LEN(N'<ParameterList>') + 2
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+OPTION(RECOMPILE);
+
+UPDATE
+    plp
+SET
+    plp.last_end =
+        CHARINDEX(N'</ParameterList>', qpb.query_plan, plp.last_start),
+    plp.first_end =
+        CHARINDEX(N'</ParameterList>', qpb.query_plan, plp.first_start)
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+CROSS APPLY
+(
+    SELECT
+        query_plan =
+            qsp.query_plan COLLATE Latin1_General_100_BIN2
+) AS qpb
+OPTION(RECOMPILE);
+
+/*
+The positions above come from a binary collation, so the cut has to use the
+same one: under an _SC or UTF8 collation a supplementary character would
+otherwise shift the cut.
+*/
+INSERT
+    #parameter_lists
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    last_parameter_list,
+    first_parameter_list
+)
+SELECT
+    plp.plan_id,
+    last_parameter_list =
+        CASE
+            WHEN plp.last_end > 0
+            THEN TRY_CAST
+                 (
+                     SUBSTRING
+                     (
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                         plp.last_start,
+                         plp.last_end + LEN(N'</ParameterList>') - plp.last_start
+                     ) AS xml
+                 )
+        END,
+    /*
+    Most plans have one list, so their first list is their last one. It is
+    only read when the last one holds no parameters, and then it holds
+    none either, so it is converted only when it is a different list.
+    */
+    first_parameter_list =
+        CASE
+            WHEN plp.first_start < plp.last_start
+            AND  plp.first_end > 0
+            THEN TRY_CAST
+                 (
+                     SUBSTRING
+                     (
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                         plp.first_start,
+                         plp.first_end + LEN(N'</ParameterList>') - plp.first_start
+                     ) AS xml
+                 )
+        END
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+OPTION(RECOMPILE);
+
+/*
+Serial on purpose: the XML readers are costed high, so this went parallel,
+and the parallel plan spent up to 2.7 s waiting on latches and exchanges
+to shred lists that take 15 to 160 ms on one thread
+*/
+INSERT
+    #parameter_shred
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    param_column,
+    param_data_type,
+    param_compiled_value
+)
+SELECT
+    pl.plan_id,
+    param_column =
+        cr.c.value(N'@Column', N'sysname'),
+    param_data_type =
+        cr.c.value(N'@ParameterDataType', N'sysname'),
+    param_compiled_value =
+        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
+FROM #parameter_lists AS pl
+CROSS APPLY pl.last_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr (c)
+OPTION(RECOMPILE, MAXDOP 1);
 
 INSERT
     #parameter_shred
@@ -40759,41 +44625,22 @@ WITH
     param_compiled_value
 )
 SELECT
-    qsp.plan_id,
+    pl.plan_id,
     param_column =
         cr.c.value(N'@Column', N'sysname'),
     param_data_type =
         cr.c.value(N'@ParameterDataType', N'sysname'),
     param_compiled_value =
         cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
-FROM #query_store_plan AS qsp
-CROSS APPLY
-(
-    SELECT
-        parameter_list_xml =
-            CASE
-                WHEN CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
-                THEN TRY_CAST
-                     (
-                         SUBSTRING
-                         (
-                             qsp.query_plan,
-                             CHARINDEX(N'<ParameterList>', qsp.query_plan),
-                             CHARINDEX
-                             (
-                                 N'</ParameterList>',
-                                 qsp.query_plan,
-                                 CHARINDEX(N'<ParameterList>', qsp.query_plan)
-                             )
-                             + LEN(N'</ParameterList>')
-                             - CHARINDEX(N'<ParameterList>', qsp.query_plan)
-                         ) AS xml
-                     )
-            END
-) AS x
-CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
-WHERE CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
-AND   x.parameter_list_xml IS NOT NULL
+FROM #parameter_lists AS pl
+CROSS APPLY pl.first_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr (c)
+WHERE NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #parameter_shred AS ps
+          WHERE ps.plan_id = pl.plan_id
+      )
 OPTION(RECOMPILE);
 
 /*
@@ -40844,6 +44691,19 @@ SELECT
                      LEN(ps.param_compiled_value) - 8
                  ) +
                  N''''
+            /*
+            The plan stores datetime and smalldatetime values as
+            'yyyy-mm-dd hh:mi:ss.mmm'. The repro also sets the original
+            DATEFORMAT and LANGUAGE, and under dmy (British, French, and
+            others) those two types read that string as yyyy-dd-mm:
+            '2026-01-05' binds as May 1, and '2026-01-13' fails with Msg 8114.
+            A T in place of the space makes it ISO 8601, which every
+            DATEFORMAT reads the same way. date, datetime2, and
+            datetimeoffset ignore DATEFORMAT for this form, so they stay as is.
+            */
+            WHEN ps.param_data_type IN (N'datetime', N'smalldatetime')
+            AND  ps.param_compiled_value LIKE N'''[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:%'''
+            THEN STUFF(ps.param_compiled_value, 12, 1, N'T')
             ELSE ps.param_compiled_value
         END
 FROM #parameter_shred AS ps
@@ -40858,6 +44718,258 @@ be accidentally executed with incorrect values.
 SELECT
     @current_table = N'filling in missing parameters from query text';
 
+/*
+The parameter declaration list of each parameterized query text is split
+with string functions, not XML. Turning the list into XML and reading one
+<p> element per parameter ran an XML reader per parameter, and on a busy
+Query Store that was seconds. The split keeps what XML did to the text:
+each line break (CR LF, or CR alone) becomes LF, a parameter that is only
+white space reads as NULL, and the database collation applies to the
+result. A list with a character that XML parses or rejects (< & ]]>,
+control characters, surrogates, U+FFFE or U+FFFF) still goes through XML,
+so it is read the same way it always was.
+
+The end of each declaration list is found once, then the list is cut once,
+then split. In one statement each search ran again for every expression
+that used it.
+*/
+INSERT
+    #parameter_declarations
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    declaration_end
+)
+SELECT
+    qsp.plan_id,
+    de.declaration_end
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        declaration_end =
+            PATINDEX(N'%)[^,]%', qsqt.query_sql_text)
+) AS de
+WHERE qsqt.query_sql_text LIKE N'(@%'
+AND   de.declaration_end > 0
+OPTION(RECOMPILE);
+
+UPDATE
+    pd
+SET
+    pd.declaration =
+        SUBSTRING
+        (
+            qsqt.query_sql_text,
+            2,
+            pd.declaration_end - 2 +
+                CASE
+                    WHEN SUBSTRING
+                         (
+                             qsqt.query_sql_text,
+                             pd.declaration_end,
+                             2
+                         ) = N'))'
+                    THEN 1
+                    ELSE 0
+                END
+        )
+FROM #parameter_declarations AS pd
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = pd.plan_id
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+OPTION(RECOMPILE);
+
+/*
+Split on ',@' (the parameter boundary), not every comma.
+A scaled type carries its own comma (numeric(10,2),
+decimal(38,6)), always followed by a digit; the separator
+between parameters is always a comma immediately followed by
+the next parameter's @name. Splitting on every comma tore
+numeric(10,2) in half, and the malformed fragment blew up
+LEFT with error 537, aborting the whole procedure for any
+query with a scaled-type parameter.
+
+The two REPLACEs are the ones the XML split used, with NCHAR(1) where it
+put </p><p>. Query text has no control characters by now (they were
+replaced with ?), and a list that has one anyway goes through XML.
+*/
+UPDATE
+    pd
+SET
+    pd.split_text =
+        REPLACE(REPLACE(pd.declaration, N', @', N',@'), N',@', NCHAR(1) + N'@'),
+    pd.needs_xml =
+        CASE
+            WHEN CHARINDEX(N'<', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(N'&', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(N']]>', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(NCHAR(0), pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   PATINDEX
+                 (
+                     N'%[' +
+                     NCHAR(1) + N'-' + NCHAR(8) +
+                     NCHAR(11) +
+                     NCHAR(12) +
+                     NCHAR(14) + N'-' + NCHAR(31) +
+                     NCHAR(55296) + N'-' + NCHAR(57343) +
+                     NCHAR(65534) +
+                     NCHAR(65535) +
+                     N']%',
+                     pd.declaration COLLATE Latin1_General_100_BIN2
+                 ) > 0
+            THEN 1
+            ELSE 0
+        END
+FROM #parameter_declarations AS pd
+OPTION(RECOMPILE);
+
+WITH
+    numbers
+(
+    n
+) AS
+(
+    /*
+    1 to 1,000,000, enough for any declaration list (2,100 parameters at
+    most); TOP below takes only as many as each list is long
+    */
+    SELECT
+        n =
+            ROW_NUMBER() OVER
+            (
+                ORDER BY
+                    (SELECT NULL)
+            )
+    FROM
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t1 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t2 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t3 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t4 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t5 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t6 (n)
+),
+    parameter_items
+(
+    plan_id,
+    item
+) AS
+(
+    /*
+    Each parameter starts at position 1 or right after an NCHAR(1), and
+    runs to the next NCHAR(1) or the end of the list. Most lists fit in
+    nvarchar(4000), where the per-character work is much cheaper than on
+    nvarchar(max).
+    */
+    SELECT
+        pd.plan_id,
+        item =
+            SUBSTRING
+            (
+                ps.split_text,
+                nb.n,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(NCHAR(1), ps.split_text, nb.n),
+                        0
+                    ),
+                    ps.split_length + 1
+                ) - nb.n
+            )
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT
+            split_text =
+                CONVERT(nvarchar(4000), pd.split_text),
+            split_length =
+                DATALENGTH(pd.split_text) / 2
+    ) AS ps
+    CROSS APPLY
+    (
+        SELECT TOP (ps.split_length)
+            n.n
+        FROM numbers AS n
+        ORDER BY
+            n.n
+    ) AS nb
+    WHERE pd.needs_xml = 0
+    AND   ps.split_length <= 4000
+    AND
+    (
+         nb.n = 1
+      OR SUBSTRING(ps.split_text, nb.n - 1, 1) = NCHAR(1)
+    )
+
+    UNION ALL
+
+    SELECT
+        pd.plan_id,
+        item =
+            SUBSTRING
+            (
+                pd.split_text,
+                nb.n,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(NCHAR(1), pd.split_text, nb.n),
+                        0
+                    ),
+                    DATALENGTH(pd.split_text) / 2 + 1
+                ) - nb.n
+            )
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT TOP (DATALENGTH(pd.split_text) / 2)
+            n.n
+        FROM numbers AS n
+        ORDER BY
+            n.n
+    ) AS nb
+    WHERE pd.needs_xml = 0
+    AND   DATALENGTH(pd.split_text) / 2 > 4000
+    AND
+    (
+         nb.n = 1
+      OR SUBSTRING(pd.split_text, nb.n - 1, 1) = NCHAR(1)
+    )
+)
 INSERT
     #query_parameters
 WITH
@@ -40869,104 +44981,121 @@ WITH
     parameter_compiled_value
 )
 SELECT DISTINCT
-    qsp.plan_id,
-    parameter_name =
-        LTRIM(RTRIM
-        (
-            LEFT
-            (
-                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                CHARINDEX
-                (
-                    N' ',
-                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                ) - 1
-            )
-        )),
-    parameter_data_type =
-        LTRIM(RTRIM
-        (
-            SUBSTRING
-            (
-                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                CHARINDEX
-                (
-                    N' ',
-                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                ) + 1,
-                LEN(LTRIM(p.param_text.value(N'.', N'nvarchar(max)')))
-            )
-        )),
+    pt.plan_id,
+    pn.parameter_name,
+    pn.parameter_data_type,
     parameter_compiled_value =
         N'?'
-FROM #query_store_plan AS qsp
-JOIN #query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-CROSS APPLY
+FROM
 (
     SELECT
-        param_prefix =
-            SUBSTRING
-            (
-                qsqt.query_sql_text,
-                2,
-                PATINDEX(N'%)[^,]%', qsqt.query_sql_text) - 2 +
-                    CASE
-                        WHEN SUBSTRING
-                             (
-                                 qsqt.query_sql_text,
-                                 PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
-                                 2
-                             ) = N'))'
-                        THEN 1
-                        ELSE 0
-                    END
-            )
-    WHERE qsqt.query_sql_text LIKE N'(@%'
-    AND   PATINDEX(N'%)[^,]%', qsqt.query_sql_text) > 0
-) AS prefix
-CROSS APPLY
-(
-    SELECT
-        param_xml =
-            TRY_CAST
-            (
+        pi.plan_id,
+        param_text =
+            CASE
+                /* XML drops a text node that is only white space */
+                WHEN PATINDEX
+                     (
+                         N'%[^ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N']%',
+                         pi.item
+                     ) = 0
+                THEN NULL
                 /*
-                Split on ',@' (the parameter boundary), not every comma.
-                A scaled type carries its own comma (numeric(10,2),
-                decimal(38,6)), always followed by a digit; the separator
-                between parameters is always a comma immediately followed by
-                the next parameter's @name. Splitting on every comma tore
-                numeric(10,2) in half, and the malformed fragment blew up
-                LEFT with error 537, aborting the whole procedure for any
-                query with a scaled-type parameter.
+                XML reads CR LF and a lone CR as LF. The round trip through
+                varbinary gives the text the database default collation as a
+                coercible default, as the XML value() call did, so the
+                comparisons below resolve their collation the same way.
                 */
-                N'<p>' +
-                REPLACE(REPLACE(prefix.param_prefix, N', @', N',@'), N',@', N'</p><p>@') +
-                N'</p>' AS xml
-            )
-) AS px
-CROSS APPLY px.param_xml.nodes(N'/p') AS p(param_text)
+                ELSE
+                    LTRIM
+                    (
+                        CONVERT
+                        (
+                            nvarchar(max),
+                            CONVERT
+                            (
+                                varbinary(max),
+                                REPLACE
+                                (
+                                    REPLACE
+                                    (
+                                        pi.item,
+                                        NCHAR(13) + NCHAR(10),
+                                        NCHAR(10)
+                                    ),
+                                    NCHAR(13),
+                                    NCHAR(10)
+                                )
+                            )
+                        )
+                    )
+            END
+    FROM parameter_items AS pi
+
+    UNION ALL
+
+    SELECT
+        pd.plan_id,
+        pt.param_text
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT
+            param_xml =
+                TRY_CAST
+                (
+                    N'<p>' +
+                    REPLACE(REPLACE(pd.declaration, N', @', N',@'), N',@', N'</p><p>@') +
+                    N'</p>' AS xml
+                )
+    ) AS px
+    CROSS APPLY px.param_xml.nodes(N'/p') AS p (param_text)
+    CROSS APPLY
+    (
+        /* Read each parameter's text once; every .value() call is its own XML reader */
+        SELECT
+            param_text =
+                LTRIM(p.param_text.value(N'(./text())[1]', N'nvarchar(max)'))
+    ) AS pt
+    WHERE pd.needs_xml = 1
+) AS pt
+CROSS APPLY
+(
+    SELECT
+        parameter_name =
+            LTRIM(RTRIM
+            (
+                LEFT
+                (
+                    pt.param_text,
+                    CHARINDEX
+                    (
+                        N' ',
+                        pt.param_text
+                    ) - 1
+                )
+            )),
+        parameter_data_type =
+            LTRIM(RTRIM
+            (
+                SUBSTRING
+                (
+                    pt.param_text,
+                    CHARINDEX
+                    (
+                        N' ',
+                        pt.param_text
+                    ) + 1,
+                    LEN(pt.param_text)
+                )
+            ))
+) AS pn
 WHERE NOT EXISTS
 (
     SELECT
         1/0
     FROM #query_parameters AS qp
-    WHERE qp.plan_id = qsp.plan_id
-    AND   qp.parameter_name = LTRIM(RTRIM
-          (
-              LEFT
-              (
-                  LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                  CHARINDEX
-                  (
-                      N' ',
-                      LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                  ) - 1
-              )
-          ))
+    WHERE qp.plan_id = pt.plan_id
+    AND   qp.parameter_name = pn.parameter_name
 )
 OPTION(RECOMPILE);
 
@@ -40993,10 +45122,15 @@ WHERE qp.parameter_compiled_value = N'?'
 OPTION(RECOMPILE);
 
 /*
-Check for plans too large to cast to XML
+Warn when a compiled value was probably cut off.
+
+Plan XML keeps only the first 256 characters of a string value and the
+first 127 bytes of a binary value. A value of exactly that size, for a
+parameter whose type can hold more, was most likely longer, and the repro
+would run with the shorter value without saying so.
 */
 SELECT
-    @current_table = N'checking for plans too large to cast to XML';
+    @current_table = N'checking for truncated parameter values';
 
 INSERT
     #reproduction_warnings
@@ -41008,14 +45142,115 @@ WITH
     warning_message
 )
 SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'truncated parameter value',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is as long as a plan keeps (256 characters, or 127 bytes for binary types) and its type can hold more, ' +
+        N'so it was probably cut off. The repro runs with the shorter value.'
+FROM #query_parameters AS qp
+CROSS APPLY
+(
+    SELECT
+        type_length =
+            CASE
+                WHEN qp.parameter_data_type LIKE N'%(max)'
+                THEN 2147483647
+                WHEN qp.parameter_data_type LIKE N'%(%)'
+                THEN TRY_CAST
+                     (
+                         SUBSTRING
+                         (
+                             qp.parameter_data_type,
+                             CHARINDEX(N'(', qp.parameter_data_type) + 1,
+                             CHARINDEX(N')', qp.parameter_data_type) - CHARINDEX(N'(', qp.parameter_data_type) - 1
+                         ) AS integer
+                     )
+            END,
+        value_start =
+            CASE
+                WHEN qp.parameter_compiled_value LIKE N'N''%'
+                THEN 3
+                ELSE 2
+            END
+) AS t
+WHERE
+(
+    qp.parameter_data_type LIKE N'%char(%'
+AND qp.parameter_compiled_value LIKE N'%'''
+AND t.type_length > 256
+AND DATALENGTH
+    (
+        REPLACE
+        (
+            SUBSTRING
+            (
+                qp.parameter_compiled_value COLLATE Latin1_General_100_BIN2,
+                t.value_start,
+                CASE
+                    WHEN DATALENGTH(qp.parameter_compiled_value) / 2 > t.value_start
+                    THEN DATALENGTH(qp.parameter_compiled_value) / 2 - t.value_start
+                    ELSE 0
+                END
+            ),
+            N'''''',
+            N''''
+        )
+    ) / 2 = 256
+)
+OR
+(
+    qp.parameter_data_type LIKE N'%binary(%'
+AND qp.parameter_compiled_value LIKE N'0x%'
+AND t.type_length > 127
+AND DATALENGTH(qp.parameter_compiled_value) / 2 = 256
+)
+OPTION(RECOMPILE);
+
+/*
+Check for plans too large to cast to XML.
+
+The conversion is the test, so its result is kept: the embedded constants
+and the final SELECT read the xml from #query_plan_xml. Each of them
+converted every plan again before, which cost as much as this check.
+*/
+SELECT
+    @current_table = N'checking for plans too large to cast to XML';
+
+INSERT
+    #query_plan_xml
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    query_plan_xml
+)
+SELECT
     qsp.plan_id,
+    query_plan_xml =
+        TRY_CAST(qsp.query_plan AS xml)
+FROM #query_store_plan AS qsp
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qpx.plan_id,
     warning_type = N'plan too large for XML parsing',
     warning_message =
         N'Query plan could not be cast to XML (likely too large). ' +
         N'Parameters and embedded constants cannot be extracted using XQuery. ' +
         N'Manual review of plan text required.'
-FROM #query_store_plan AS qsp
-WHERE TRY_CAST(qsp.query_plan AS xml) IS NULL
+FROM #query_plan_xml AS qpx
+WHERE qpx.query_plan_xml IS NULL
 OPTION(RECOMPILE);
 
 /*
@@ -41051,6 +45286,9 @@ OPTION(RECOMPILE);
 /*
 Extract embedded constants from plans with OPTION(RECOMPILE)
 For plans that can be cast to XML, use XQuery
+
+The plans are the ones the warning above just found with the same LIKE,
+so they are read from its rows instead of searching every query text again
 */
 SELECT
     @current_table = N'extracting embedded constants from plans';
@@ -41064,32 +45302,33 @@ WITH
     constant_value
 )
 SELECT DISTINCT
-    qsp.plan_id,
+    rw.plan_id,
     constant_value =
         CASE
-            WHEN c.const.value(N'@ConstValue', N'nvarchar(max)') LIKE N'(%)'
+            WHEN cv.const_value LIKE N'(%)'
             THEN SUBSTRING
                  (
-                     c.const.value(N'@ConstValue', N'nvarchar(max)'),
+                     cv.const_value,
                      2,
-                     LEN(c.const.value(N'@ConstValue', N'nvarchar(max)')) - 2
+                     LEN(cv.const_value) - 2
                  )
-            ELSE LTRIM(RTRIM(c.const.value(N'@ConstValue', N'nvarchar(max)')))
+            ELSE LTRIM(RTRIM(cv.const_value))
         END
-FROM #query_store_plan AS qsp
-JOIN #query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
+FROM #reproduction_warnings AS rw
+JOIN #query_plan_xml AS x
+  ON x.plan_id = rw.plan_id
+CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c (const)
 CROSS APPLY
 (
+    /* Read the attribute once; each .value() call is its own XML reader */
     SELECT
-        query_plan_xml =
-            TRY_CAST(qsp.query_plan AS xml)
-) AS x
-CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c(const)
-WHERE x.query_plan_xml IS NOT NULL
-AND   qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
+        const_value =
+            c.const.value(N'@ConstValue', N'nvarchar(max)')
+) AS cv
+/*
+No IS NOT NULL test on the xml here: .nodes() returns no rows for NULL.
+*/
+WHERE rw.warning_type = N'parameter embedding optimization'
 OPTION(RECOMPILE);
 
 /*
@@ -41134,7 +45373,12 @@ OPTION(RECOMPILE);
 
 /*
 Check for dispatcher plans (parameter sensitive plan optimization)
-If a query is a dispatcher, warn and provide the variant query IDs
+If a plan is a dispatcher, warn and provide the variant query IDs.
+
+The test is on the plan, not on its query. A parent query can have
+regular plans next to its dispatcher, and keying on the parent query
+skipped those runnable plans whenever one of its variants was in the
+results too.
 */
 IF @sql_2022_views = 1
 BEGIN
@@ -41164,7 +45408,7 @@ BEGIN
                         N', ' +
                         RTRIM(qsqv.query_variant_query_id)
                     FROM #query_store_query_variant AS qsqv
-                    WHERE qsqv.parent_query_id = qsq.query_id
+                    WHERE qsqv.dispatcher_plan_id = qsp.plan_id
                     ORDER BY
                         qsqv.query_variant_query_id
                     FOR XML
@@ -41176,23 +45420,260 @@ BEGIN
                 N''
             )
     FROM #query_store_plan AS qsp
-    JOIN #query_store_query AS qsq
-      ON qsp.query_id = qsq.query_id
     WHERE EXISTS
           (
               SELECT
                   1/0
               FROM #query_store_query_variant AS qsqv
-              WHERE qsqv.parent_query_id = qsq.query_id
+              WHERE qsqv.dispatcher_plan_id = qsp.plan_id
           )
     OPTION(RECOMPILE);
 END;
+
+/*
+A parameter sensitive plan variant query carries the hint that ties it to
+its dispatcher in its text, as OPTION (PLAN PER VALUE(...)). That hint can't
+be run (Msg 102), so the repro is built without it; see psp below.
+*/
+SELECT
+    @current_table = N'checking for parameter sensitive plan variants';
+
+/*
+The search runs once per text here. The repro builder below used it in a
+CROSS APPLY, and the optimizer copied it into every expression that used
+the PSP-free text, so each text was searched about six times under the
+column collation.
+
+Only a query that is a parameter sensitive plan variant, with a row in
+#query_store_query_variant, has the hint taken out. A query whose own text
+holds the characters PLAN PER VALUE( inside a string literal is left alone,
+and where sys.query_store_query_variant does not exist (before SQL Server
+2022) the table is empty and no text is changed.
+*/
+INSERT
+    #psp_hint_starts
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    hint_start
+)
+SELECT
+    qsqt.query_text_id,
+    hint_start =
+        DATALENGTH(qsqt.query_sql_text) / 2 -
+        CHARINDEX(REVERSE(N'PLAN PER VALUE('), REVERSE(qsqt.query_sql_text)) -
+        LEN(N'PLAN PER VALUE(') + 2
+FROM #query_store_query_text AS qsqt
+WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_query AS qsq
+          JOIN #query_store_query_variant AS qsqv
+            ON qsqv.query_variant_query_id = qsq.query_id
+          WHERE qsq.query_text_id = qsqt.query_text_id
+      )
+OPTION(RECOMPILE);
+
+/*
+The text without the hint, for the repro. The hint is the last PLAN PER
+VALUE( in the text and ends at the first )) after it, where its last
+predicate_range closes. Query Store writes it either as its own clause,
+" option (PLAN PER VALUE(...))", or first in the query's own OPTION
+clause, "OPTION ( PLAN PER VALUE(...), LOOP JOIN)". This ran in the repro
+builder for every plan, and every expression there that used the text
+ran it again.
+*/
+UPDATE
+    phs
+SET
+    phs.query_sql_text =
+        CASE
+            WHEN psp_hint.hint IS NULL
+            THEN qsqt.query_sql_text
+            ELSE
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            qsqt.query_sql_text,
+                            N' option (' + psp_hint.hint + N')',
+                            N''
+                        ),
+                        psp_hint.hint + N', ',
+                        N''
+                    ),
+                    N', ' + psp_hint.hint,
+                    N''
+                )
+        END
+FROM #psp_hint_starts AS phs
+JOIN #query_store_query_text AS qsqt
+  ON qsqt.query_text_id = phs.query_text_id
+CROSS APPLY
+(
+    SELECT
+        hint =
+            CASE
+                WHEN phs.hint_start > 0
+                AND  CHARINDEX(N'))', qsqt.query_sql_text, phs.hint_start) > 0
+                THEN SUBSTRING
+                     (
+                         qsqt.query_sql_text,
+                         phs.hint_start,
+                         CHARINDEX(N'))', qsqt.query_sql_text, phs.hint_start) + 2 - phs.hint_start
+                     )
+            END
+) AS psp_hint
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'PSP variant',
+    warning_message =
+        N'Query is a parameter sensitive plan variant' +
+        ISNULL(N' of parent query ' + RTRIM(qsqv.parent_query_id), N'') +
+        N'. The PLAN PER VALUE hint Query Store keeps in its text cannot be run, so it was removed from the repro. ' +
+        N'SQL Server picks the variant again when the repro runs.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsq.query_text_id
+LEFT JOIN #query_store_query_variant AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id
+OPTION(RECOMPILE);
+
+/*
+Warn when control characters were replaced in the query text
+*/
+SELECT
+    @current_table = N'checking for control characters in query text';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'control characters',
+    warning_message =
+        N'Query text has control characters that XML cannot show. They were replaced with ? in the repro, ' +
+        N'so a string literal that held one no longer matches the original.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.has_control_characters = 1
+OPTION(RECOMPILE);
+
+/*
+Warn on internal queries that only SQL Server itself can run: the StatMan
+queries of a statistics update fail with Msg 195 ('StatMan' is not a
+recognized built-in function name), and full-text population queries
+fail with Msg 156 near 'fulltextkey'.
+*/
+SELECT
+    @current_table = N'checking for internal queries';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'internal query',
+    warning_message =
+        CASE
+            WHEN qsqt.query_sql_text LIKE N'%StatMan(%[_]MS[_]UPDSTATS[_]TBL%'
+            THEN N'Query is an internal statistics update (StatMan). Only UPDATE STATISTICS or an automatic statistics update can run it, ' +
+                 N'so the repro fails with Msg 195. To reproduce it, update the statistics on the table.'
+            ELSE N'Query is an internal full-text index population query. Only the full-text engine can run it, ' +
+                 N'so the repro fails with Msg 156.'
+        END
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text LIKE N'%StatMan(%[_]MS[_]UPDSTATS[_]TBL%'
+OR    qsqt.query_sql_text LIKE N'%column fulltextkey%'
+OPTION(RECOMPILE);
 
 /*
 Check for temp tables and table variables in query text
 */
 SELECT
     @current_table = N'checking for temp tables and table variables';
+
+INSERT
+    #query_text_normalized
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    query_sql_text_normalized
+)
+SELECT
+    qsqt.query_text_id,
+    query_sql_text_normalized =
+        REPLACE
+        (
+            REPLACE
+            (
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2,
+                                NCHAR(13),
+                                N' '
+                            ),
+                            NCHAR(10),
+                            N' '
+                        ),
+                        NCHAR(9),
+                        N' '
+                    ),
+                    N' ',
+                    NCHAR(1) + NCHAR(2)
+                ),
+                NCHAR(2) + NCHAR(1),
+                N''
+            ),
+            NCHAR(1) + NCHAR(2),
+            N' '
+        )
+FROM #query_store_query_text AS qsqt
+OPTION(RECOMPILE);
 
 INSERT
     #reproduction_warnings
@@ -41210,16 +45691,16 @@ SELECT DISTINCT
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text_normalized LIKE N'% FROM #%'
-OR    qsqt.query_sql_text_normalized LIKE N'% JOIN #%'
-OR    qsqt.query_sql_text_normalized LIKE N'% INTO #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%INSERT #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%DELETE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO #%'
+JOIN #query_text_normalized AS qtn
+  ON qtn.query_text_id = qsq.query_text_id
+WHERE qtn.query_sql_text_normalized LIKE N'% FROM #%'
+OR    qtn.query_sql_text_normalized LIKE N'% JOIN #%'
+OR    qtn.query_sql_text_normalized LIKE N'% INTO #%'
+OR    qtn.query_sql_text_normalized LIKE N'%INSERT #%'
+OR    qtn.query_sql_text_normalized LIKE N'%UPDATE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%DELETE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE INTO #%'
 OPTION(RECOMPILE);
 
 INSERT
@@ -41238,16 +45719,16 @@ SELECT DISTINCT
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text_normalized LIKE N'% FROM @%'
-OR    qsqt.query_sql_text_normalized LIKE N'% JOIN @%'
-OR    qsqt.query_sql_text_normalized LIKE N'% INTO @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%INSERT @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%DELETE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO @%'
+JOIN #query_text_normalized AS qtn
+  ON qtn.query_text_id = qsq.query_text_id
+WHERE qtn.query_sql_text_normalized LIKE N'% FROM @%'
+OR    qtn.query_sql_text_normalized LIKE N'% JOIN @%'
+OR    qtn.query_sql_text_normalized LIKE N'% INTO @%'
+OR    qtn.query_sql_text_normalized LIKE N'%INSERT @%'
+OR    qtn.query_sql_text_normalized LIKE N'%UPDATE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%DELETE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE INTO @%'
 OPTION(RECOMPILE);
 
 /*
@@ -41288,6 +45769,118 @@ CROSS APPLY
 ) AS ppc
 WHERE qsqt.query_sql_text LIKE N'(@%'
 AND   ppc.plan_param_count = 0
+OPTION(RECOMPILE);
+
+/*
+Note the plans whose declarations come from the plan, not the query text
+(see has_plan_parameters in the repro builder below)
+*/
+SELECT
+    @current_table = N'checking for parameters without declarations in the query text';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'declarations from plan',
+    warning_message =
+        N'Query text has no parameter declarations (a statement from a procedure, function, trigger, or batch). ' +
+        N'The repro declares the parameters in the plan ParameterList. Local variables are not in it and must be declared by hand.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text NOT LIKE N'(@%'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_parameters AS qp
+          WHERE qp.plan_id = qsp.plan_id
+      )
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_parameters AS qp
+          WHERE qp.plan_id = qsp.plan_id
+          AND
+          (
+               qp.parameter_name NOT LIKE N'@%'
+            OR qp.parameter_data_type IS NULL
+            OR qp.parameter_compiled_value IS NULL
+          )
+      )
+OPTION(RECOMPILE);
+
+/*
+Find where the statement starts after the (@...) declaration list in each
+parameterized text (without its PSP hint), once per text. The end of the
+list is stored first, then the start is worked out from it, because one
+expression that used the search twice ran it twice. In the repro builder
+these searches ran for every plan, and again for each use.
+*/
+SELECT
+    @current_table = N'finding where the statement starts in parameterized query text';
+
+INSERT
+    #repro_text_starts
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    declaration_end
+)
+SELECT
+    qsqt.query_text_id,
+    declaration_end =
+        PATINDEX(N'%)[^,]%', t.query_sql_text)
+FROM #query_store_query_text AS qsqt
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS t
+WHERE t.query_sql_text LIKE N'(@%'
+OPTION(RECOMPILE);
+
+UPDATE
+    rts
+SET
+    rts.text_start =
+        rts.declaration_end +
+        CASE
+            WHEN SUBSTRING
+                 (
+                     t.query_sql_text,
+                     rts.declaration_end,
+                     2
+                 ) = N'))'
+            THEN 2
+            ELSE 1
+        END
+FROM #repro_text_starts AS rts
+JOIN #query_store_query_text AS qsqt
+  ON qsqt.query_text_id = rts.query_text_id
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS t
 OPTION(RECOMPILE);
 
 /*
@@ -41359,14 +45952,18 @@ SELECT
                     THEN N''
                     ELSE
                         N'SET' +
-                        REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
-                        N' ON;' +
+                        REPLACE(qsrs.context_settings, N', ', N';' + NCHAR(10) + N'SET ') +
+                        N';' +
                         NCHAR(10)
                 END +
+                /*
+                Quoted, because some language names have spaces and
+                parentheses in them: Português (Brasil), norsk (bokmål).
+                */
                 ISNULL
                 (
                     N'SET LANGUAGE ' +
-                    lang.name +
+                    QUOTENAME(lang.name) +
                     N';' +
                     NCHAR(10),
                     N''
@@ -41396,15 +45993,32 @@ SELECT
                     N''
                 ) +
                 NCHAR(10) +
+                /*
+                A statement from a procedure, function, trigger, or batch has
+                no (@...) declaration list in its text, but its plan still
+                lists the parameters it compiled for. Run it raw and it fails
+                with Msg 137, so it goes through sp_executesql with the
+                declarations rebuilt from the plan, when every entry there
+                is a typed @parameter.
+                */
                 CASE
                     WHEN qsqt.query_sql_text LIKE N'(@%'
+                    OR   pd.has_plan_parameters = 1
                     THEN
                         N'EXECUTE sys.sp_executesql' +
                         NCHAR(10) +
                         N'    N''' +
+                        /*
+                        Under a binary collation only the quote character
+                        itself is doubled. A width insensitive column
+                        collation (the tempdb default can be one) also
+                        doubled a full-width apostrophe (NCHAR(65287)) into
+                        two plain quotes, which changed the string literal
+                        in the repro.
+                        */
                         REPLACE
                         (
-                            clean_query.query_text_cleaned,
+                            clean_query.query_text_cleaned COLLATE Latin1_General_100_BIN2,
                             N'''',
                             N''''''
                         ) +
@@ -41471,7 +46085,7 @@ SELECT
                                 NCHAR(10)
                         END
                     ELSE
-                        qsqt.query_sql_text +
+                        psp.query_sql_text +
                         NCHAR(10)
                 END
         )
@@ -41480,35 +46094,68 @@ JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
+/*
+The text without its PSP hint, and where its statement starts, were found
+once per text above
+*/
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+LEFT JOIN #repro_text_starts AS rts
+  ON rts.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS psp
 CROSS APPLY
 (
     SELECT
         query_text_cleaned =
             CASE
-                WHEN qsqt.query_sql_text LIKE N'(@%'
+                WHEN rts.query_text_id IS NOT NULL
                 THEN
                     LTRIM
                     (
                         SUBSTRING
                         (
-                            qsqt.query_sql_text,
-                            PATINDEX(N'%)[^,]%', qsqt.query_sql_text) +
-                                CASE
-                                    WHEN SUBSTRING
-                                         (
-                                             qsqt.query_sql_text,
-                                             PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
-                                             2
-                                         ) = N'))'
-                                    THEN 2
-                                    ELSE 1
-                                END,
-                            LEN(qsqt.query_sql_text)
+                            psp.query_sql_text,
+                            rts.text_start,
+                            LEN(psp.query_sql_text)
                         )
                     )
-                ELSE qsqt.query_sql_text
+                ELSE psp.query_sql_text
             END
 ) AS clean_query
+CROSS APPLY
+(
+    SELECT
+        has_plan_parameters =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_parameters AS qp
+                         WHERE qp.plan_id = qsp.plan_id
+                     )
+                AND  NOT EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_parameters AS qp
+                         WHERE qp.plan_id = qsp.plan_id
+                         AND
+                         (
+                              qp.parameter_name NOT LIKE N'@%'
+                           OR qp.parameter_data_type IS NULL
+                           OR qp.parameter_compiled_value IS NULL
+                         )
+                     )
+                THEN 1
+                ELSE 0
+            END
+) AS pd
 JOIN #query_store_runtime_stats AS qsrs
   ON qsp.plan_id = qsrs.plan_id
 JOIN #query_context_settings AS qcs
@@ -41520,10 +46167,42 @@ WHERE NOT EXISTS
           SELECT
               1/0
           FROM #query_store_query_variant AS qsqv
-          WHERE qsqv.parent_query_id = qsq.query_id
+          WHERE qsqv.dispatcher_plan_id = qsp.plan_id
       )
 OPTION(RECOMPILE);
 
+
+/*
+Number each plan's parameter values in value order for the parameter_values
+column. The parameter name breaks ties, so values that sort the same come
+out in one order every run.
+*/
+SELECT
+    @current_table = N'numbering parameter values';
+
+INSERT
+    #parameter_values
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    value_order,
+    parameter_compiled_value
+)
+SELECT
+    qp.plan_id,
+    value_order =
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                qp.plan_id
+            ORDER BY
+                qp.parameter_compiled_value,
+                qp.parameter_name
+        ),
+    qp.parameter_compiled_value
+FROM #query_parameters AS qp
+OPTION(RECOMPILE);
 
 /*
 Match sp_QuickieStore: when nothing landed in the search window there is no
@@ -41559,11 +46238,11 @@ SELECT
                 (
                     SELECT
                         N', ' +
-                        qp.parameter_compiled_value
-                    FROM #query_parameters AS qp
-                    WHERE qp.plan_id = rq.plan_id
+                        pv.parameter_compiled_value
+                    FROM #parameter_values AS pv
+                    WHERE pv.plan_id = rq.plan_id
                     ORDER BY
-                        qp.parameter_compiled_value
+                        pv.value_order
                     FOR XML
                         PATH(N''),
                         TYPE
@@ -41603,12 +46282,15 @@ SELECT
     qsp.compatibility_level,
     qsq.object_name,
     qsqt.query_sql_text_clickable,
+    /*
+    The too-large check above converted every plan and kept the xml, so the
+    plan is not converted again here. NULL means it could not be converted.
+    */
     query_plan =
          CASE
-             WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-             THEN TRY_CAST(qsp.query_plan AS xml)
-             WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
-             THEN
+             WHEN qpx.query_plan_xml IS NOT NULL
+             THEN qpx.query_plan_xml
+             ELSE
                  (
                      SELECT
                          [processing-instruction(query_plan)] =
@@ -41652,18 +46334,33 @@ SELECT
     qsrs.max_rowcount,
     qsrs.total_rowcount,
     qsrs.last_rowcount,
-    qsrs.avg_num_physical_io_reads_mb,
-    qsrs.min_num_physical_io_reads_mb,
-    qsrs.max_num_physical_io_reads_mb,
-    qsrs.total_num_physical_io_reads_mb,
-    qsrs.last_num_physical_io_reads_mb
+    qsrs.avg_num_physical_io_reads,
+    qsrs.min_num_physical_io_reads,
+    qsrs.max_num_physical_io_reads,
+    qsrs.total_num_physical_io_reads,
+    qsrs.last_num_physical_io_reads
 FROM
 (
-   SELECT DISTINCT
-       rq.plan_id,
-       rq.query_id,
-       rq.executable_query
-   FROM #repro_queries AS rq
+    /*
+    #repro_queries has one row per plan and query: each table it is built
+    from has one row per key. A DISTINCT here sorted the nvarchar(max)
+    repro text along with the keys; the row number works on the keys only.
+    With one row per key there is no tie for the ORDER BY to break.
+    */
+    SELECT
+        rq.plan_id,
+        rq.query_id,
+        rq.executable_query,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    rq.plan_id,
+                    rq.query_id
+                ORDER BY
+                    rq.plan_id
+            )
+    FROM #repro_queries AS rq
 ) AS rq
 CROSS APPLY
 (
@@ -41705,6 +46402,13 @@ CROSS APPLY
 ) AS qsqt
 OUTER APPLY
 (
+    SELECT TOP (1)
+        qpx.query_plan_xml
+    FROM #query_plan_xml AS qpx
+    WHERE qpx.plan_id = rq.plan_id
+) AS qpx
+OUTER APPLY
+(
     SELECT
         qsws.plan_id,
         qsws.wait_category_desc,
@@ -41723,7 +46427,8 @@ OUTER APPLY
         XML
         PATH('waits'),
         TYPE
-) AS qsws(waits)
+) AS qsws (waits)
+WHERE rq.n = 1
 ORDER BY
     qsrs.last_execution_time DESC
 OPTION(RECOMPILE);
@@ -41895,6 +46600,80 @@ BEGIN
         ec.plan_id,
         ec.constant_value
     OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#all_plan_ids',
+        ap.*
+    FROM #all_plan_ids AS ap
+    ORDER BY
+        ap.query_id,
+        ap.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_plan_xml',
+        qpx.*
+    FROM #query_plan_xml AS qpx
+    ORDER BY
+        qpx.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_text_normalized',
+        qtn.*
+    FROM #query_text_normalized AS qtn
+    ORDER BY
+        qtn.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#psp_hint_starts',
+        phs.*
+    FROM #psp_hint_starts AS phs
+    ORDER BY
+        phs.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#parameter_declarations',
+        pd.*
+    FROM #parameter_declarations AS pd
+    ORDER BY
+        pd.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#maintenance_plans',
+        mp.*
+    FROM #maintenance_plans AS mp
+    ORDER BY
+        mp.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#repro_text_starts',
+        rts.*
+    FROM #repro_text_starts AS rts
+    ORDER BY
+        rts.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#parameter_values',
+        pv.*
+    FROM #parameter_values AS pv
+    ORDER BY
+        pv.plan_id,
+        pv.value_order
+    OPTION(RECOMPILE);
 END;
 
 END; /*Final end*/
@@ -41978,8 +46757,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.10',
-        @version_date = '20261001';
+        @version = '1.11',
+        @version_date = '20261101';
 
     /*
     ╔══════════════════════════════════════════════════╗
@@ -42283,35 +47062,154 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @find_single_use_plans = 1
     BEGIN
+        /*
+        One row per single-use plan.
+
+        This used to read sys.dm_exec_query_stats and keep the rows with
+        execution_count = 1. Those rows are statements, not plans: an ad
+        hoc batch of 24 statements that ran once came back as 24 rows with
+        the same plan_handle, size, and text, so @top = 50 could show two
+        plans. A plan is single-use when sys.dm_exec_cached_plans has
+        usecounts = 1 for it, which is also what the single-use health
+        check counts, so the plans come from there. Each DMV is read once:
+        the statements of those plans only supply the compile and
+        execution times and the hashes of the first statement.
+        */
+        CREATE TABLE
+            #single_use_plans
+        (
+            plan_handle varbinary(64) NOT NULL PRIMARY KEY,
+            database_id integer NULL,
+            size_in_bytes integer NOT NULL
+        );
+
+        CREATE TABLE
+            #single_use_statements
+        (
+            plan_handle varbinary(64) NOT NULL PRIMARY KEY,
+            sql_handle varbinary(64) NULL,
+            query_hash binary(8) NULL,
+            query_plan_hash binary(8) NULL,
+            creation_time datetime NULL,
+            last_execution_time datetime NULL
+        );
+
+        INSERT
+            #single_use_plans
+        WITH
+            (TABLOCK)
+        (
+            plan_handle,
+            database_id,
+            size_in_bytes
+        )
+        SELECT
+            cp.plan_handle,
+            database_id =
+                CONVERT(integer, pa.value),
+            cp.size_in_bytes
+        FROM sys.dm_exec_cached_plans AS cp
+        CROSS APPLY
+        (
+            SELECT TOP (1)
+                value = pa.value
+            FROM sys.dm_exec_plan_attributes(cp.plan_handle) AS pa
+            WHERE pa.attribute = N'dbid'
+        ) AS pa
+        WHERE cp.cacheobjtype = N'Compiled Plan'
+        AND   cp.usecounts = 1
+        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
+        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
+        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        INSERT
+            #single_use_statements
+        WITH
+            (TABLOCK)
+        (
+            plan_handle,
+            sql_handle,
+            query_hash,
+            query_plan_hash,
+            creation_time,
+            last_execution_time
+        )
+        SELECT
+            x.plan_handle,
+            x.sql_handle,
+            x.query_hash,
+            x.query_plan_hash,
+            x.creation_time,
+            x.last_execution_time
+        FROM
+        (
+            SELECT
+                qs.plan_handle,
+                qs.sql_handle,
+                qs.query_hash,
+                qs.query_plan_hash,
+                creation_time =
+                    MIN(qs.creation_time) OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                    ),
+                last_execution_time =
+                    MAX(qs.last_execution_time) OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                    ),
+                n =
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            qs.plan_handle
+                        ORDER BY
+                            qs.statement_start_offset
+                    )
+            FROM sys.dm_exec_query_stats AS qs
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #single_use_plans AS sup
+                WHERE sup.plan_handle = qs.plan_handle
+            )
+        ) AS x
+        WHERE x.n = 1
+        OPTION(RECOMPILE, MAXDOP 1);
+
         SELECT TOP (@top)
             database_name =
-                DB_NAME(CONVERT(integer, pa.value)),
-            qs.creation_time,
-            qs.last_execution_time,
+                DB_NAME(sup.database_id),
+            sus.creation_time,
+            sus.last_execution_time,
             plan_age =
                 CASE
-                    WHEN DATEDIFF(DAY, qs.creation_time, GETDATE()) > 0
-                    THEN CONVERT(varchar(10), DATEDIFF(DAY, qs.creation_time, GETDATE())) + 'd '
+                    WHEN DATEDIFF(DAY, sus.creation_time, GETDATE()) > 0
+                    THEN CONVERT(varchar(10), DATEDIFF(DAY, sus.creation_time, GETDATE())) + 'd '
                     ELSE N''
                 END +
-                CONVERT(varchar(10), DATEDIFF(HOUR, qs.creation_time, GETDATE()) % 24) + 'h ' +
-                CONVERT(varchar(10), DATEDIFF(MINUTE, qs.creation_time, GETDATE()) % 60) + 'm',
+                CONVERT(varchar(10), DATEDIFF(HOUR, sus.creation_time, GETDATE()) % 24) + 'h ' +
+                CONVERT(varchar(10), DATEDIFF(MINUTE, sus.creation_time, GETDATE()) % 60) + 'm',
             time_since_last_execution =
                 CASE
-                    WHEN DATEDIFF(DAY, qs.last_execution_time, GETDATE()) > 0
-                    THEN CONVERT(varchar(10), DATEDIFF(DAY, qs.last_execution_time, GETDATE())) + 'd '
+                    WHEN DATEDIFF(DAY, sus.last_execution_time, GETDATE()) > 0
+                    THEN CONVERT(varchar(10), DATEDIFF(DAY, sus.last_execution_time, GETDATE())) + 'd '
                     ELSE N''
                 END +
-                CONVERT(varchar(10), DATEDIFF(HOUR, qs.last_execution_time, GETDATE()) % 24) + 'h ' +
-                CONVERT(varchar(10), DATEDIFF(MINUTE, qs.last_execution_time, GETDATE()) % 60) + 'm',
+                CONVERT(varchar(10), DATEDIFF(HOUR, sus.last_execution_time, GETDATE()) % 24) + 'h ' +
+                CONVERT(varchar(10), DATEDIFF(MINUTE, sus.last_execution_time, GETDATE()) % 60) + 'm',
             cached_plan_size_kb =
-                cp.size_in_bytes / 1024,
+                sup.size_in_bytes / 1024,
             clear_plan_command =
                 N'DBCC FREEPROCCACHE (' +
                 CONVERT
                 (
                     nvarchar(max),
-                    qs.plan_handle,
+                    sup.plan_handle,
                     1
                 ) + N');',
             query_text =
@@ -42351,39 +47249,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             TYPE
                     )
                 END,
-            qs.query_hash,
-            qs.query_plan_hash,
-            qs.sql_handle,
-            qs.plan_handle
-        FROM sys.dm_exec_query_stats AS qs
-        JOIN sys.dm_exec_cached_plans AS cp
-          ON cp.plan_handle = qs.plan_handle
-        CROSS APPLY
-        (
-            SELECT TOP (1)
-                value = pa.value
-            FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
-            WHERE pa.attribute = N'dbid'
-        ) AS pa
-        CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+            sus.query_hash,
+            sus.query_plan_hash,
+            sus.sql_handle,
+            sup.plan_handle
+        FROM #single_use_plans AS sup
+        JOIN #single_use_statements AS sus
+          ON sus.plan_handle = sup.plan_handle
+        CROSS APPLY sys.dm_exec_sql_text(sus.sql_handle) AS st
         OUTER APPLY sys.dm_exec_text_query_plan
         (
-            qs.plan_handle,
-            qs.statement_start_offset,
-            qs.statement_end_offset
+            sup.plan_handle,
+            0,
+            -1
         ) AS qp
-        WHERE qs.execution_count = 1
-        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
-        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
-        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
         /* Honor @start_date / @end_date the same as the statement /
            procedure / function / trigger paths below — the filters
            were documented as applying to all modes, but this
            @find_single_use_plans branch silently ignored them before. */
-        AND   (@start_date IS NULL OR qs.creation_time >= @start_date)
-        AND   (@end_date   IS NULL OR qs.creation_time <  @end_date)
+        WHERE (@start_date IS NULL OR sus.creation_time >= @start_date)
+        AND   (@end_date   IS NULL OR sus.creation_time <  @end_date)
         ORDER BY
-            cp.size_in_bytes DESC
+            sup.size_in_bytes DESC
         OPTION(RECOMPILE, MAXDOP 1);
 
         RETURN;
@@ -42468,8 +47355,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     MIN(qs.creation_time),
                 newest_plan =
                     MAX(qs.creation_time),
+                /*
+                The statement, not the batch: MAX(st.text) gave every hash
+                from the same multi-statement batch the same sample text.
+                */
                 sample_query_text =
-                    MAX(st.text),
+                    MAX
+                    (
+                        SUBSTRING
+                        (
+                            st.text,
+                            (qs.statement_start_offset / 2) + 1,
+                            (
+                                CASE qs.statement_end_offset
+                                    WHEN -1
+                                    THEN DATALENGTH(st.text)
+                                    ELSE qs.statement_end_offset
+                                END - qs.statement_start_offset
+                            ) / 2 + 1
+                        )
+                    ),
                 sort_plan_count =
                     COUNT_BIG(DISTINCT qs.plan_handle),
                 sort_cpu =
@@ -42577,6 +47482,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         min_elapsed_time bigint NULL,
         max_elapsed_time bigint NULL,
         max_dop bigint NULL,
+        total_grant_kb bigint NULL,
+        total_used_grant_kb bigint NULL,
         max_grant_kb bigint NULL,
         max_used_grant_kb bigint NULL,
         total_spills bigint NULL,
@@ -42614,6 +47521,8 @@ WITH
     min_elapsed_time,
     max_elapsed_time,
     max_dop,
+    total_grant_kb,
+    total_used_grant_kb,
     max_grant_kb,
     max_used_grant_kb,
     total_spills,
@@ -42648,9 +47557,13 @@ SELECT
     CASE
         WHEN @has_memory_grants = 1
         THEN N'
+    total_grant_kb = ISNULL(qs.total_grant_kb, 0),
+    total_used_grant_kb = ISNULL(qs.total_used_grant_kb, 0),
     max_grant_kb = ISNULL(qs.max_grant_kb, 0),
     max_used_grant_kb = ISNULL(qs.max_used_grant_kb, 0),'
         ELSE N'
+    total_grant_kb = NULL,
+    total_used_grant_kb = NULL,
     max_grant_kb = NULL,
     max_used_grant_kb = NULL,'
     END +
@@ -43033,6 +47946,18 @@ OPTION(RECOMPILE, MAXDOP 1);';
     Duplicate plan hashes:
     Same query_hash compiled into multiple plans suggests
     SET option differences or parameterization issues.
+
+    @duplicate_plans counts each plan once. It used to add up the plan
+    count of every qualifying hash, and a plan holds one hash per
+    statement, so a batch of 120 statements counted 120 times. Against
+    the distinct-plan denominator that went past 999.99%, and the
+    decimal(5, 2) assignment failed with Msg 8115.
+
+    A hash qualifies when it has more than 5 plans in one database, the
+    same (database, query_hash) grain as @find_duplicate_plans. The same
+    statement hashes the same in every database, so counting its plans
+    across databases let a hash with one plan in each of six databases
+    qualify, and every database was then reported with its single plan.
     */
     DECLARE
         @duplicate_hashes bigint = 0,
@@ -43040,19 +47965,40 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @pct_duplicate decimal(5, 2) = 0;
 
     SELECT
-        @duplicate_hashes = COUNT_BIG(*),
-        @duplicate_plans = SUM(x.plan_count)
+        @duplicate_hashes = COUNT_BIG(*)
     FROM
     (
         SELECT
-            plan_count = COUNT_BIG(DISTINCT s.plan_handle)
+            s.database_id,
+            s.query_hash
         FROM #dm_exec_query_stats AS s
         WHERE s.query_hash <> 0x0000000000000000
         GROUP BY
+            s.database_id,
             s.query_hash
         HAVING
             COUNT_BIG(DISTINCT s.plan_handle) > 5
     ) AS x
+    OPTION(RECOMPILE);
+
+    SELECT
+        @duplicate_plans = COUNT_BIG(DISTINCT s.plan_handle)
+    FROM
+    (
+        SELECT
+            s.database_id,
+            s.query_hash
+        FROM #dm_exec_query_stats AS s
+        WHERE s.query_hash <> 0x0000000000000000
+        GROUP BY
+            s.database_id,
+            s.query_hash
+        HAVING
+            COUNT_BIG(DISTINCT s.plan_handle) > 5
+    ) AS x
+    JOIN #dm_exec_query_stats AS s
+      ON  s.database_id = x.database_id
+      AND s.query_hash = x.query_hash
     OPTION(RECOMPILE);
 
     IF @total_plans > 0
@@ -43095,7 +48041,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
                 END,
             details =
                 FORMAT(COUNT_BIG(DISTINCT s2.query_hash), N'N0') +
-                N' query hashes with 5+ plans, totaling ' +
+                N' query hashes with more than 5 plans, totaling ' +
                 FORMAT(COUNT_BIG(DISTINCT s2.plan_handle), N'N0') + N' plans. ' +
                 N'Most likely unparameterized queries. SET option differences between sessions can also cause this. Consider Forced Parameterization.'
         /*
@@ -43109,16 +48055,19 @@ OPTION(RECOMPILE, MAXDOP 1);';
         FROM
         (
             SELECT
+                s.database_id,
                 s.query_hash
             FROM #dm_exec_query_stats AS s
             WHERE s.query_hash <> 0x0000000000000000
             GROUP BY
+                s.database_id,
                 s.query_hash
             HAVING
                 COUNT_BIG(DISTINCT s.plan_handle) > 5
         ) AS x
         JOIN #dm_exec_query_stats AS s2
-          ON s2.query_hash = x.query_hash
+          ON  s2.database_id = x.database_id
+          AND s2.query_hash = x.query_hash
         WHERE s2.database_id IS NOT NULL
         GROUP BY
             s2.database_id
@@ -43221,8 +48170,8 @@ OPTION(RECOMPILE, MAXDOP 1);';
     ╚══════════════════════════════════════════════════╝
 
     All four stat DMVs feed into this single table.
-    Statements group by query_hash; procedures, functions,
-    and triggers group by database_id + object_id.
+    Statements group by database_id + query_hash; procedures,
+    functions, and triggers group by database_id + object_id.
 
     object_name holds [schema].[object], which can be longer
     than a sysname: each QUOTENAME can return 258 characters.
@@ -43272,6 +48221,13 @@ OPTION(RECOMPILE, MAXDOP 1);';
     ║  Step 1a: Collect statement-level stats          ║
     ║  (#dm_exec_query_stats, grouped by hash)         ║
     ╚══════════════════════════════════════════════════╝
+
+    A group is one query_hash in one database. The same statement text
+    hashes the same in every database it runs in, so grouping on
+    query_hash alone added up, say, the same query in three regional
+    databases into one row, labeled with whichever database had the
+    most executed plan, and reported one plan per database as plan
+    instability. @find_duplicate_plans groups the same way.
 
     Two things happen here, and they are deliberately kept apart.
 
@@ -43347,7 +48303,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
     )
     SELECT
         query_type = 'Statement',
-        database_name = DB_NAME(winner.database_id),
+        database_name = DB_NAME(totals.database_id),
         query_hash = totals.query_hash,
         plan_count = totals.plan_count,
         total_executions = totals.total_executions,
@@ -43382,6 +48338,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
     FROM
     (
         SELECT
+            s.database_id,
             s.query_hash,
             plan_count = COUNT_BIG(DISTINCT s.plan_handle),
             total_executions = SUM(s.execution_count),
@@ -43403,17 +48360,22 @@ OPTION(RECOMPILE, MAXDOP 1);';
             SQL Server would warn about it on every run. Feeding them
             zeros keeps them quiet, and the CASE — not the aggregate —
             decides whether the answer is a value or a NULL.
+
+            The totals add up total_grant_kb and total_used_grant_kb.
+            They used to add up max_grant_kb, the largest single grant of
+            each plan, which is not a total of anything: the grant total,
+            the average grant, and the memory share all came out low.
             */
             total_grant_mb =
                 CASE
                     WHEN @has_memory_grants = 1
-                    THEN SUM(ISNULL(s.max_grant_kb, 0)) / 1024.0
+                    THEN SUM(ISNULL(s.total_grant_kb, 0)) / 1024.0
                     ELSE 0
                 END,
             total_used_grant_mb =
                 CASE
                     WHEN @has_memory_grants = 1
-                    THEN SUM(ISNULL(s.max_used_grant_kb, 0)) / 1024.0
+                    THEN SUM(ISNULL(s.total_used_grant_kb, 0)) / 1024.0
                     ELSE 0
                 END,
             total_spills =
@@ -43463,6 +48425,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
         AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
         AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
         GROUP BY
+            s.database_id,
             s.query_hash
         HAVING
             SUM(s.execution_count) >= @minimum_execution_count
@@ -43487,6 +48450,7 @@ OPTION(RECOMPILE, MAXDOP 1);';
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
+                        s.database_id,
                         s.query_hash
                     ORDER BY
                         s.execution_count DESC
@@ -43496,7 +48460,8 @@ OPTION(RECOMPILE, MAXDOP 1);';
         AND   s.creation_time >= ISNULL(@start_date, s.creation_time)
         AND   s.creation_time < ISNULL(@end_date, DATEADD(DAY, 1, s.creation_time))
     ) AS winner
-      ON  winner.query_hash = totals.query_hash
+      ON  winner.database_id = totals.database_id
+      AND winner.query_hash = totals.query_hash
       AND winner.n = 1
     OPTION(RECOMPILE, MAXDOP 1);
 
@@ -43893,19 +48858,48 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @total_grant_mb decimal(38, 2) = 0,
         @total_spills bigint = 0,
         @total_executions bigint = 0,
-        @total_entries bigint = 0;
+        @total_entries bigint = 0,
+        @statement_entries bigint = 0;
 
+    /*
+    The workload totals come from the statement rows only.
+
+    The statements of a procedure, function, or trigger are cached as
+    statement rows too, so an object row and its statement rows hold
+    the same work. Adding up every row counted that work twice, so the
+    totals were too big and every share too small: in one test, a
+    procedure that used 59% of the CPU showed 37% on its own row and
+    37% again on the row for its one statement.
+
+    When there are no statement rows at all, the totals fall back to
+    every row, so the object rows still get shares that mean something.
+    */
     SELECT
-        @total_cpu_ms = SUM(qs.total_cpu_ms),
-        @total_duration_ms = SUM(qs.total_duration_ms),
-        @total_physical_reads = SUM(qs.total_physical_reads),
-        @total_logical_writes = SUM(qs.total_logical_writes),
-        @total_grant_mb = SUM(qs.total_grant_mb),
-        @total_spills = SUM(qs.total_spills),
-        @total_executions = SUM(qs.total_executions),
-        @total_entries = COUNT_BIG(*)
+        @total_cpu_ms = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_cpu_ms ELSE 0 END),
+        @total_duration_ms = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_duration_ms ELSE 0 END),
+        @total_physical_reads = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_physical_reads ELSE 0 END),
+        @total_logical_writes = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_logical_writes ELSE 0 END),
+        @total_grant_mb = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_grant_mb ELSE 0 END),
+        @total_spills = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_spills ELSE 0 END),
+        @total_executions = SUM(CASE WHEN qs.query_type = 'Statement' THEN qs.total_executions ELSE 0 END),
+        @total_entries = COUNT_BIG(*),
+        @statement_entries = SUM(CASE WHEN qs.query_type = 'Statement' THEN 1 ELSE 0 END)
     FROM #query_stats AS qs
     OPTION(RECOMPILE);
+
+    IF @statement_entries = 0
+    BEGIN
+        SELECT
+            @total_cpu_ms = SUM(qs.total_cpu_ms),
+            @total_duration_ms = SUM(qs.total_duration_ms),
+            @total_physical_reads = SUM(qs.total_physical_reads),
+            @total_logical_writes = SUM(qs.total_logical_writes),
+            @total_grant_mb = SUM(qs.total_grant_mb),
+            @total_spills = SUM(qs.total_spills),
+            @total_executions = SUM(qs.total_executions)
+        FROM #query_stats AS qs
+        OPTION(RECOMPILE);
+    END;
 
     IF @debug = 1
     BEGIN
@@ -44262,9 +49256,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         min_duration_ms = r.min_duration_ms,
         max_duration_ms = r.max_duration_ms,
 
-        /* resource shares (% of total workload) */
+        /*
+        Resource shares, as a % of the statement-level workload totals.
+        An object row is measured against those totals too, and an
+        object can call into a database the filters left out, so a
+        share is held at 100 rather than overflowing decimal(5, 2).
+        */
         cpu_share =
             CASE
+                WHEN @total_cpu_ms > 0
+                AND  r.total_cpu_ms >= @total_cpu_ms
+                THEN 100.00
                 WHEN @total_cpu_ms > 0
                 THEN CONVERT(decimal(5, 2), r.total_cpu_ms * 100.0 / @total_cpu_ms)
                 ELSE 0
@@ -44272,11 +49274,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         duration_share =
             CASE
                 WHEN @total_duration_ms > 0
+                AND  r.total_duration_ms >= @total_duration_ms
+                THEN 100.00
+                WHEN @total_duration_ms > 0
                 THEN CONVERT(decimal(5, 2), r.total_duration_ms * 100.0 / @total_duration_ms)
                 ELSE 0
             END,
         reads_share =
             CASE
+                WHEN @total_physical_reads > 0
+                AND  r.total_physical_reads >= @total_physical_reads
+                THEN 100.00
                 WHEN @total_physical_reads > 0
                 THEN CONVERT(decimal(5, 2), r.total_physical_reads * 100.0 / @total_physical_reads)
                 ELSE 0
@@ -44284,11 +49292,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         writes_share =
             CASE
                 WHEN @total_logical_writes > 0
+                AND  r.total_logical_writes >= @total_logical_writes
+                THEN 100.00
+                WHEN @total_logical_writes > 0
                 THEN CONVERT(decimal(5, 2), r.total_logical_writes * 100.0 / @total_logical_writes)
                 ELSE 0
             END,
         grant_share =
             CASE
+                WHEN @total_grant_mb > 0
+                AND  r.total_grant_mb >= @total_grant_mb
+                THEN 100.00
                 WHEN @total_grant_mb > 0
                 THEN CONVERT(decimal(5, 2), r.total_grant_mb * 100.0 / @total_grant_mb)
                 ELSE 0
@@ -44296,11 +49310,17 @@ OPTION(RECOMPILE, MAXDOP 1);';
         spills_share =
             CASE
                 WHEN @total_spills > 0
+                AND  r.total_spills >= @total_spills
+                THEN 100.00
+                WHEN @total_spills > 0
                 THEN CONVERT(decimal(5, 2), r.total_spills * 100.0 / @total_spills)
                 ELSE 0
             END,
         executions_share =
             CASE
+                WHEN @total_executions > 0
+                AND  r.total_executions >= @total_executions
+                THEN 100.00
                 WHEN @total_executions > 0
                 THEN CONVERT(decimal(5, 2), r.total_executions * 100.0 / @total_executions)
                 ELSE 0
@@ -44639,14 +49659,69 @@ OPTION(RECOMPILE, MAXDOP 1);';
         @surfaced_duration_pct decimal(5, 2) = 0,
         @surfaced_grant_pct decimal(5, 2) = 0;
 
+    /*
+    A surfaced statement that belongs to a surfaced procedure is the
+    same work as the procedure row, so only the procedure row is added
+    in. Function and trigger statements carry no link to their object,
+    so the sums are held at 100.
+    */
     SELECT
-        @surfaced_count = COUNT_BIG(*),
-        @surfaced_cpu_pct = ISNULL(SUM(s.cpu_share), 0),
-        @surfaced_reads_pct = ISNULL(SUM(s.reads_share), 0),
-        @surfaced_duration_pct = ISNULL(SUM(s.duration_share), 0),
-        @surfaced_grant_pct = ISNULL(SUM(s.grant_share), 0)
-    FROM #scored AS s
-    WHERE s.impact_score >= @impact_threshold
+        @surfaced_count = x.surfaced_count,
+        @surfaced_cpu_pct =
+            CASE
+                WHEN x.cpu_pct > 100
+                THEN 100
+                ELSE x.cpu_pct
+            END,
+        @surfaced_reads_pct =
+            CASE
+                WHEN x.reads_pct > 100
+                THEN 100
+                ELSE x.reads_pct
+            END,
+        @surfaced_duration_pct =
+            CASE
+                WHEN x.duration_pct > 100
+                THEN 100
+                ELSE x.duration_pct
+            END,
+        @surfaced_grant_pct =
+            CASE
+                WHEN x.grant_pct > 100
+                THEN 100
+                ELSE x.grant_pct
+            END
+    FROM
+    (
+        SELECT
+            surfaced_count = COUNT_BIG(*),
+            cpu_pct = ISNULL(SUM(c.counted * s.cpu_share), 0),
+            reads_pct = ISNULL(SUM(c.counted * s.reads_share), 0),
+            duration_pct = ISNULL(SUM(c.counted * s.duration_share), 0),
+            grant_pct = ISNULL(SUM(c.counted * s.grant_share), 0)
+        FROM #scored AS s
+        CROSS APPLY
+        (
+            SELECT
+                counted =
+                    CASE
+                        WHEN s.query_type = 'Statement'
+                        AND  EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #scored AS p
+                                 WHERE p.query_type = 'Procedure'
+                                 AND   p.database_name = s.database_name
+                                 AND   p.object_name = s.object_name
+                                 AND   p.impact_score >= @impact_threshold
+                             )
+                        THEN 0
+                        ELSE 1
+                    END
+        ) AS c
+        WHERE s.impact_score >= @impact_threshold
+    ) AS x
     OPTION(RECOMPILE);
 
     SELECT
@@ -44859,8 +49934,8 @@ ALTER PROCEDURE
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
     @sort_order varchar(50) = 'cpu', /*the runtime metric you want to prioritize results by; varchar(50) so the documented 'average '/'avg ' prefix forms (e.g. 'average buffer latches waits') aren't truncated before normalization and silently fall back to cpu*/
     @top bigint = 10, /*the number of queries you want to pull back*/
-    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
-    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @timezone sysname = NULL, /*user specified time zone to override dates displayed in results*/
     @execution_count bigint = NULL, /*the minimum number of executions a query must have*/
     @duration_ms bigint = NULL, /*the minimum duration a query must have to show up in results*/
@@ -44897,8 +49972,8 @@ ALTER PROCEDURE
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
     @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
     @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
-    @regression_baseline_start_date datetimeoffset(7) = NULL, /*the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
-    @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
+    @regression_baseline_start_date datetimeoffset(7) = NULL, /*the begin date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
     @include_query_hash_totals bit = 0, /*will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
@@ -44930,8 +50005,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.10',
-    @version_date = '20261001';
+    @version = '6.11',
+    @version_date = '20261101';
 
 /*
 Helpful section! For help.
@@ -44963,8 +50038,8 @@ BEGIN
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
                 WHEN N'@sort_order' THEN 'the runtime metric you want to prioritize results by'
                 WHEN N'@top' THEN 'the number of queries you want to pull back'
-                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
-                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
+                WHEN N'@start_date' THEN 'the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@timezone' THEN 'user specified time zone to override dates displayed in results'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN N'@duration_ms' THEN 'the minimum duration a query must have to show up in results'
@@ -45001,8 +50076,8 @@ BEGIN
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
                 WHEN N'@work_start' THEN 'use this to set a specific start of your work days'
                 WHEN N'@work_end' THEN 'use this to set a specific end of your work days'
-                WHEN N'@regression_baseline_start_date' THEN 'the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
-                WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
+                WHEN N'@regression_baseline_start_date' THEN 'the begin date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any); no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
                 WHEN N'@include_query_hash_totals' THEN N'will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
@@ -45026,7 +50101,7 @@ BEGIN
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
                 WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, log, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits, rows, total cpu, total logical reads, total physical reads, total writes, total duration, total memory, total log, total tempdb, total rows (avg/average prefix also accepted, e.g. avg cpu, average duration)'
-                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@top' THEN '0 or a positive integer up to 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@timezone' THEN 'SELECT tzi.* FROM sys.time_zone_info AS tzi;'
@@ -45208,7 +50283,7 @@ BEGIN
     SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits Total (2017+, expert mode only): total wait stats for the chosen date range only' UNION ALL
+    SELECT 'Query Store Waits Total (2017+, expert mode only): wait stats totals for the queries in the results above, in the chosen date range' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -45362,6 +50437,45 @@ BEGIN
     SELECT 'multi_shape_query_hashes: how many query_hashes compiled to more than one plan shape in the window' UNION ALL
     SELECT 'wait_stats: whether the per-shape top_waits column is available, and why not when it is not' UNION ALL
     SELECT 'ranked_on: which metric''s volatility ranked the results, from @sort_order (work-weighted)';
+
+    /*
+    Plan count by hashes guide
+    */
+    SELECT
+        plan_count_by_hashes_columns =
+           'when using @sort_order = ''plan count by hashes'', results are one row per query hash:' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'the top @top query hashes by how many plan hashes (plan shapes) they have in the time window.' UNION ALL
+    SELECT '    each row shows one representative plan: the plan with the most executions in the window for that' UNION ALL
+    SELECT '    query hash, then the most recently run one. The runtime columns, query text, and query_plan are for' UNION ALL
+    SELECT '    that plan.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'query_hash_from_hash_counting: the query hash' UNION ALL
+    SELECT 'plan_hash_count_for_query_hash: distinct plan hashes (plan shapes). The results are ranked on this.' UNION ALL
+    SELECT 'the columns below count over every plan of the query hash that ran in the window, to show why it has' UNION ALL
+    SELECT '    so many plans:' UNION ALL
+    SELECT 'plan_count_reasons: the counts below in words, one sentence for each rule that applies, joined by | .' UNION ALL
+    SELECT '    NULL when no rule applies. The rules:' UNION ALL
+    SELECT '    more than one query text, and at least half as many texts as query_ids, not counting Parameter' UNION ALL
+    SELECT '        Sensitive Plan variants: the texts differ only in literal values' UNION ALL
+    SELECT '    more than one batch, and at least half as many batches as query_ids: the statement uses a temp' UNION ALL
+    SELECT '        table or table variable and runs in batches whose text changes' UNION ALL
+    SELECT '    more than one context setting: it compiled under different SET options, with the ones that differ' UNION ALL
+    SELECT '    more than one module: the same statement is in several modules' UNION ALL
+    SELECT '    more plan hashes than query_ids: queries compiled more than one plan shape each' UNION ALL
+    SELECT '    any Parameter Sensitive Plan variants (2022+)' UNION ALL
+    SELECT '    more than one compatibility level' UNION ALL
+    SELECT 'plan_id_count_for_query_hash: distinct plans. Many plans but few shapes means the same plan compiled again.' UNION ALL
+    SELECT 'query_id_count_for_query_hash: distinct query_ids. Query Store makes a new query_id for each different' UNION ALL
+    SELECT '    combination of query text, context settings, parent object, and, for some queries, batch.' UNION ALL
+    SELECT 'query_text_id_count_for_query_hash: distinct query texts' UNION ALL
+    SELECT 'batch_sql_handle_count_for_query_hash: distinct batches. Query Store fills batch_sql_handle only for' UNION ALL
+    SELECT '    queries that use a temp table or table variable, and gives the same statement in each batch its own query_id.' UNION ALL
+    SELECT 'object_id_count_for_query_hash: distinct modules (ad hoc statements are not counted)' UNION ALL
+    SELECT 'compatibility_level_count_for_query_hash: distinct compatibility levels the plans compiled under' UNION ALL
+    SELECT 'context_settings_count_for_query_hash: distinct context settings (SET options, language, date format, and so on)' UNION ALL
+    SELECT 'context_settings_that_differ_for_query_hash: the settings that differ across those context settings' UNION ALL
+    SELECT 'variant_query_count_for_query_hash (2022+): query_ids that are Parameter Sensitive Plan variants';
 
     /*
     Limitations
@@ -45738,6 +50852,15 @@ BEGIN
 END;
 
 /*
+A negative @top would fail later as a TOP with a negative row count
+*/
+IF @top < 0
+BEGIN
+    RAISERROR('@top must be 0 or greater. You supplied %I64d.', 11, 1, @top) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
 These are the tables that we'll use to grab data from query store
 It will be fun
 You'll love it
@@ -45863,7 +50986,9 @@ is done after the point where we would truncate.
 */
 
 /*
-Holds plan_id with the count of the number of query hashes they have.
+Holds one row per query hash, with one representative plan_id,
+the count of plan hashes the query hash has, and counts that
+show why it has so many plans.
 Only used when we're sorting by how many plan hashes each
 query hash has.
 */
@@ -45874,6 +50999,16 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     plan_hash_count_for_query_hash integer NOT NULL,
+    plan_count_reasons nvarchar(2000) NULL,
+    plan_id_count_for_query_hash bigint NULL,
+    query_id_count_for_query_hash bigint NULL,
+    query_text_id_count_for_query_hash bigint NULL,
+    batch_sql_handle_count_for_query_hash bigint NULL,
+    object_id_count_for_query_hash bigint NULL,
+    compatibility_level_count_for_query_hash bigint NULL,
+    context_settings_count_for_query_hash bigint NULL,
+    context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+    variant_query_count_for_query_hash bigint NULL,
     PRIMARY KEY CLUSTERED (database_id, plan_id, query_hash)
 );
 
@@ -46176,11 +51311,25 @@ CREATE TABLE
     last_compile_start_time datetimeoffset(7) NULL,
     last_execution_time datetimeoffset(7) NULL,
     avg_compile_duration_ms float NULL,
-    last_compile_duration_ms bigint NULL,
+    last_compile_duration_ms float NULL,
     plan_forcing_type_desc nvarchar(60) NULL,
     has_compile_replay_script bit NULL,
     is_optimized_plan_forcing_disabled bit NULL,
-    plan_type_desc nvarchar(120) NULL
+    plan_type_desc nvarchar(120) NULL,
+    /* Later steps join on these keys once per plan or query, so they need an index */
+    PRIMARY KEY CLUSTERED (database_id, plan_id)
+);
+
+/*
+Every plan for the queries in #query_store_plan,
+to build all_plan_ids in one pass
+*/
+CREATE TABLE
+    #all_plan_ids
+(
+    query_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    PRIMARY KEY CLUSTERED (query_id, plan_id)
 );
 
 /*
@@ -46235,29 +51384,30 @@ CREATE TABLE
     avg_compile_duration_ms float NULL,
     total_compile_duration_ms AS
         (count_compiles * avg_compile_duration_ms),
-    last_compile_duration_ms bigint NULL,
+    last_compile_duration_ms float NULL,
     avg_bind_duration_ms float NULL,
     total_bind_duration_ms AS
         (count_compiles * avg_bind_duration_ms),
-    last_bind_duration_ms bigint NULL,
+    last_bind_duration_ms float NULL,
     avg_bind_cpu_time_ms float NULL,
     total_bind_cpu_time_ms AS
         (count_compiles * avg_bind_cpu_time_ms),
-    last_bind_cpu_time_ms bigint NULL,
+    last_bind_cpu_time_ms float NULL,
     avg_optimize_duration_ms float NULL,
     total_optimize_duration_ms AS
         (count_compiles * avg_optimize_duration_ms),
-    last_optimize_duration_ms bigint NULL,
+    last_optimize_duration_ms float NULL,
     avg_optimize_cpu_time_ms float NULL,
     total_optimize_cpu_time_ms AS
         (count_compiles * avg_optimize_cpu_time_ms),
-    last_optimize_cpu_time_ms bigint NULL,
+    last_optimize_cpu_time_ms float NULL,
     avg_compile_memory_mb float NULL,
     total_compile_memory_mb AS
         (count_compiles * avg_compile_memory_mb),
-    last_compile_memory_mb bigint NULL,
-    max_compile_memory_mb bigint NULL,
-    is_clouddb_internal_query bit NULL
+    last_compile_memory_mb float NULL,
+    max_compile_memory_mb float NULL,
+    is_clouddb_internal_query bit NULL,
+    PRIMARY KEY CLUSTERED (database_id, query_id)
 );
 
 /*
@@ -46272,18 +51422,18 @@ CREATE TABLE
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL,
-    total_grant_mb bigint NULL,
-    last_grant_mb bigint NULL,
-    min_grant_mb bigint NULL,
-    max_grant_mb bigint NULL,
-    total_used_grant_mb bigint NULL,
-    last_used_grant_mb bigint NULL,
-    min_used_grant_mb bigint NULL,
-    max_used_grant_mb bigint NULL,
-    total_ideal_grant_mb bigint NULL,
-    last_ideal_grant_mb bigint NULL,
-    min_ideal_grant_mb bigint NULL,
-    max_ideal_grant_mb bigint NULL,
+    total_grant_mb float NULL,
+    last_grant_mb float NULL,
+    min_grant_mb float NULL,
+    max_grant_mb float NULL,
+    total_used_grant_mb float NULL,
+    last_used_grant_mb float NULL,
+    min_used_grant_mb float NULL,
+    max_used_grant_mb float NULL,
+    total_ideal_grant_mb float NULL,
+    last_ideal_grant_mb float NULL,
+    min_ideal_grant_mb float NULL,
+    max_ideal_grant_mb float NULL,
     total_reserved_threads bigint NULL,
     last_reserved_threads bigint NULL,
     min_reserved_threads bigint NULL,
@@ -46291,7 +51441,8 @@ CREATE TABLE
     total_used_threads bigint NULL,
     last_used_threads bigint NULL,
     min_used_threads bigint NULL,
-    max_used_threads bigint NULL
+    max_used_threads bigint NULL,
+    PRIMARY KEY CLUSTERED (database_id, query_text_id)
 );
 
 /*
@@ -46301,18 +51452,18 @@ CREATE TABLE
     #dm_exec_query_stats
 (
     statement_sql_handle varbinary(64) NOT NULL,
-    total_grant_mb bigint NULL,
-    last_grant_mb bigint NULL,
-    min_grant_mb bigint NULL,
-    max_grant_mb bigint NULL,
-    total_used_grant_mb bigint NULL,
-    last_used_grant_mb bigint NULL,
-    min_used_grant_mb bigint NULL,
-    max_used_grant_mb bigint NULL,
-    total_ideal_grant_mb bigint NULL,
-    last_ideal_grant_mb bigint NULL,
-    min_ideal_grant_mb bigint NULL,
-    max_ideal_grant_mb bigint NULL,
+    total_grant_mb float NULL,
+    last_grant_mb float NULL,
+    min_grant_mb float NULL,
+    max_grant_mb float NULL,
+    total_used_grant_mb float NULL,
+    last_used_grant_mb float NULL,
+    min_used_grant_mb float NULL,
+    max_used_grant_mb float NULL,
+    total_ideal_grant_mb float NULL,
+    last_ideal_grant_mb float NULL,
+    min_ideal_grant_mb float NULL,
+    max_ideal_grant_mb float NULL,
     total_reserved_threads bigint NULL,
     last_reserved_threads bigint NULL,
     min_reserved_threads bigint NULL,
@@ -46340,7 +51491,7 @@ CREATE TABLE
     executions_per_second AS
         ISNULL
         (
-            count_executions /
+            count_executions * 1. /
                 NULLIF
                 (
                     DATEDIFF
@@ -46354,48 +51505,48 @@ CREATE TABLE
             0
         ),
     avg_duration_ms float NULL,
-    last_duration_ms bigint NOT NULL,
-    min_duration_ms bigint NOT NULL,
-    max_duration_ms bigint NOT NULL,
+    last_duration_ms float NOT NULL,
+    min_duration_ms float NOT NULL,
+    max_duration_ms float NOT NULL,
     total_duration_ms AS
         (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
-    last_cpu_time_ms bigint NOT NULL,
-    min_cpu_time_ms bigint NOT NULL,
-    max_cpu_time_ms bigint NOT NULL,
+    last_cpu_time_ms float NOT NULL,
+    min_cpu_time_ms float NOT NULL,
+    max_cpu_time_ms float NOT NULL,
     total_cpu_time_ms AS
         (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
-    last_logical_io_reads_mb bigint NOT NULL,
-    min_logical_io_reads_mb bigint NOT NULL,
-    max_logical_io_reads_mb bigint NOT NULL,
+    last_logical_io_reads_mb float NOT NULL,
+    min_logical_io_reads_mb float NOT NULL,
+    max_logical_io_reads_mb float NOT NULL,
     total_logical_io_reads_mb AS
         (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
-    last_logical_io_writes_mb bigint NOT NULL,
-    min_logical_io_writes_mb bigint NOT NULL,
-    max_logical_io_writes_mb bigint NOT NULL,
+    last_logical_io_writes_mb float NOT NULL,
+    min_logical_io_writes_mb float NOT NULL,
+    max_logical_io_writes_mb float NOT NULL,
     total_logical_io_writes_mb AS
         (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
-    last_physical_io_reads_mb bigint NOT NULL,
-    min_physical_io_reads_mb bigint NOT NULL,
-    max_physical_io_reads_mb bigint NOT NULL,
+    last_physical_io_reads_mb float NOT NULL,
+    min_physical_io_reads_mb float NOT NULL,
+    max_physical_io_reads_mb float NOT NULL,
     total_physical_io_reads_mb AS
         (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
-    last_clr_time_ms bigint NOT NULL,
-    min_clr_time_ms bigint NOT NULL,
-    max_clr_time_ms bigint NOT NULL,
+    last_clr_time_ms float NOT NULL,
+    min_clr_time_ms float NOT NULL,
+    max_clr_time_ms float NOT NULL,
     total_clr_time_ms AS
         (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
     avg_query_max_used_memory_mb float NULL,
-    last_query_max_used_memory_mb bigint NOT NULL,
-    min_query_max_used_memory_mb bigint NOT NULL,
-    max_query_max_used_memory_mb bigint NOT NULL,
+    last_query_max_used_memory_mb float NOT NULL,
+    min_query_max_used_memory_mb float NOT NULL,
+    max_query_max_used_memory_mb float NOT NULL,
     total_query_max_used_memory_mb AS
         (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
@@ -46404,22 +51555,22 @@ CREATE TABLE
     max_rowcount bigint NOT NULL,
     total_rowcount AS
         (avg_rowcount * count_executions),
-    avg_num_physical_io_reads_mb float NULL,
-    last_num_physical_io_reads_mb bigint NULL,
-    min_num_physical_io_reads_mb bigint NULL,
-    max_num_physical_io_reads_mb bigint NULL,
-    total_num_physical_io_reads_mb AS
-        (avg_num_physical_io_reads_mb * count_executions),
+    avg_num_physical_io_reads float NULL,
+    last_num_physical_io_reads bigint NULL,
+    min_num_physical_io_reads bigint NULL,
+    max_num_physical_io_reads bigint NULL,
+    total_num_physical_io_reads AS
+        (avg_num_physical_io_reads * count_executions),
     avg_log_bytes_used_mb float NULL,
-    last_log_bytes_used_mb bigint NULL,
-    min_log_bytes_used_mb bigint NULL,
-    max_log_bytes_used_mb bigint NULL,
+    last_log_bytes_used_mb float NULL,
+    min_log_bytes_used_mb float NULL,
+    max_log_bytes_used_mb float NULL,
     total_log_bytes_used_mb AS
         (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
-    last_tempdb_space_used_mb bigint NULL,
-    min_tempdb_space_used_mb bigint NULL,
-    max_tempdb_space_used_mb bigint NULL,
+    last_tempdb_space_used_mb float NULL,
+    min_tempdb_space_used_mb float NULL,
+    max_tempdb_space_used_mb float NULL,
     total_tempdb_space_used_mb AS
         (avg_tempdb_space_used_mb * count_executions),
     from_regression_baseline varchar(3) NULL,
@@ -46688,7 +51839,7 @@ VALUES
     (150, 'regression', 'hash', 'query_hash_from_regression_checking', 'regression.query_hash', 1, 'regression_mode', 1, 0, NULL),
     /* Execution columns */
     (200, 'executions', 'count', 'count_executions', 'qsrs.count_executions', 0, NULL, NULL, 0, 'N0'),
-    (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N0'),
+    (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N2'),
     /* Hash totals - conditionally added */
     (215, 'executions', 'count_hash', 'count_executions_by_query_hash', 'qht.total_executions', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Duration metrics (group together avg, total, last, min, max) */
@@ -46760,14 +51911,14 @@ VALUES
     /* Hash totals for row counts */
     (1115, 'rowcount', 'total_hash', 'total_rowcount_by_query_hash', 'qht.total_rowcount', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* New metrics for newer versions */
-    /* Physical IO Reads (for newer versions) */
-    (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads_mb', 'qsrs.avg_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1210, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads_mb', 'qsrs.last_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1220, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1230, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1240, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads_mb', 'qsrs.total_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
+    /* Physical IO Reads (for newer versions). These count read operations, not pages, so there is no MB conversion */
+    (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads', 'qsrs.avg_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
+    (1210, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads', 'qsrs.last_num_physical_io_reads', 1, 'new', 1, 1, 'N0'),
+    (1220, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads', 'qsrs.min_num_physical_io_reads', 1, 'new', 1, 1, 'N0'),
+    (1230, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads', 'qsrs.max_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
+    (1240, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads', 'qsrs.total_num_physical_io_reads', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for new physical IO reads */
-    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
+    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Finish adding the remaining columns (log bytes and tempdb usage) */
     /* Log bytes used */
     (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -46797,7 +51948,18 @@ BEGIN
     VALUES
         /* 230, so just before avg_query_duration_ms. */
         (230, 'sort_order', 'query_hash', 'query_hash_from_hash_counting', 'hashes.query_hash', 0, NULL, NULL, 0, NULL),
-        (231, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0');
+        (231, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        /* Why the query hash has so many plans, counted over the window */
+        (232, 'sort_order', 'reasons', 'plan_count_reasons', 'hashes.plan_count_reasons', 0, NULL, NULL, 0, NULL),
+        (250, 'sort_order', 'plan_ids', 'plan_id_count_for_query_hash', 'hashes.plan_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (251, 'sort_order', 'query_ids', 'query_id_count_for_query_hash', 'hashes.query_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (252, 'sort_order', 'query_texts', 'query_text_id_count_for_query_hash', 'hashes.query_text_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (253, 'sort_order', 'batches', 'batch_sql_handle_count_for_query_hash', 'hashes.batch_sql_handle_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (254, 'sort_order', 'modules', 'object_id_count_for_query_hash', 'hashes.object_id_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (255, 'sort_order', 'compat_levels', 'compatibility_level_count_for_query_hash', 'hashes.compatibility_level_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (256, 'sort_order', 'contexts', 'context_settings_count_for_query_hash', 'hashes.context_settings_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (257, 'sort_order', 'context_diffs', 'context_settings_that_differ_for_query_hash', 'hashes.context_settings_that_differ_for_query_hash', 0, NULL, NULL, 0, NULL),
+        (258, 'sort_order', 'variants', 'variant_query_count_for_query_hash', 'hashes.variant_query_count_for_query_hash', 1, 'sql_2022_views', 1, 0, 'N0');
 END;
 
 /* Dynamic regression change column based on formatting and comparator */
@@ -46830,7 +51992,7 @@ BEGIN
         (240, 'sort_order', 'wait_time', 'total_wait_time_from_sort_order_ms', 'waits.total_query_wait_time_ms', 0, NULL, NULL, 0, 'N0');
 END;
 
-/* ROW_NUMBER window function for sorting */
+/* ROW_NUMBER window function for sorting. plan_id repeats across databases, so partition by both */
 INSERT INTO
     @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
 VALUES
@@ -46839,7 +52001,7 @@ VALUES
         'metadata',
         'n',
         'n',
-        'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY ' +
+        'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY ' +
         CASE WHEN @regression_mode = 1 THEN
              /* As seen when populating #regression_changes */
              CASE @regression_direction
@@ -47012,6 +52174,7 @@ DECLARE
     @database_id integer,
     @database_name_quoted sysname,
     @procedure_name_quoted nvarchar(1024),
+    @procedure_filter nvarchar(500),
     @collation sysname,
     @text_search_column nvarchar(200),
     @text_search_open nvarchar(10),
@@ -47020,7 +52183,6 @@ DECLARE
     @sql nvarchar(max),
     @isolation_level nvarchar(max),
     @parameters nvarchar(4000),
-    @plans_top bigint,
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(max),
@@ -47111,6 +52273,8 @@ BEGIN
     SELECT
         @log_database_name = ISNULL(@log_database_name, DB_NAME()),
         @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+        /* A NULL prefix makes every log table name NULL, and nothing gets logged */
+        @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'QuickieStore'),
         @log_retention_days =
             CASE
                 WHEN @log_retention_days < 0
@@ -47245,18 +52409,18 @@ BEGIN
                 query_hash_from_regression_checking binary(8) NULL,
                 change_in_average_for_query_hash_since_regression_time_period float NULL,
                 count_executions bigint NULL,
-                executions_per_second bigint NULL,
+                executions_per_second decimal(38,6) NULL,
                 count_executions_by_query_hash bigint NULL,
                 avg_duration_ms float NULL,
-                last_duration_ms bigint NULL,
-                min_duration_ms bigint NULL,
-                max_duration_ms bigint NULL,
+                last_duration_ms float NULL,
+                min_duration_ms float NULL,
+                max_duration_ms float NULL,
                 total_duration_ms float NULL,
                 total_duration_ms_by_query_hash float NULL,
                 avg_cpu_time_ms float NULL,
-                last_cpu_time_ms bigint NULL,
-                min_cpu_time_ms bigint NULL,
-                max_cpu_time_ms bigint NULL,
+                last_cpu_time_ms float NULL,
+                min_cpu_time_ms float NULL,
+                max_cpu_time_ms float NULL,
                 total_cpu_time_ms float NULL,
                 total_cpu_time_ms_by_query_hash float NULL,
                 avg_logical_io_reads_mb float NULL,
@@ -47298,12 +52462,12 @@ BEGIN
                 max_rowcount float NULL,
                 total_rowcount float NULL,
                 total_rowcount_by_query_hash float NULL,
-                avg_num_physical_io_reads_mb float NULL,
-                last_num_physical_io_reads_mb float NULL,
-                min_num_physical_io_reads_mb float NULL,
-                max_num_physical_io_reads_mb float NULL,
-                total_num_physical_io_reads_mb float NULL,
-                total_num_physical_io_reads_mb_by_query_hash float NULL,
+                avg_num_physical_io_reads float NULL,
+                last_num_physical_io_reads float NULL,
+                min_num_physical_io_reads float NULL,
+                max_num_physical_io_reads float NULL,
+                total_num_physical_io_reads float NULL,
+                total_num_physical_io_reads_by_query_hash float NULL,
                 avg_log_bytes_used_mb float NULL,
                 last_log_bytes_used_mb float NULL,
                 min_log_bytes_used_mb float NULL,
@@ -47318,10 +52482,102 @@ BEGIN
                 total_tempdb_space_used_mb_by_query_hash float NULL,
                 query_hash_from_hash_counting binary(8) NULL,
                 plan_hash_count_for_query_hash bigint NULL,
+                plan_count_reasons nvarchar(2000) NULL,
+                plan_id_count_for_query_hash bigint NULL,
+                query_id_count_for_query_hash bigint NULL,
+                query_text_id_count_for_query_hash bigint NULL,
+                batch_sql_handle_count_for_query_hash bigint NULL,
+                object_id_count_for_query_hash bigint NULL,
+                compatibility_level_count_for_query_hash bigint NULL,
+                context_settings_count_for_query_hash bigint NULL,
+                context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+                variant_query_count_for_query_hash bigint NULL,
                 total_wait_time_from_sort_order_ms bigint NULL,
                 context_settings nvarchar(256) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _RuntimeStats tables created before the
+    num_physical_io_reads columns lost their _mb suffix need the
+    new columns added, or the insert fails. The old _mb columns
+    stay, with the rows logged before
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_RuntimeStats''
+            AND   s.name = @schema_name
+            AND   c.name = N''avg_num_physical_io_reads''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_runtime_stats + N' ADD
+                avg_num_physical_io_reads float NULL,
+                last_num_physical_io_reads float NULL,
+                min_num_physical_io_reads float NULL,
+                max_num_physical_io_reads float NULL,
+                total_num_physical_io_reads float NULL,
+                total_num_physical_io_reads_by_query_hash float NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added num_physical_io_reads columns to %s for runtime stats logging.'', 0, 1, ''' + REPLACE(@log_table_runtime_stats, N'''', N'''''') + N''') WITH NOWAIT; END;
+        END';
+
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
+        @table_name sysname,
+        @debug bit',
+        @log_schema_name,
+        @log_table_name_prefix,
+        @debug;
+
+    /*
+    Upgrade path: _RuntimeStats tables created before 'plan count by hashes'
+    explained its plan counts need those columns, or the insert fails
+    */
+    SET @create_sql = N'
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+              ON c.object_id = t.object_id
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_RuntimeStats''
+            AND   s.name = @schema_name
+            AND   c.name = N''plan_count_reasons''
+        )
+        BEGIN
+            ALTER TABLE ' + @log_table_runtime_stats + N' ADD
+                plan_count_reasons nvarchar(2000) NULL,
+                plan_id_count_for_query_hash bigint NULL,
+                query_id_count_for_query_hash bigint NULL,
+                query_text_id_count_for_query_hash bigint NULL,
+                batch_sql_handle_count_for_query_hash bigint NULL,
+                object_id_count_for_query_hash bigint NULL,
+                compatibility_level_count_for_query_hash bigint NULL,
+                context_settings_count_for_query_hash bigint NULL,
+                context_settings_that_differ_for_query_hash nvarchar(256) NULL,
+                variant_query_count_for_query_hash bigint NULL;
+            IF @debug = 1 BEGIN RAISERROR(''Added plan count by hashes columns to %s for runtime stats logging.'', 0, 1, ''' + REPLACE(@log_table_runtime_stats, N'''', N'''''') + N''') WITH NOWAIT; END;
         END';
 
     EXECUTE sys.sp_executesql
@@ -47365,23 +52621,23 @@ BEGIN
                 count_compiles bigint NULL,
                 avg_compile_duration_ms float NULL,
                 total_compile_duration_ms float NULL,
-                last_compile_duration_ms bigint NULL,
+                last_compile_duration_ms float NULL,
                 avg_bind_duration_ms float NULL,
                 total_bind_duration_ms float NULL,
-                last_bind_duration_ms bigint NULL,
+                last_bind_duration_ms float NULL,
                 avg_bind_cpu_time_ms float NULL,
                 total_bind_cpu_time_ms float NULL,
-                last_bind_cpu_time_ms bigint NULL,
+                last_bind_cpu_time_ms float NULL,
                 avg_optimize_duration_ms float NULL,
                 total_optimize_duration_ms float NULL,
-                last_optimize_duration_ms bigint NULL,
+                last_optimize_duration_ms float NULL,
                 avg_optimize_cpu_time_ms float NULL,
                 total_optimize_cpu_time_ms float NULL,
-                last_optimize_cpu_time_ms bigint NULL,
+                last_optimize_cpu_time_ms float NULL,
                 avg_compile_memory_mb float NULL,
                 total_compile_memory_mb float NULL,
-                last_compile_memory_mb bigint NULL,
-                max_compile_memory_mb bigint NULL,
+                last_compile_memory_mb float NULL,
+                max_compile_memory_mb float NULL,
                 query_hash binary(8) NULL,
                 batch_sql_handle varbinary(64) NULL,
                 statement_sql_handle varbinary(64) NULL,
@@ -47422,18 +52678,18 @@ BEGIN
                 database_name sysname NULL,
                 query_id bigint NULL,
                 object_name nvarchar(257) NULL,
-                total_grant_mb bigint NULL,
-                last_grant_mb bigint NULL,
-                min_grant_mb bigint NULL,
-                max_grant_mb bigint NULL,
-                total_used_grant_mb bigint NULL,
-                last_used_grant_mb bigint NULL,
-                min_used_grant_mb bigint NULL,
-                max_used_grant_mb bigint NULL,
-                total_ideal_grant_mb bigint NULL,
-                last_ideal_grant_mb bigint NULL,
-                min_ideal_grant_mb bigint NULL,
-                max_ideal_grant_mb bigint NULL,
+                total_grant_mb float NULL,
+                last_grant_mb float NULL,
+                min_grant_mb float NULL,
+                max_grant_mb float NULL,
+                total_used_grant_mb float NULL,
+                last_used_grant_mb float NULL,
+                min_used_grant_mb float NULL,
+                max_used_grant_mb float NULL,
+                total_ideal_grant_mb float NULL,
+                last_ideal_grant_mb float NULL,
+                min_ideal_grant_mb float NULL,
+                max_ideal_grant_mb float NULL,
                 total_reserved_threads bigint NULL,
                 last_reserved_threads bigint NULL,
                 min_reserved_threads bigint NULL,
@@ -47478,15 +52734,15 @@ BEGIN
                 object_name nvarchar(257) NULL,
                 wait_category_desc nvarchar(60) NULL,
                 total_query_wait_time_ms bigint NULL,
-                total_query_duration_ms bigint NULL,
-                avg_query_wait_time_ms bigint NULL,
-                avg_query_duration_ms bigint NULL,
+                total_query_duration_ms float NULL,
+                avg_query_wait_time_ms float NULL,
+                avg_query_duration_ms float NULL,
                 last_query_wait_time_ms bigint NULL,
-                last_query_duration_ms bigint NULL,
+                last_query_duration_ms float NULL,
                 min_query_wait_time_ms bigint NULL,
-                min_query_duration_ms bigint NULL,
+                min_query_duration_ms float NULL,
                 max_query_wait_time_ms bigint NULL,
-                max_query_duration_ms bigint NULL,
+                max_query_duration_ms float NULL,
                 from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
@@ -47555,15 +52811,15 @@ BEGIN
                 database_name sysname NULL,
                 wait_category_desc nvarchar(60) NULL,
                 total_query_wait_time_ms bigint NULL,
-                total_query_duration_ms bigint NULL,
-                avg_query_wait_time_ms bigint NULL,
-                avg_query_duration_ms bigint NULL,
+                total_query_duration_ms float NULL,
+                avg_query_wait_time_ms float NULL,
+                avg_query_duration_ms float NULL,
                 last_query_wait_time_ms bigint NULL,
-                last_query_duration_ms bigint NULL,
+                last_query_duration_ms float NULL,
                 min_query_wait_time_ms bigint NULL,
-                min_query_duration_ms bigint NULL,
+                min_query_duration_ms float NULL,
                 max_query_wait_time_ms bigint NULL,
-                max_query_duration_ms bigint NULL,
+                max_query_duration_ms float NULL,
                 from_regression_baseline_time_period varchar(3) NULL,
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
@@ -48048,8 +53304,8 @@ BEGIN
             /* If we found any conflicts, raise an error */
             IF LEN(@conflict_list) > 0
             BEGIN
-                /* Remove trailing comma and space */
-                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+                /* Remove trailing comma and space. LEN does not count the trailing space, so take off one character */
+                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 1);
 
                 SET @error_msg =
                     N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' +
@@ -48361,6 +53617,9 @@ TRUNCATE TABLE
 TRUNCATE TABLE
     #query_hash_totals;
 
+TRUNCATE TABLE
+    #all_plan_ids;
+
 
 /*
 Some variable assignment, because why not?
@@ -48447,8 +53706,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @work_end_utc time(0),
           @regression_baseline_start_date datetimeoffset(7),
           @regression_baseline_end_date datetimeoffset(7)',
-    @plans_top =
-        9223372036854775807,
     @queries_top =
         9223372036854775807,
     @nc10 = NCHAR(10),
@@ -48480,6 +53737,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     produces an empty <x></x> node whose value is NULL, which otherwise flows
     into the NOT NULL primary-key id/hash/handle columns and aborts the whole
     procedure with Msg 515. The @include_databases splitter already guarded this.
+    Spaces separate values the same as commas, so '50 51' is two ids, not 5051,
+    and the empty node that '50, 51' leaves between them is dropped the same way.
     */
     @string_split_ints = N'
         SELECT DISTINCT
@@ -48512,12 +53771,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             (
                                 REPLACE
                                 (
-                                    @ids,
+                                    CONVERT(nvarchar(max), @ids),
                                     '','',
                                     ''</x><x>''
                                 ),
                                 '' '',
-                                ''''
+                                ''</x><x>''
                             ) +
                             ''</x>''
                         )
@@ -48558,12 +53817,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             (
                                 REPLACE
                                 (
-                                    @ids,
+                                    CONVERT(nvarchar(max), @ids),
                                     '','',
                                     ''</x><x>''
                                 ),
                                 '' '',
-                                ''''
+                                ''</x><x>''
                             ) +
                             ''</x>''
                         )
@@ -48693,6 +53952,8 @@ SELECT
         ISNULL(@only_queries_with_forced_plan_failures, 0),
     @escape_brackets =
         ISNULL(@escape_brackets, 0),
+    @escape_character =
+        ISNULL(@escape_character, N'\'),
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @query_type =
@@ -48718,6 +53979,10 @@ SELECT
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
+
+        a date with a non-zero offset already says which instant it means,
+        so it only gets switched to UTC. a date without an offset arrives
+        here as +00:00 and is read as server local time.
     */
     @start_date =
         CASE
@@ -48733,6 +53998,14 @@ SELECT
                         '19000101',
                         SYSUTCDATETIME()
                     )
+                )
+            WHEN @start_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @start_date_original) <> 0
+            THEN
+                SWITCHOFFSET
+                (
+                    @start_date_original,
+                    '+00:00'
                 )
             WHEN @start_date IS NOT NULL
             THEN
@@ -48762,6 +54035,14 @@ SELECT
                             SYSUTCDATETIME()
                         )
                     )
+                )
+            WHEN @end_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @end_date_original) <> 0
+            THEN
+                SWITCHOFFSET
+                (
+                    @end_date_original,
+                    '+00:00'
                 )
             WHEN @end_date IS NOT NULL
             THEN
@@ -48808,22 +54089,43 @@ IF @regression_mode = 1
 BEGIN
 /*
 We set both _date_original variables earlier.
+Offsets work the same way as for @start_date and @end_date.
 */
     SELECT
         @regression_baseline_start_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_start_date_original
-            ),
+            CASE
+                WHEN DATEPART(TZOFFSET, @regression_baseline_start_date_original) <> 0
+                THEN
+                    SWITCHOFFSET
+                    (
+                        @regression_baseline_start_date_original,
+                        '+00:00'
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        @utc_minutes_difference,
+                        @regression_baseline_start_date_original
+                    )
+            END,
         @regression_baseline_end_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_end_date_original
-            );
+            CASE
+                WHEN DATEPART(TZOFFSET, @regression_baseline_end_date_original) <> 0
+                THEN
+                    SWITCHOFFSET
+                    (
+                        @regression_baseline_end_date_original,
+                        '+00:00'
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        @utc_minutes_difference,
+                        @regression_baseline_end_date_original
+                    )
+            END;
 END;
 
 /*
@@ -48855,6 +54157,26 @@ BEGIN
 
     IF @get_all_databases = 1
     BEGIN
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Database does not exist'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -48974,6 +54296,26 @@ BEGIN
 
     IF @get_all_databases = 1
     BEGIN
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Query Store not enabled'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -49159,7 +54501,13 @@ OPTION(RECOMPILE);' + @nc10;
             @procedure_schema,
             @procedure_name;
 
-        IF ROWCOUNT_BIG() = 0
+        /*
+        With @get_all_databases = 1, a database without a match is
+        skipped by the procedure existence check below, the same as
+        an exact name, rather than ending the whole run
+        */
+        IF  ROWCOUNT_BIG() = 0
+        AND @get_all_databases = 0
         BEGIN
             RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_name, @procedure_schema) WITH NOWAIT;
             RETURN;
@@ -49330,6 +54678,26 @@ OPTION(RECOMPILE);' + @nc10;
 Check that you spelled everything correctly and you''re in the right database
 We will skip this database and continue',
                        10, 1, @procedure_name, @database_name) WITH NOWAIT;
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Procedure not in Query Store'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -49540,7 +54908,7 @@ BEGIN
    UPDATE
        @ColumnDefinitions
    SET
-       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
    WHERE metric_type = N'n';
 END;
 
@@ -49639,6 +55007,26 @@ BEGIN
     IF @get_all_databases = 1
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s, but you have requested them. We are skipping this database and continuing with any that remain.', 10, 1, @database_name_quoted) WITH NOWAIT;
+        /* Skipped databases are listed as skipped in the results footer, not as processed */
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = @database_name,
+            reason = 'Query Store wait stats not enabled'
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.database_name = @database_name
+        );
+
         FETCH NEXT
         FROM @database_cursor
         INTO @database_name;
@@ -49661,7 +55049,7 @@ BEGIN
         UPDATE
             @ColumnDefinitions
         SET
-            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.database_id, qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
         WHERE metric_type = N'n';
     END;
 END;
@@ -49873,6 +55261,7 @@ BEGIN
     (
         query_hash binary(8) NOT NULL,
         query_id bigint NOT NULL,
+        query_text_id bigint NOT NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_id)
     );
@@ -49882,6 +55271,7 @@ BEGIN
     (
         query_hash binary(8) NOT NULL,
         plan_id bigint NOT NULL,
+        last_execution_time datetimeoffset(7) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, plan_id)
     );
@@ -49893,6 +55283,14 @@ BEGIN
         object_id integer NOT NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, object_id)
+    );
+
+    CREATE TABLE
+        #hi_plans
+    (
+        query_hash binary(8) NOT NULL
+            PRIMARY KEY CLUSTERED,
+        query_plan nvarchar(max) NULL
     );
 
     CREATE TABLE
@@ -49958,15 +55356,17 @@ BEGIN
     BEGIN
         SELECT
             @include_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -50376,7 +55776,10 @@ OPTION(RECOMPILE);' + @nc10;
         WHERE igh.query_hash = qs.query_hash
     );
 
-    /*Step 2: Top N per metric (static SQL, temp tables only)*/
+    /*
+    Step 2: Top N per metric (static SQL, temp tables only).
+    query_hash breaks ties, so a rerun picks the same hashes at the cut.
+    */
     INSERT
         #hi_interesting WITH (TABLOCK)
     (
@@ -50396,7 +55799,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_cpu_ms DESC
+        ORDER BY qs.total_cpu_ms DESC, qs.query_hash
 
         UNION
 
@@ -50410,7 +55813,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_duration_ms DESC
+        ORDER BY qs.total_duration_ms DESC, qs.query_hash
 
         UNION
 
@@ -50424,7 +55827,22 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_physical_reads_mb DESC
+        ORDER BY qs.total_physical_reads_mb DESC, qs.query_hash
+
+        UNION
+
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        WHERE qs.total_writes_mb > 0
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
+        ORDER BY qs.total_writes_mb DESC, qs.query_hash
 
         UNION
 
@@ -50438,7 +55856,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_writes_mb DESC
+        ORDER BY qs.total_memory_mb DESC, qs.query_hash
 
         UNION
 
@@ -50452,21 +55870,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_memory_mb DESC
-
-        UNION
-
-        SELECT TOP (@top)
-            qs.query_hash
-        FROM #hi_query_stats AS qs
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #hi_eligible AS e
-            WHERE e.query_hash = qs.query_hash
-        )
-        ORDER BY qs.total_executions DESC
+        ORDER BY qs.total_executions DESC, qs.query_hash
 
         UNION
 
@@ -50481,7 +55885,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_tempdb_mb DESC
+        ORDER BY qs.total_tempdb_mb DESC, qs.query_hash
 
         UNION
 
@@ -50496,7 +55900,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_rows DESC
+        ORDER BY qs.total_rows DESC, qs.query_hash
     ) AS qs;
 
     /*Step 3: Score with PERCENT_RANK (static SQL, SELECT INTO)*/
@@ -50596,7 +56000,8 @@ OPTION(RECOMPILE);' + @nc10;
         @sql += N'
 SELECT DISTINCT
     qsq.query_hash,
-    qsq.query_id
+    qsq.query_id,
+    qsq.query_text_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN #hi_interesting AS i
     ON qsq.query_hash = i.query_hash
@@ -50612,7 +56017,8 @@ OPTION(RECOMPILE);' + @nc10;
         #hi_id_staging_queries WITH (TABLOCK)
     (
         query_hash,
-        query_id
+        query_id,
+        query_text_id
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -50634,7 +56040,14 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 3c: Representative query text per query_hash*/
+    /*
+    Step 3c: Representative query text per query_hash.
+    query_text_id comes from the staging table, so this does not read
+    sys.query_store_query again. The hash join reads each view once:
+    nested loops read the in-memory part of the plan and query views
+    again for every staged row, about 14 ms each, 10 seconds in all
+    on a Query Store with 16,000 queries.
+    */
     SELECT
         @current_table = 'inserting #hi_representative_text',
         @sql = @isolation_level;
@@ -50659,16 +56072,14 @@ FROM
 (
     SELECT
         sq.query_hash,
-        qsq.query_text_id,
+        sq.query_text_id,
         rn =
             ROW_NUMBER() OVER
             (
                 PARTITION BY sq.query_hash
-                ORDER BY SUM(qsrs.count_executions) DESC
+                ORDER BY SUM(qsrs.count_executions) DESC, sq.query_text_id
             )
     FROM #hi_id_staging_queries AS sq
-    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-        ON qsq.query_id = sq.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
         ON qsp.query_id = sq.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
@@ -50681,12 +56092,12 @@ FROM
     SELECT
         @sql += N'    GROUP BY
         sq.query_hash,
-        qsq.query_text_id
+        sq.query_text_id
 ) AS ranked
 JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     ON qsqt.query_text_id = ranked.query_text_id
 WHERE ranked.rn = 1
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -50750,6 +56161,10 @@ OPTION(RECOMPILE);' + @nc10;
     DATEPART(WEEKDAY, ...) IN (1, 7) only meant Sat+Sun under @@DATEFIRST = 7;
     on a DATEFIRST = 1 server it mislabeled Monday as Weekend and Saturday as
     a weekday. The SELECT and GROUP BY expressions below must stay identical.
+
+    The hash join reads sys.query_store_plan once. With a small @top or
+    a short window, nested loops read its in-memory part again for every
+    staged query, about 14 ms each.
     */
     SELECT
         @sql += N'
@@ -50811,7 +56226,7 @@ GROUP BY
             THEN N''Business''
         ELSE N''Off-hours''
     END
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -50932,7 +56347,7 @@ SELECT
         ROW_NUMBER() OVER
         (
             PARTITION BY qsq.query_hash
-            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC, qsws.wait_category_desc
         )
 FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -51011,7 +56426,7 @@ OPTION(RECOMPILE);' + @nc10;
                         WHERE ws2.query_hash = ws.query_hash
                         AND   ws2.rn <= 3
                         ORDER BY
-                            ws2.total_wait_ms DESC
+                            ws2.rn
                         FOR
                             XML PATH(N''),
                             TYPE
@@ -51036,7 +56451,8 @@ OPTION(RECOMPILE);' + @nc10;
         @sql += N'
 SELECT DISTINCT
     qsq.query_hash,
-    qsp.plan_id
+    qsp.plan_id,
+    qsp.last_execution_time
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     ON qsq.query_id = qsp.query_id
@@ -51054,7 +56470,8 @@ OPTION(RECOMPILE);' + @nc10;
         #hi_id_staging_plans WITH (TABLOCK)
     (
         query_hash,
-        plan_id
+        plan_id,
+        last_execution_time
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -51915,7 +57332,95 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 7: Final output with plans (dynamic SQL for OUTER APPLY)*/
+    /*
+    Step 6b: The latest plan per output query hash, read in one pass.
+    The latest plan_id comes from the staging table, so only the
+    picked plans are read and decompressed. An apply per output row in
+    the final select sorted every staged plan of the hash with its
+    plan text to find the latest one, and could read the in-memory
+    part of sys.query_store_plan again for every row. The final select
+    cannot take OPTION(HASH JOIN) because of its query_sql_text subquery.
+    */
+    SELECT
+        @current_table = 'inserting #hi_plans',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    lp.query_hash,
+    qsp.query_plan
+FROM
+(
+    SELECT
+        sp.query_hash,
+        sp.plan_id,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    sp.query_hash
+                ORDER BY
+                    sp.last_execution_time DESC,
+                    sp.plan_id DESC
+            )
+    FROM #hi_id_staging_plans AS sp
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #hi_output AS o
+        WHERE o.query_hash = sp.query_hash
+    )
+) AS lp
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = lp.plan_id
+WHERE lp.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_plans WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 7: Final output with plans*/
     SELECT
         @current_table = 'selecting high impact results',
         @sql = @isolation_level;
@@ -52003,31 +57508,8 @@ SELECT
     o.volatile_metrics,
     o.resource_metrics
 FROM #hi_output AS o
-OUTER APPLY
-(
-    SELECT
-        qp0.*
-    FROM
-    (
-        SELECT
-            n = ROW_NUMBER() OVER
-                (
-                    ORDER BY
-                        qsp.last_execution_time DESC
-                ),
-            qsp.query_plan
-        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #hi_id_staging_plans AS sp
-            WHERE qsp.plan_id = sp.plan_id
-            AND   o.query_hash = sp.query_hash
-        )
-    ) AS qp0
-    WHERE qp0.n = 1
-) AS qp
+LEFT JOIN #hi_plans AS qp
+  ON qp.query_hash = o.query_hash
 ' +
     CASE
         WHEN @primary_window IS NULL
@@ -52049,7 +57531,8 @@ OUTER APPLY
         WHEN 'memory'         THEN N'o.memory_share'
         WHEN 'executions'     THEN N'o.executions_share'
         ELSE N'o.cpu_share'
-    END + N' DESC
+    END + N' DESC,
+    o.query_hash
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -52188,6 +57671,8 @@ BEGIN
         query_plan_hash binary(8) NOT NULL,
         query_id bigint NOT NULL,
         plan_id bigint NOT NULL,
+        query_text_id bigint NOT NULL,
+        last_execution_time datetimeoffset(7) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash, query_id, plan_id)
     );
@@ -52199,6 +57684,16 @@ BEGIN
         query_plan_hash binary(8) NOT NULL,
         query_sql_text nvarchar(max) NULL,
         rn bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_plans
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_plan nvarchar(max) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash)
     );
@@ -52337,25 +57832,29 @@ BEGIN
     BEGIN
         SELECT
             @include_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @include_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_plan_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N''),
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_plan_hashes)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -53052,7 +58551,9 @@ SELECT DISTINCT
     qsq.query_hash,
     qsp.query_plan_hash,
     qsp.query_id,
-    qsp.plan_id
+    qsp.plan_id,
+    qsq.query_text_id,
+    qsp.last_execution_time
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     ON qsq.query_id = qsp.query_id
@@ -53083,7 +58584,9 @@ OPTION(RECOMPILE);' + @nc10;
         query_hash,
         query_plan_hash,
         query_id,
-        plan_id
+        plan_id,
+        query_text_id,
+        last_execution_time
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -53105,7 +58608,12 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 4b: Representative query text per shape (the most-executed query_id in the window)*/
+    /*
+    Step 4b: Representative query text per shape (the most-executed query_id in the window).
+    query_text_id comes from the staging table, so this does not read
+    sys.query_store_query, whose in-memory part nested loops read again
+    for every staged row, about 14 ms each.
+    */
     SELECT
         @current_table = 'inserting #ps_representative_text',
         @sql = @isolation_level;
@@ -53132,7 +58640,7 @@ FROM
     SELECT
         s.query_hash,
         s.query_plan_hash,
-        qsq.query_text_id,
+        s.query_text_id,
         rn =
             ROW_NUMBER() OVER
             (
@@ -53140,11 +58648,10 @@ FROM
                     s.query_hash,
                     s.query_plan_hash
                 ORDER BY
-                    SUM(qsrs.count_executions) DESC
+                    SUM(qsrs.count_executions) DESC,
+                    s.query_text_id
             )
     FROM #ps_id_staging AS s
-    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-        ON qsq.query_id = s.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
         ON qsrs.plan_id = s.plan_id
     WHERE EXISTS
@@ -53158,7 +58665,7 @@ FROM
     GROUP BY
         s.query_hash,
         s.query_plan_hash,
-        qsq.query_text_id
+        s.query_text_id
 ) AS ranked
 JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     ON qsqt.query_text_id = ranked.query_text_id
@@ -53268,7 +58775,8 @@ SELECT
                 s.query_hash,
                 s.query_plan_hash
             ORDER BY
-                SUM(qsws.total_query_wait_time_ms) DESC
+                SUM(qsws.total_query_wait_time_ms) DESC,
+                qsws.wait_category_desc
         )
 FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 JOIN #ps_id_staging AS s
@@ -53347,7 +58855,7 @@ OPTION(RECOMPILE);' + @nc10;
                         AND   ws2.query_plan_hash = ws.query_plan_hash
                         AND   ws2.rn <= 3
                         ORDER BY
-                            ws2.total_wait_ms DESC
+                            ws2.rn
                         FOR
                             XML PATH(N''),
                             TYPE
@@ -53916,7 +59424,99 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 7: Final output with plans (dynamic SQL for OUTER APPLY)*/
+    /*
+    Step 6b: The latest plan per output shape, read in one pass.
+    The latest plan_id comes from the staging table, so only the
+    picked plans are read and decompressed. An apply per output row in
+    the final select read the in-memory part of sys.query_store_plan
+    again for every row, about 14 ms each, and the final select cannot
+    take OPTION(HASH JOIN) because of its query_sql_text subquery.
+    */
+    SELECT
+        @current_table = 'inserting #ps_plans',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    lp.query_hash,
+    lp.query_plan_hash,
+    qsp.query_plan
+FROM
+(
+    SELECT
+        s.query_hash,
+        s.query_plan_hash,
+        s.plan_id,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    s.query_hash,
+                    s.query_plan_hash
+                ORDER BY
+                    s.last_execution_time DESC,
+                    s.plan_id DESC
+            )
+    FROM #ps_id_staging AS s
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ps_output AS o
+        WHERE o.query_hash = s.query_hash
+        AND   o.query_plan_hash = s.query_plan_hash
+    )
+) AS lp
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = lp.plan_id
+WHERE lp.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_plans WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        query_plan
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 7: Final output with plans*/
     SELECT
         @current_table = 'selecting parameter sensitivity results',
         @sql = @isolation_level;
@@ -54009,32 +59609,9 @@ SELECT
         END + N',
     o.variance_metrics
 FROM #ps_output AS o
-OUTER APPLY
-(
-    SELECT
-        qp0.*
-    FROM
-    (
-        SELECT
-            n = ROW_NUMBER() OVER
-                (
-                    ORDER BY
-                        qsp.last_execution_time DESC
-                ),
-            qsp.query_plan
-        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #ps_id_staging AS s
-            WHERE qsp.plan_id = s.plan_id
-            AND   o.query_hash = s.query_hash
-            AND   o.query_plan_hash = s.query_plan_hash
-        )
-    ) AS qp0
-    WHERE qp0.n = 1
-) AS qp
+LEFT JOIN #ps_plans AS qp
+  ON  qp.query_hash = o.query_hash
+  AND qp.query_plan_hash = o.query_plan_hash
 ORDER BY
     o.sort_value DESC,
     o.query_hash,
@@ -54242,36 +59819,58 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    Parameter Sensitive Plan variants are queries of their own, with
+    object_id 0. Their runtime stats are on the variant plans, so
+    the variants of the procedure's queries come along here.
+
+    The variants are a second branch of a UNION ALL rather than an
+    apply per query, so the hash join can read sys.query_store_plan
+    once. Nested loops read its in-memory part again for every query
+    of the procedure, about 14 ms each.
+    */
+    SELECT
+        @procedure_filter =
+            CASE
+                WHEN CHARINDEX(N'%', @procedure_name) = 0
+                THEN N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)'
+                ELSE N'EXISTS
+    (
+        SELECT
+            1/0
+        FROM #procedure_object_ids AS poi
+        WHERE poi.[object_id] = qsq.[object_id]
+    )'
+            END;
+
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-   ON qsq.query_id = qsp.query_id
-WHERE ';
-
-IF CHARINDEX(N'%', @procedure_name) = 0
-BEGIN
-    SELECT
-        @sql += N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)';
-END;
-
-IF CHARINDEX(N'%', @procedure_name) > 0
-BEGIN
-    SELECT
-        @sql += N'EXISTS
+FROM
 (
-     SELECT
-         1/0
-    FROM #procedure_object_ids AS poi
-    WHERE poi.[object_id] = qsq.[object_id]
-)';
-END;
+    SELECT
+        query_id = qsq.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE ' + @procedure_filter +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+
+    UNION ALL
 
     SELECT
-        @sql += N'
-OPTION(RECOMPILE);' + @nc10;
+        query_id = qsqv.query_variant_query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+      ON qsqv.parent_query_id = qsq.query_id
+    WHERE ' + @procedure_filter
+        ELSE N''
+    END + N'
+) AS q
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.query_id = q.query_id
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -54339,21 +59938,39 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    Parameter Sensitive Plan variants have object_id 0, so they
+    take the object_id of their parent query.
+
+    The hash join reads each view once. Nested loops read the
+    in-memory part of sys.query_store_plan again for every module
+    query, about 14 ms each.
+    */
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-  ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id ' +
+  ON qsq.query_id = qsp.query_id' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id
+LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+  ON qsq_parent.query_id = qsqv.parent_query_id
+WHERE ISNULL(qsq_parent.object_id, qsq.object_id) '
+        ELSE N'
+WHERE qsq.object_id '
+    END +
 CASE
     WHEN LOWER(@query_type) LIKE 'a%'
     THEN N'= 0'
     ELSE N'<> 0'
 END
 + N'
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -54451,10 +60068,11 @@ BEGIN
         /* Clean parameter value */
         SELECT
             @param_value =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@param_value)),
-                CHAR(10), N''), CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
+                CHAR(10), N' '), CHAR(13), N' '),
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         /* Log current operation if debugging */
         IF @debug = 1
@@ -54508,6 +60126,20 @@ BEGIN
             PRINT @dynamic_sql;
         END;
 
+        /* The error handler prints @sql, so point it at this statement and the list it splits */
+        SELECT
+            @sql =
+                N'/* @' + @param_name + N' = ' + @param_value + N' */' +
+                @split_sql;
+
+        /* Id lists hold numbers only, so name the bad value here rather than fail a conversion later */
+        IF  @data_type = N'bigint'
+        AND @param_value LIKE N'%[^0-9, ]%'
+        BEGIN
+            RAISERROR('@%s takes numbers separated by commas or spaces. You supplied: %s', 11, 1, @param_name, @param_value) WITH NOWAIT;
+            RETURN;
+        END;
+
         EXECUTE sys.sp_executesql
             @dynamic_sql,
           N'@split_sql nvarchar(max),
@@ -54538,7 +60170,12 @@ BEGIN
             SELECT
                 @current_table = 'inserting #include_plan_ids for ' + @param_name;
 
-            /* Build appropriate SQL based on parameter type */
+            /*
+            Build appropriate SQL based on parameter type.
+            The hash joins read each Query Store view once. Nested loops
+            read the in-memory part of a view again for every id in the
+            list, about 14 ms each.
+            */
             IF @param_name = 'include_query_ids'
             OR @param_name = 'ignore_query_ids'
             BEGIN
@@ -54561,7 +60198,7 @@ BEGIN
                               N'_query_ids AS iqi
                           WHERE iqi.query_id = qsp.query_id
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -54594,7 +60231,7 @@ BEGIN
                                     WHERE iqh.query_hash = qsq.query_hash
                                 )
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -54619,7 +60256,7 @@ BEGIN
                               END + N'_plan_hashes AS iph
                           WHERE iph.plan_hash = qsp.query_plan_hash
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -54658,7 +60295,7 @@ BEGIN
                                         )
                               )
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
 
             /* Process secondary sql if defined */
@@ -54678,6 +60315,9 @@ BEGIN
                 BEGIN
                     PRINT @secondary_sql;
                 END;
+
+                SELECT
+                    @sql = @secondary_sql;
 
                 /* Insert into the correct target table based on include/ignore */
                 IF @is_include = 1
@@ -55108,9 +60748,10 @@ BEGIN
         @text_search_close =
             N' COLLATE SQL_Latin1_General_CP1_CI_AS) COLLATE Latin1_General_100_BIN2' +
             CASE
+                /* A single quote as the escape character has to be doubled inside the literal */
                 WHEN @escape_brackets = 1
                 THEN N' ESCAPE ''' +
-                     UPPER(@escape_character COLLATE SQL_Latin1_General_CP1_CI_AS) +
+                     REPLACE(UPPER(@escape_character COLLATE SQL_Latin1_General_CP1_CI_AS), N'''', N'''''') +
                      N''''
                 ELSE N''
             END;
@@ -55150,15 +60791,17 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character. When it is [, ] or _ the doubling already escapes that character, so it is not escaped again */
     IF @escape_brackets = 1
     BEGIN
         SELECT
             @query_text_search =
-                REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search,
-                N'[', @escape_character + N'['),
-                N']', @escape_character + N']'),
-                N'_', @escape_character + N'_');
+                @escape_character, @escape_character + @escape_character),
+                N'[', CASE WHEN @escape_character = N'[' THEN N'[' ELSE @escape_character + N'[' END),
+                N']', CASE WHEN @escape_character = N']' THEN N']' ELSE @escape_character + N']' END),
+                N'_', CASE WHEN @escape_character = N'_' THEN N'_' ELSE @escape_character + N'_' END);
     END;
 
     SELECT
@@ -55299,15 +60942,17 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    /* The escape character itself is doubled first, or LIKE reads it as escaping the next character. When it is [, ] or _ the doubling already escapes that character, so it is not escaped again */
     IF @escape_brackets = 1
     BEGIN
         SELECT
             @query_text_search_not =
-                REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(
                     @query_text_search_not,
-                N'[', @escape_character + N'['),
-                N']', @escape_character + N']'),
-                N'_', @escape_character + N'_');
+                @escape_character, @escape_character + @escape_character),
+                N'[', CASE WHEN @escape_character = N'[' THEN N'[' ELSE @escape_character + N'[' END),
+                N']', CASE WHEN @escape_character = N']' THEN N']' ELSE @escape_character + N']' END),
+                N'_', CASE WHEN @escape_character = N'_' THEN N'_' ELSE @escape_character + N'_' END);
     END;
 
     SELECT
@@ -55434,18 +61079,22 @@ BEGIN
             SET STATISTICS XML ON;
         END;
 
+        /*
+        No TOP here: this is a filter, and @top applies after all of
+        the filters. A TOP here kept only the plans with the most of
+        this wait, so other filters could leave nothing behind.
+        */
         SELECT
             @sql += N'
-SELECT TOP (@top)
+SELECT
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 /*
 Restricting waits to the runtime stats rows the date range
 qualifies keeps the filter from matching queries whose waits
-of this category happened entirely outside of it, and keeps
-the TOP ranked by in-range wait totals rather than
-all-history ones. Matches the date semantics of the main
-where clause and the wait sort order joins.
+of this category happened entirely outside of it. Matches the
+date semantics of the main where clause and the wait sort
+order joins.
 */
 JOIN  ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
   ON  qsws.plan_id = qsrs.plan_id
@@ -55477,9 +61126,7 @@ GROUP BY
     qsws.plan_id
 HAVING
     SUM(qsws.avg_query_wait_time_ms) > 0
-ORDER BY
-    SUM(qsws.avg_query_wait_time_ms) DESC
-OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+OPTION(RECOMPILE);' + @nc10;
     END;
 
     IF @debug = 1
@@ -55497,10 +61144,8 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@top bigint,
-        @start_date datetimeoffset(7),
+      N'@start_date datetimeoffset(7),
         @end_date datetimeoffset(7)',
-        @top,
         @start_date,
         @end_date;
 
@@ -55550,29 +61195,47 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
+/*
+This matches the maintenance patterns directly, under a binary
+collation on upper-cased text, the same way the text search does.
+Nine NOT LIKEs on every query text under the column's linguistic
+collation took most of the run time of a default run on a big
+Query Store.
+
+The patterns that only look at the start of the text test the
+first 40 characters, which is not a max type. Every LIKE against
+the upper-cased nvarchar(max) text costs about as much as the
+upper-casing itself, so only the two patterns that can match past
+the start of the text look at all of it.
+*/
 SELECT
     @sql += N'
 SELECT DISTINCT
    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE NOT EXISTS
-      (
-          SELECT
-             1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-            ON qsqt.query_text_id = qsq.query_text_id
-          WHERE qsq.query_id = qsp.query_id
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER TABLE%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''%SELECT StatMan%''
-          AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
-          AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
-          AND   qsqt.query_sql_text NOT LIKE N''WAITFOR%''
-      )
+FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text_start =
+            UPPER(CONVERT(nvarchar(40), qsqt.query_sql_text)) COLLATE Latin1_General_100_BIN2
+) AS u
+WHERE u.query_sql_text_start LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_start LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_start LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''DBCC%''
+OR    u.query_sql_text_start LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_start LIKE N''WAITFOR%''
+OR
+(
+      u.query_sql_text_start LIKE N''CREATE%''
+  AND UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''CREATE%INDEX%''
+)
+OR    UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''%SELECT STATMAN%''
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -55637,6 +61300,11 @@ This is similar to the sort-helping tables that you are
 about to see, but easier because we do not need to return or sort
 by the execution count.
 We just need to know that these plans have enough executions.
+
+The rows are summed per plan first, so the window sum per query
+runs over one row per plan instead of one row per interval, and
+query_id comes from sys.query_store_plan, which has it, instead of
+a join to sys.query_store_query.
 */
 IF @execution_count > 0
 BEGIN
@@ -55656,26 +61324,27 @@ BEGIN
 
     SELECT
         @sql += N'
-    SELECT DISTINCT
+    SELECT
         unfiltered_execution_counts.plan_id
     FROM
     (
        SELECT
            qsp.plan_id,
            total_executions_for_query_of_plan =
-               SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_id)
-       FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-       JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-         ON qsq.query_id = qsp.query_id
+               SUM(SUM(qsrs.count_executions)) OVER (PARTITION BY qsp.query_id)
+       FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
        JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
          ON qsp.plan_id = qsrs.plan_id
        WHERE 1 = 1
        ' + @where_clause
          + N'
+       GROUP BY
+           qsp.query_id,
+           qsp.plan_id
     ) AS unfiltered_execution_counts
     WHERE
         unfiltered_execution_counts.total_executions_for_query_of_plan >= @execution_count
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -55855,63 +61524,88 @@ BEGIN
 
     SELECT
     /*
-    This sort order is useless if we don't show the
-    ties, so only DENSE_RANK() makes sense to use.
-    This is why this is not SELECT TOP.
+    One row per query hash: the top @top query hashes by how many
+    plan hashes they have, each with one representative plan. That
+    is the plan with the most executions in the window, then the most
+    recently run one, then the highest plan_id. Returning every plan of
+    each query hash made a hash with tens of thousands of query_ids
+    bring all of their plans along, when the count is the point.
     */
         @sql += N'
     SELECT
         @database_id,
-        ranked_plans.plan_id,
-        ranked_plans.query_hash,
-        ranked_plans.plan_hash_count_for_query_hash
+        hashes.plan_id,
+        hashes.query_hash,
+        hashes.plan_hash_count_for_query_hash
     FROM
     (
         SELECT
-            QueryHashesWithIds.plan_id,
-            QueryHashesWithCounts.query_hash,
-            QueryHashesWithCounts.plan_hash_count_for_query_hash,
+            plans.plan_id,
+            plans.query_hash,
+            plans.plan_hash_count_for_query_hash,
             ranking =
                 DENSE_RANK() OVER
                 (
                     ORDER BY
-                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC,
-                        QueryHashesWithCounts.query_hash DESC
+                        plans.plan_hash_count_for_query_hash DESC,
+                        plans.query_hash DESC
                 )
         FROM
         (
-           SELECT
-               qsq.query_hash,
-               plan_hash_count_for_query_hash =
-                   COUNT_BIG(DISTINCT qsp.query_plan_hash)
-           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-             ON qsq.query_id = qsp.query_id
-           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-             ON qsp.plan_id = qsrs.plan_id
-           WHERE 1 = 1
-           ' + @where_clause
-             + N'
-           GROUP
-               BY qsq.query_hash
-        ) AS QueryHashesWithCounts
-        JOIN
-        (
-           SELECT DISTINCT
-               qsq.query_hash,
-               qsp.plan_id
-           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
-           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-             ON qsp.plan_id = qsrs.plan_id
-            WHERE 1 = 1
-           ' + @where_clause
-             + N'
-        ) AS QueryHashesWithIds
-          ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
-    ) AS ranked_plans
-    WHERE ranked_plans.ranking <= @top
+            SELECT
+                plan_hashes.plan_id,
+                plan_hashes.query_hash,
+                plan_hash_count_for_query_hash =
+                    MAX(plan_hashes.plan_hash_number) OVER
+                    (
+                        PARTITION BY
+                            plan_hashes.query_hash
+                    ),
+                plan_rank =
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            plan_hashes.query_hash
+                        ORDER BY
+                            plan_hashes.count_executions DESC,
+                            plan_hashes.last_execution_time DESC,
+                            plan_hashes.plan_id DESC
+                    )
+            FROM
+            (
+                SELECT
+                    qsp.plan_id,
+                    qsq.query_hash,
+                    count_executions =
+                        SUM(qsrs.count_executions),
+                    last_execution_time =
+                        MAX(qsrs.last_execution_time),
+                    /* The highest number per query hash is its count of distinct plan hashes */
+                    plan_hash_number =
+                        DENSE_RANK() OVER
+                        (
+                            PARTITION BY
+                                qsq.query_hash
+                            ORDER BY
+                                qsp.query_plan_hash
+                        )
+                FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+                  ON qsq.query_id = qsp.query_id
+                JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                  ON qsp.plan_id = qsrs.plan_id
+                WHERE 1 = 1
+                ' + @where_clause
+                  + N'
+                GROUP BY
+                    qsq.query_hash,
+                    qsp.query_plan_hash,
+                    qsp.plan_id
+            ) AS plan_hashes
+        ) AS plans
+        WHERE plans.plan_rank = 1
+    ) AS hashes
+    WHERE hashes.ranking <= @top
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -55962,6 +61656,349 @@ BEGIN
             @sql,
             @current_table;
     END;
+
+    /*
+    Counts that show why each of those query hashes has so many plans,
+    over every plan of the query hash that ran in the window.
+    The hash join reads each view once. With few query hashes, nested
+    loops read the in-memory parts of sys.query_store_query and
+    sys.query_store_plan again for every query of the hashes, and a
+    literal-text hash can have thousands of queries.
+    */
+    SELECT
+        @current_table = 'updating #plan_ids_with_query_hashes plan counts',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    UPDATE
+        hashes
+    SET
+        hashes.plan_id_count_for_query_hash = counts.plan_id_count,
+        hashes.query_id_count_for_query_hash = counts.query_id_count,
+        hashes.query_text_id_count_for_query_hash = counts.query_text_id_count,
+        hashes.batch_sql_handle_count_for_query_hash = counts.batch_sql_handle_count,
+        hashes.object_id_count_for_query_hash = counts.object_id_count,
+        hashes.compatibility_level_count_for_query_hash = counts.compatibility_level_count,
+        hashes.context_settings_count_for_query_hash = counts.context_settings_count,
+        hashes.context_settings_that_differ_for_query_hash = counts.context_settings_that_differ,
+        hashes.variant_query_count_for_query_hash = counts.variant_query_count
+    FROM #plan_ids_with_query_hashes AS hashes
+    JOIN
+    (
+        SELECT
+            p.query_hash,
+            plan_id_count =
+                COUNT_BIG(*),
+            query_id_count =
+                COUNT_BIG(DISTINCT p.query_id),
+            query_text_id_count =
+                COUNT_BIG(DISTINCT p.query_text_id),
+            /* Subtracting the flag takes the stand-in value back out, see below */
+            batch_sql_handle_count =
+                COUNT_BIG(DISTINCT p.batch_sql_handle) -
+                MAX(p.no_batch_sql_handle),
+            object_id_count =
+                COUNT_BIG(DISTINCT p.object_id) -
+                MAX(p.is_ad_hoc),
+            compatibility_level_count =
+                COUNT_BIG(DISTINCT p.compatibility_level),
+            context_settings_count =
+                COUNT_BIG(DISTINCT p.context_settings_id),
+            /* A setting differs when its lowest and highest values differ */
+            context_settings_that_differ =
+                STUFF
+                (
+                    CASE
+                        WHEN MIN(p.set_options & 1) < MAX(p.set_options & 1)
+                        THEN N'', ANSI_PADDING''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 8) < MAX(p.set_options & 8)
+                        THEN N'', CONCAT_NULL_YIELDS_NULL''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 16) < MAX(p.set_options & 16)
+                        THEN N'', ANSI_WARNINGS''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 32) < MAX(p.set_options & 32)
+                        THEN N'', ANSI_NULLS''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 64) < MAX(p.set_options & 64)
+                        THEN N'', QUOTED_IDENTIFIER''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 4096) < MAX(p.set_options & 4096)
+                        THEN N'', ARITH_ABORT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.set_options & 8192) < MAX(p.set_options & 8192)
+                        THEN N'', NUMERIC_ROUNDABORT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.language_id) < MAX(p.language_id)
+                        THEN N'', LANGUAGE''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.date_format) < MAX(p.date_format)
+                        THEN N'', DATEFORMAT''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.date_first) < MAX(p.date_first)
+                        THEN N'', DATEFIRST''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN MIN(p.default_schema_id) < MAX(p.default_schema_id)
+                        THEN N'', default schema''
+                        ELSE N''''
+                    END,
+                    1,
+                    2,
+                    N''''
+                ),
+            variant_query_count =' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N'
+                COUNT_BIG(DISTINCT p.variant_query_id) -
+                MAX(p.not_a_variant)'
+                ELSE N'
+                CONVERT(bigint, NULL)'
+            END + N'
+        FROM
+        (
+            /*
+            One row per plan of these query hashes that ran in the window.
+            0x and 0 stand in for NULL and for ad hoc, so no aggregate above
+            drops a NULL and prints a warning. No real batch_sql_handle,
+            module, or query_id has those values.
+            */
+            SELECT
+                qsq.query_hash,
+                qsq.query_id,
+                qsq.query_text_id,
+                batch_sql_handle =
+                    ISNULL(qsq.batch_sql_handle, 0x),
+                no_batch_sql_handle =
+                    CASE
+                        WHEN qsq.batch_sql_handle IS NULL
+                        THEN 1
+                        ELSE 0
+                    END,
+                object_id =
+                    ISNULL(qsq.object_id, 0),
+                is_ad_hoc =
+                    CASE
+                        WHEN ISNULL(qsq.object_id, 0) = 0
+                        THEN 1
+                        ELSE 0
+                    END,
+                qsp.compatibility_level,
+                qsq.context_settings_id,
+                set_options =
+                    CONVERT(integer, ISNULL(qcs.set_options, 0x)),
+                qcs.language_id,
+                qcs.date_format,
+                qcs.date_first,
+                qcs.default_schema_id' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N',
+                variant_query_id =
+                    ISNULL(qsqv.query_variant_query_id, 0),
+                not_a_variant =
+                    CASE
+                        WHEN qsqv.query_variant_query_id IS NULL
+                        THEN 1
+                        ELSE 0
+                    END'
+                ELSE N''
+            END + N'
+            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsp.query_id = qsq.query_id
+            JOIN ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
+              ON qcs.context_settings_id = qsq.context_settings_id' +
+            CASE
+                WHEN @sql_2022_views = 1
+                THEN N'
+            LEFT JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+              ON qsqv.query_variant_query_id = qsq.query_id'
+                ELSE N''
+            END + N'
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #plan_ids_with_query_hashes AS hashes
+                WHERE hashes.query_hash = qsq.query_hash
+                AND   hashes.database_id = @database_id
+            )
+            AND   EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+                WHERE qsrs.plan_id = qsp.plan_id
+                ' + @where_clause
+                  + N'
+            )
+        ) AS p
+        GROUP BY
+            p.query_hash
+    ) AS counts
+      ON counts.query_hash = hashes.query_hash
+    WHERE hashes.database_id = @database_id
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*
+    Put the counts into words, one sentence for each rule that applies.
+    When no rule applies, plan_count_reasons stays NULL.
+    */
+    UPDATE
+        hashes
+    SET
+        hashes.plan_count_reasons =
+            STUFF
+            (
+                /* Parameter Sensitive Plan variants have texts of their own, so they do not count as literal values */
+                CASE
+                    WHEN hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0) > 1
+                    AND  (hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0)) * 2 >=
+                         hashes.query_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0)
+                    THEN N' | ' +
+                         FORMAT(hashes.query_text_id_count_for_query_hash - ISNULL(hashes.variant_query_count_for_query_hash, 0), 'N0') +
+                         N' query texts differ only in literal values. Parameterize them, or use forced parameterization.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.batch_sql_handle_count_for_query_hash > 1
+                    AND  hashes.batch_sql_handle_count_for_query_hash * 2 >= hashes.query_id_count_for_query_hash
+                    THEN N' | The statement uses a temporary table or table variable and ran in ' +
+                         FORMAT(hashes.batch_sql_handle_count_for_query_hash, 'N0') +
+                         N' different batches. Query Store gives it a new query_id in each batch. Send the batch with parameters, or move it into a stored procedure, so the batch text stays the same.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.context_settings_count_for_query_hash > 1
+                    THEN N' | Compiled under ' +
+                         FORMAT(hashes.context_settings_count_for_query_hash, 'N0') +
+                         N' different sets of SET options' +
+                         CASE
+                             WHEN hashes.context_settings_that_differ_for_query_hash LIKE N'%,%'
+                             THEN N' (' + hashes.context_settings_that_differ_for_query_hash + N' differ)'
+                             WHEN hashes.context_settings_that_differ_for_query_hash IS NOT NULL
+                             THEN N' (' + hashes.context_settings_that_differ_for_query_hash + N' differs)'
+                             ELSE N''
+                         END +
+                         N'.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.object_id_count_for_query_hash > 1
+                    THEN N' | The same statement is in ' +
+                         FORMAT(hashes.object_id_count_for_query_hash, 'N0') +
+                         N' modules.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.plan_hash_count_for_query_hash > hashes.query_id_count_for_query_hash
+                    AND  hashes.query_id_count_for_query_hash = 1
+                    THEN N' | One query compiled ' +
+                         FORMAT(hashes.plan_hash_count_for_query_hash, 'N0') +
+                         N' different plan shapes. Look at recompiles, parameter sensitivity, and statistics changes.'
+                    WHEN hashes.plan_hash_count_for_query_hash > hashes.query_id_count_for_query_hash
+                    THEN N' | ' +
+                         FORMAT(hashes.query_id_count_for_query_hash, 'N0') +
+                         N' queries compiled ' +
+                         FORMAT(hashes.plan_hash_count_for_query_hash, 'N0') +
+                         N' different plan shapes. Look at recompiles, parameter sensitivity, and statistics changes.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.variant_query_count_for_query_hash = 1
+                    THEN N' | Parameter Sensitive Plan optimization made 1 variant.'
+                    WHEN hashes.variant_query_count_for_query_hash > 1
+                    THEN N' | Parameter Sensitive Plan optimization made ' +
+                         FORMAT(hashes.variant_query_count_for_query_hash, 'N0') +
+                         N' variants.'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN hashes.compatibility_level_count_for_query_hash > 1
+                    THEN N' | Compiled under ' +
+                         FORMAT(hashes.compatibility_level_count_for_query_hash, 'N0') +
+                         N' compatibility levels.'
+                    ELSE N''
+                END,
+                1,
+                3,
+                N''
+            )
+    FROM #plan_ids_with_query_hashes AS hashes
+    WHERE hashes.database_id = @database_id
+    OPTION(RECOMPILE);
 END;
 IF @sort_order = 'total waits'
 BEGIN
@@ -56027,7 +62064,8 @@ OR
             ELSE ''Yes''
         END
     ORDER BY
-        SUM(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
@@ -56093,8 +62131,8 @@ OR
     END;
 END;
 /*
-'total waits' is special. It's a sum, not a max, so
-we cover it above rather than here.
+'total waits' is special. It sums every wait category,
+so we cover it above rather than here.
 */
 
 IF  @sort_order_is_a_wait = 1
@@ -56127,12 +62165,13 @@ BEGIN
                 ELSE ''Yes''
             END,
         total_query_wait_time_ms =
-            MAX(qsws.total_query_wait_time_ms)
+            SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     /*
-    Joining on plan_id alone would take the max wait across
-    all of Query Store history rather than the requested
-    time window.
+    Joining on plan_id alone would sum waits across all of
+    Query Store history rather than the requested time window.
+    The sum covers every interval in the window, the same as
+    the total waits sort. A max would be one interval.
     */
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
       ON  qsrs.plan_id = qsws.plan_id
@@ -56184,7 +62223,8 @@ BEGIN
             ELSE ''Yes''
         END
     ORDER BY
-        MAX(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
@@ -56314,7 +62354,13 @@ BEGIN
                      WHEN 'total log' THEN N'SUM(qsrs.avg_log_bytes_used * qsrs.count_executions)'
                      WHEN 'total tempdb' THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)'
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
-                     /* Waits and the fallback path — waits are per-interval totals so AVG is correct; fallback mirrors cpu path. */
+                     /*
+                     Waits: waits.total_query_wait_time_ms is each plan's wait total over the
+                     whole period, summed across its intervals, and the join repeats it on
+                     every runtime stats row of the plan. So this is a mean of period totals,
+                     not of per-interval waits, and like the "total ..." sorts it grows with
+                     the length of the period. The fallback path mirrors cpu.
+                     */
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                 END
                 + N'
@@ -56574,7 +62620,8 @@ BEGIN
                      WHEN 'total log' THEN N'hashes_with_changes.change_since_regression_time_period / 1048576.'
                      WHEN 'total tempdb' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'total rows' THEN N'hashes_with_changes.change_since_regression_time_period'
-                     ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.'
+                     /* Wait times are already in milliseconds */
+                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'hashes_with_changes.change_since_regression_time_period' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                 END
             ELSE N'hashes_with_changes.change_since_regression_time_period' END
         + N'
@@ -56627,7 +62674,8 @@ BEGIN
                    WHEN 'magnitude' THEN N'ABS(change_since_regression_time_period)'
                    WHEN 'absolute' THEN N'ABS(change_since_regression_time_period)'
               END
-            + N' DESC
+            + N' DESC,
+            compared_stats.query_hash
     ) AS hashes_with_changes
     JOIN
     (
@@ -56772,7 +62820,21 @@ BEGIN
     GROUP BY
         qsrs.plan_id
     ORDER BY
-        MAX(' +
+        ' +
+    /*
+    Executions and totals add up across intervals, so rank by the sum.
+    The max of one interval misses plans that run steadily. Averages
+    rank by the average over the window, weighted by executions, which
+    is the number the results show.
+    */
+    CASE
+        WHEN @sort_order = 'executions'
+        OR   @sort_order LIKE 'total %'
+        THEN N'SUM('
+        WHEN @sort_order = 'recent'
+        THEN N'MAX('
+        ELSE N'SUM('
+    END +
     CASE @sort_order
          WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
          WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -56796,7 +62858,16 @@ BEGIN
          WHEN 'total rows' THEN N'qsrs.avg_rowcount * qsrs.count_executions'
          ELSE N'qsrs.avg_cpu_time'
     END +
-    N') DESC
+    CASE
+        WHEN @sort_order = 'executions'
+        OR   @sort_order LIKE 'total %'
+        OR   @sort_order = 'recent'
+        THEN N')'
+        ELSE N' * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
+    END +
+    /* plan_id breaks ties, so a rerun keeps the same plans at the cut */
+    N' DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END;
 
@@ -56855,6 +62926,12 @@ In regression mode, a plan's rows from both time periods
 go through the same LAST_VALUE windows, so each window is
 also partitioned by time period. Otherwise, the baseline
 row's last_ values would come from the current period.
+
+Query Store's avg_ columns are averages per interval, so the
+averages here are weighted by count_executions. A plain AVG
+gives an interval with one execution the same pull as an
+interval with thousands, and the total_ columns, which are
+avg_ * count_executions, would be wrong too.
 */
 SELECT
     @current_table = 'inserting #query_store_runtime_stats',
@@ -56889,42 +62966,51 @@ SELECT
     MAX(qsrs_with_lasts.runtime_stats_id),
     qsrs_with_lasts.plan_id,
     MAX(qsrs_with_lasts.runtime_stats_interval_id),
-    MAX(qsrs_with_lasts.execution_type_desc),
+    /* A plan can have regular, aborted, and exception rows, so list each type it has */
+    STUFF
+    (
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 0 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 3 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 4 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END),
+        1,
+        2,
+        N''''
+    ),
     MIN(qsrs_with_lasts.first_execution_time),
     MAX(qsrs_with_lasts.partitioned_last_execution_time),
     SUM(qsrs_with_lasts.count_executions),
-    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    (SUM(qsrs_with_lasts.avg_duration * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
     MIN((qsrs_with_lasts.min_duration / 1000.)),
     MAX((qsrs_with_lasts.max_duration / 1000.)),
-    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    (SUM(qsrs_with_lasts.avg_cpu_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
     MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
     MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
-    AVG(((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_logical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.)),
-    AVG(((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_logical_io_writes * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.)),
-    AVG(((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    (SUM(qsrs_with_lasts.avg_clr_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
     MIN((qsrs_with_lasts.min_clr_time / 1000.)),
     MAX((qsrs_with_lasts.max_clr_time / 1000.)),
     MAX(qsrs_with_lasts.partitioned_last_dop),
     MIN(qsrs_with_lasts.min_dop),
     MAX(qsrs_with_lasts.max_dop),
-    AVG(((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_query_max_used_memory * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.)),
-    AVG(qsrs_with_lasts.avg_rowcount),
+    SUM(qsrs_with_lasts.avg_rowcount * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0),
     MAX(qsrs_with_lasts.partitioned_last_rowcount),
     MIN(qsrs_with_lasts.min_rowcount),
     MAX(qsrs_with_lasts.max_rowcount),';
@@ -56933,15 +63019,15 @@ IF @new = 1
 BEGIN
     SELECT
         @sql += N'
-    AVG(((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
-    MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_log_bytes_used / 1048576.)),
+    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0),
+    MAX(qsrs_with_lasts.partitioned_last_num_physical_io_reads),
+    MIN(qsrs_with_lasts.min_num_physical_io_reads),
+    MAX(qsrs_with_lasts.max_num_physical_io_reads),
+    (SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) / 1048576.,
     MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 1048576.)),
     MIN((qsrs_with_lasts.min_log_bytes_used / 1048576.)),
     MAX((qsrs_with_lasts.max_log_bytes_used / 1048576.)),
-    AVG(((qsrs_with_lasts.avg_tempdb_space_used * 8) / 1024.)),
+    ((SUM(qsrs_with_lasts.avg_tempdb_space_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(CONVERT(float, qsrs_with_lasts.count_executions)), 0)) * 8.) / 1024.,
     MAX(((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8) / 1024.)),
     MIN(((qsrs_with_lasts.min_tempdb_space_used * 8) / 1024.)),
     MAX(((qsrs_with_lasts.max_tempdb_space_used * 8) / 1024.)),';
@@ -57318,7 +63404,7 @@ WITH
     last_dop, min_dop, max_dop,
     avg_query_max_used_memory_mb, last_query_max_used_memory_mb, min_query_max_used_memory_mb, max_query_max_used_memory_mb,
     avg_rowcount, last_rowcount, min_rowcount, max_rowcount,
-    avg_num_physical_io_reads_mb, last_num_physical_io_reads_mb, min_num_physical_io_reads_mb, max_num_physical_io_reads_mb,
+    avg_num_physical_io_reads, last_num_physical_io_reads, min_num_physical_io_reads, max_num_physical_io_reads,
     avg_log_bytes_used_mb, last_log_bytes_used_mb, min_log_bytes_used_mb, max_log_bytes_used_mb,
     avg_tempdb_space_used_mb, last_tempdb_space_used_mb, min_tempdb_space_used_mb, max_tempdb_space_used_mb,
     from_regression_baseline,
@@ -57380,24 +63466,8 @@ SELECT
     @database_id,
     qsp.plan_id,
     qsp.query_id,
-    all_plan_ids =
-        STUFF
-        (
-            (
-                SELECT DISTINCT
-                    '', '' +
-                    RTRIM
-                        (qsp_plans.plan_id)
-                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML
-                    PATH(''''),
-                    TYPE
-            ).value(''./text()[1]'', ''varchar(max)''),
-            1,
-            2,
-            ''''
-        ),
+    /* Filled in below, in one pass over sys.query_store_plan */
+    all_plan_ids = NULL,
     qsp.plan_group_id,
     qsp.engine_version,
     qsp.compatibility_level,
@@ -57471,6 +63541,11 @@ END;
 In regression mode, #query_store_runtime_stats has a row per plan
 and time period, so take each plan once. Duplicate plan rows here
 multiply every row in the tables built from this one.
+
+plan_id is unique in sys.query_store_plan, so this is a plain join.
+The hash join reads the view once: an apply per plan read the
+in-memory part of the view again for every plan, about 14 ms each
+on a Query Store with 17,000 plans.
 */
 SELECT
     @sql += N'
@@ -57481,17 +63556,10 @@ FROM
     FROM #query_store_runtime_stats AS qsrs
     WHERE qsrs.database_id = @database_id
 ) AS qsrs
-CROSS APPLY
-(
-    SELECT TOP (@plans_top)
-        qsp.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    WHERE qsp.plan_id = qsrs.plan_id
-    AND   qsp.is_online_index_plan = 0
-    ORDER BY
-        qsp.last_execution_time DESC
-) AS qsp
-OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = qsrs.plan_id
+WHERE qsp.is_online_index_plan = 0
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -57534,9 +63602,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@plans_top bigint,
-    @database_id int',
-    @plans_top,
+  N'@database_id integer',
     @database_id;
 
 IF @troubleshoot_performance = 1
@@ -57557,6 +63623,110 @@ BEGIN
 END; /*End getting query plans*/
 
 /*
+all_plan_ids lists every plan of each query. A subquery per plan
+in the insert above read sys.query_store_plan once per plan, about
+20 ms each on a big Query Store, so read it once here instead.
+The hash join keeps it to one read: with few plans in
+#query_store_plan, a nested loops join reads the in-memory part
+of sys.query_store_plan again for every plan it finds.
+*/
+SELECT
+    @current_table = 'inserting #all_plan_ids',
+    @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    EXECUTE sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    SET STATISTICS XML ON;
+END;
+
+SELECT
+    @sql += N'
+SELECT
+    qsp.query_id,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp2
+    WHERE qsp2.query_id = qsp.query_id
+    AND   qsp2.database_id = @database_id
+)
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #all_plan_ids
+WITH
+    (TABLOCK)
+(
+    query_id,
+    plan_id
+)
+EXECUTE sys.sp_executesql
+    @sql,
+  N'@database_id integer',
+    @database_id;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    SET STATISTICS XML OFF;
+
+    EXECUTE sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXECUTE sys.sp_executesql
+        @troubleshoot_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+END;
+
+SELECT
+    @current_table = 'updating #query_store_plan all_plan_ids';
+
+UPDATE
+    qsp
+SET
+    qsp.all_plan_ids =
+        STUFF
+        (
+            (
+                SELECT
+                    ', ' +
+                    RTRIM(ap.plan_id)
+                FROM #all_plan_ids AS ap
+                WHERE ap.query_id = qsp.query_id
+                ORDER BY
+                    ap.plan_id
+                FOR
+                    XML
+                    PATH(''),
+                    TYPE
+            ).value('./text()[1]', 'varchar(max)'),
+            1,
+            2,
+            ''
+        )
+FROM #query_store_plan AS qsp
+WHERE qsp.database_id = @database_id
+OPTION(RECOMPILE); /*End getting all plan ids*/
+
+/*
 This gets some query information
 */
 SELECT
@@ -57573,14 +63743,34 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
+/*
+Parameter Sensitive Plan variants have object_id 0, so they show
+the object of their parent query instead of Adhoc.
+
+Joins instead of an apply and a subquery per query, so the hash
+join reads each view once. Per query, nested loops read the
+in-memory part of sys.query_store_query again, about 14 ms each
+on a Query Store with 16,000 queries.
+*/
 SELECT
     @sql += N'
 SELECT
     @database_id,
     qsq.query_id,
     qsq.query_text_id,
-    qsq.context_settings_id,
-    qsq.object_id,
+    qsq.context_settings_id,' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+    object_id =
+        ISNULL
+        (
+            qsqv.parent_object_id,
+            qsq.object_id
+        ),'
+        ELSE N'
+    qsq.object_id,'
+    END + N'
     qsq.batch_sql_handle,
     qsq.query_hash,
     qsq.is_internal_query,
@@ -57608,24 +63798,49 @@ SELECT
     qsq.is_clouddb_internal_query
 FROM
 (
-    /*
-    A query with more than one plan would otherwise get a row per plan
-    */
-    SELECT DISTINCT
-        qsp.query_id
-    FROM #query_store_plan AS qsp
-    WHERE qsp.database_id = @database_id
-) AS qsp
-CROSS APPLY
+    SELECT
+        qsq.*,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id
+                ORDER BY
+                    qsq.last_execution_time DESC
+            )
+    FROM
+    (
+        /*
+        A query with more than one plan would otherwise get a row per plan
+        */
+        SELECT DISTINCT
+            qsp.query_id
+        FROM #query_store_plan AS qsp
+        WHERE qsp.database_id = @database_id
+    ) AS qsp
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+      ON qsq.query_id = qsp.query_id
+) AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN
 (
-    SELECT TOP (1)
-        qsq.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    WHERE qsq.query_id = qsp.query_id
-    ORDER BY
-        qsq.last_execution_time DESC
-) AS qsq
-OPTION(RECOMPILE);' + @nc10;
+    SELECT
+        qsqv.query_variant_query_id,
+        parent_object_id =
+            MAX(qsq_parent.object_id)
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+      ON qsq_parent.query_id = qsqv.parent_query_id
+    GROUP BY
+        qsqv.query_variant_query_id
+) AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id'
+        ELSE N''
+    END + N'
+WHERE qsq.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -57708,6 +63923,10 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    The hash join reads sys.query_store_query once. Nested loops read
+    its in-memory part again for every matching query, about 14 ms each.
+    */
     SELECT
         @sql += N'
     SELECT
@@ -57726,7 +63945,7 @@ BEGIN
       @new
       WHEN 1
       THEN N',
-        SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
+        SUM(qsrs.count_executions * qsrs.avg_num_physical_io_reads),
         SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 1048576.,
         SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
       ELSE N',
@@ -57758,7 +63977,7 @@ BEGIN
     AND qsrs.last_execution_time < @end_date
     GROUP BY
         qsq.query_hash
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, HASH JOIN);
 ';
 
     IF @debug = 1
@@ -57918,6 +64137,9 @@ END; /*End getting query text*/
 /*
 Here we try to get some data from the "plan cache"
 that isn't available in Query Store :(
+
+The hash join reads sys.dm_exec_query_stats once. With few query
+texts, nested loops read the whole plan cache again for every text.
 */
 SELECT
     @sql = N'',
@@ -58057,7 +64279,7 @@ FROM
 ) AS deqs_with_lasts
 GROUP BY
     deqs_with_lasts.statement_sql_handle
-OPTION(RECOMPILE);
+OPTION(RECOMPILE, HASH JOIN);
 
 SELECT
     @rc = ROWCOUNT_BIG();
@@ -58327,8 +64549,24 @@ SELECT
     qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
+    /*
+    Weighted like the runtime stats averages. Query Store computes
+    avg_query_wait_time_ms as the total of the interval divided by some number
+    of executions, so total / avg recovers the count Query Store itself
+    averaged over in that interval. That is not always all the
+    executions in the interval: it can be 1, or only the
+    executions that had this wait.
+    SUM(total) / SUM(total / avg) combines the averages Query Store computed.
+    AVG() of the interval averages gave a quiet interval the same weight
+    as a busy one.
+    */
     avg_query_wait_time_ms =
-        AVG(qsws_with_lasts.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms) /
+        NULLIF
+        (
+            SUM(qsws_with_lasts.total_query_wait_time_ms / NULLIF(qsws_with_lasts.avg_query_wait_time_ms, 0)),
+            0
+        ),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
@@ -58826,6 +65064,10 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    The hash join reads the in-memory part of the view once. Nested
+    loops read it again for every feedback row, about 14 ms each.
+    */
     SELECT
         @sql += N'
 SELECT
@@ -58846,7 +65088,7 @@ WHERE EXISTS
           WHERE qspf.plan_id = qsp.plan_id
           AND   qsp.database_id = @database_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -59408,9 +65650,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS xml)
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
+                 WHEN qpx.query_plan_xml IS NOT NULL
+                 THEN qpx.query_plan_xml
+                 WHEN qpx.query_plan_xml IS NULL
                  THEN
                      (
                          SELECT
@@ -59594,6 +65836,13 @@ SELECT
     ) AS qsp
     CROSS APPLY
     (
+        /* One xml conversion per plan; the query_plan CASE reuses it, not a TRY_CAST in each branch */
+        SELECT
+            query_plan_xml =
+                TRY_CAST(qsp.query_plan AS xml)
+    ) AS qpx
+    CROSS APPLY
+    (
         SELECT TOP (1)
             qsqt.*
         FROM #query_store_query AS qsq
@@ -59684,7 +65933,8 @@ SELECT
                        GROUP BY
                            qsws.wait_category_desc
                        ORDER BY
-                           SUM(qsws.avg_query_wait_time_ms) DESC
+                           SUM(qsws.avg_query_wait_time_ms) DESC,
+                           qsws.wait_category_desc
                        FOR XML
                            PATH(''''),
                            TYPE
@@ -59843,7 +66093,10 @@ ORDER BY
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
              END END
     END
-             + N' DESC
+             /* database_name and plan_id break ties, so a rerun returns the same order */
+             + N' DESC,
+    x.database_name,
+    x.plan_id
 OPTION(RECOMPILE);' + @nc10
     );
 
@@ -59969,7 +66222,9 @@ BEGIN
                         qspf.last_updated_time
                 FROM #query_store_plan_feedback AS qspf
                 ORDER BY
-                    qspf.plan_id
+                    qspf.plan_id,
+                    qspf.plan_feedback_id,
+                    qspf.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -60053,7 +66308,9 @@ BEGIN
                     qsqh.source_desc
                 FROM #query_store_query_hints AS qsqh
                 ORDER BY
-                    qsqh.query_id
+                    qsqh.query_id,
+                    qsqh.query_hint_id,
+                    qsqh.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -60123,7 +66380,9 @@ BEGIN
                     qsqv.dispatcher_plan_id
                 FROM #query_store_query_variant AS qsqv
                 ORDER BY
-                    qsqv.parent_query_id
+                    qsqv.parent_query_id,
+                    qsqv.query_variant_query_id,
+                    qsqv.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -60465,6 +66724,7 @@ BEGIN
                     ROW_NUMBER() OVER
                     (
                         PARTITION BY
+                            qsq.database_id,
                             qsq.query_id,
                             qsq.query_text_id
                         ORDER BY
@@ -61037,16 +67297,16 @@ BEGIN
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_query_wait_time_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_query_wait_time_ms)'
+                        THEN N'FORMAT(SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0), ''N0'')'
+                        ELSE N'SUM(w.total_query_wait_time_ms) / NULLIF(SUM(w.total_query_wait_time_ms / NULLIF(w.avg_query_wait_time_ms, 0)), 0)'
                     END
                     + N',
                     avg_query_duration_ms = '
                     +
                     CASE
                         WHEN @format_output = 1
-                        THEN N'FORMAT(AVG(w.avg_duration_ms), ''N0'')'
-                        ELSE N'AVG(w.avg_duration_ms)'
+                        THEN N'FORMAT(SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0), ''N0'')'
+                        ELSE N'SUM(w.total_duration_ms) / NULLIF(SUM(w.count_executions), 0)'
                     END
                     + N',
                     last_query_wait_time_ms = '
@@ -61101,8 +67361,13 @@ BEGIN
                 (
                     /*
                     One row per plan and wait category, with the plan''s
-                    runtime stats. Totals add up, averages average, and
-                    minimums and maximums take the lowest and highest.
+                    runtime stats. Totals add up, and averages are weighted
+                    by executions: the wait average is total wait divided by
+                    the executions behind it (total / avg, since the average
+                    wait is the total over an execution count), and the
+                    duration average is total duration divided by
+                    executions. Minimums and maximums take the lowest and
+                    highest.
                     Last values come from the plan with the latest wait
                     in the category. The windows run before GROUP BY,
                     so they see each plan''s row.
@@ -61116,7 +67381,7 @@ BEGIN
                         qsws.min_query_wait_time_ms,
                         qsws.max_query_wait_time_ms,
                         x.total_duration_ms,
-                        x.avg_duration_ms,
+                        x.count_executions,
                         x.min_duration_ms,
                         x.max_duration_ms,
                         latest_last_query_wait_time_ms =
@@ -61168,6 +67433,7 @@ BEGIN
                             qsrs.min_duration_ms,
                             qsrs.max_duration_ms,
                             qsrs.total_duration_ms,
+                            qsrs.count_executions,
                             qsrs.last_execution_time
                         FROM #query_store_runtime_stats AS qsrs
                         JOIN #query_store_plan AS qsp
@@ -61497,6 +67763,13 @@ BEGIN
                                         N', ' +
                                         d.database_name
                                     FROM #databases AS d
+                                    WHERE NOT EXISTS
+                                    (
+                                        SELECT
+                                            1/0
+                                        FROM #requested_but_skipped_databases AS rbs
+                                        WHERE rbs.database_name = d.database_name
+                                    )
                                     ORDER BY
                                         d.database_name
                                     FOR
@@ -61797,8 +68070,6 @@ BEGIN
             @isolation_level,
         parameters =
             @parameters,
-        plans_top =
-            @plans_top,
         queries_top =
             @queries_top,
         nc10 =
@@ -62104,6 +68375,29 @@ BEGIN
         SELECT
             result =
                 '#include_plan_ids is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #all_plan_ids AS api
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#all_plan_ids',
+            api.*
+        FROM #all_plan_ids AS api
+        ORDER BY
+            api.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#all_plan_ids is empty';
     END;
 
     IF EXISTS
@@ -63431,6 +69725,29 @@ BEGIN
                 result =
                     '#hi_output is empty';
         END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #hi_plans AS hp
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#hi_plans',
+                hp.*
+            FROM #hi_plans AS hp
+            ORDER BY
+                hp.query_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#hi_plans is empty';
+        END;
     END;
 
     IF  @find_parameter_sensitive = 1
@@ -63722,6 +70039,30 @@ BEGIN
             SELECT
                 result =
                     '#ps_output is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_plans AS pp
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_plans',
+                pp.*
+            FROM #ps_plans AS pp
+            ORDER BY
+                pp.query_hash,
+                pp.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_plans is empty';
         END;
     END;
 
