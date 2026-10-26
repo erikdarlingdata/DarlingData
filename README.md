@@ -509,6 +509,8 @@ I created sp_LogHunter to search through your error logs for the important stuff
 
 It helps you give you a fuller, better picture of any bad stuff happening.
 
+sp_LogHunter needs EXECUTE permission on `master.dbo.xp_readerrorlog`, or `rdsadmin.dbo.rds_read_error_log` if that procedure exists. It does not need sysadmin. To read archived error logs, the login must be a member of the securityadmin fixed server role. Without it, sp_LogHunter reads only the current error log and prints a message. It does not run on Azure SQL Database.
+
 More resources:
  * [YouTube introduction](https://youtu.be/L_yJ6zPjHfs)
 
@@ -516,13 +518,13 @@ Current valid parameter details:
 
 |    parameter_name    | data_type |                  description                   |                                 valid_inputs                                 |   defaults   |
 |----------------------|-----------|------------------------------------------------|------------------------------------------------------------------------------|--------------|
-| @days_back           | integer   | how many days back you want to search the logs | an integer; will be converted to a negative number automatically             | -7           |
-| @start_date          | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
-| @end_date            | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
+| @days_back           | integer   | how many days back you want to search the logs. Not used when @start_date or @end_date is given | an integer. It is converted to a negative number automatically. 0 is treated as -1 | -7           |
+| @start_date          | datetime  | if you want to search a specific time frame    | a datetime value. Must not be later than @end_date                           | NULL         |
+| @end_date            | datetime  | if you want to search a specific time frame    | a datetime value. Must not be earlier than @start_date                       | NULL         |
 | @custom_message      | nvarchar  | if you want to search for a custom string      | something specific you want to search for. no wildcards or substitutions.      | NULL         |
-| @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1                                                                   | 0            |
+| @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1. NULL is treated as 0. 1 requires a non-empty @custom_message     | 0            |
 | @first_log_only      | bit       | only search through the first error log        | NULL, 0, 1                                                                   | 0            |
-| @language_id         | integer   | to use something other than English            | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id; | 1033         |
+| @language_id         | integer   | does not translate the search strings, which are English literals. Use @custom_message on non-English servers | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id. Any value other than 1033 only triggers a warning | 1033         |
 | @help                | bit       | how you got here                               | NULL, 0, 1                                                                   | 0            |
 | @debug               | bit       | dumps raw temp table contents                  | NULL, 0, 1                                                                   | 0            |
 | @version             | varchar   | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
@@ -569,7 +571,7 @@ Current valid parameter details:
 
 ## Index Cleanup
 
-This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes.
+This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes. It also finds uncompressed indexes that are candidates for page compression.
 
 **IMPORTANT: This is currently a BETA VERSION.** It needs extensive testing in real environments with real indexes to address several issues:
 * Data collection accuracy
@@ -585,11 +587,11 @@ Current valid parameter details:
 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
-| @database_name | sysname | NULL | The name of the database you wish to analyze |
-| @schema_name | sysname | NULL | The schema name to filter indexes by |
-| @table_name | sysname | NULL | The table name to filter indexes by |
-| @min_reads | bigint | 0 | Minimum number of reads for an index to be considered used |
-| @min_writes | bigint | 0 | Minimum number of writes for an index to be considered used |
+| @database_name | sysname | NULL | The name of the database you wish to analyze. Defaults to the current database when that is a user database |
+| @schema_name | sysname | NULL | The schema name to filter indexes by - limits analysis to tables in the specified schema when used without @table_name |
+| @table_name | sysname | NULL | The table or view name to filter indexes by. The schema defaults to dbo if @schema_name is NULL |
+| @min_reads | bigint | 0 | Minimum reads for an index to be deduped. Applied per table and per index. An index clears by meeting this or @min_writes. Does not affect unused-index detection or compression |
+| @min_writes | bigint | 0 | Minimum writes for an index to be deduped. Applied per table and per index. An index clears by meeting this or @min_reads. Does not affect unused-index detection or compression |
 | @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
 | @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
 | @dedupe_only | bit | 0 | When set to 1, only performs index deduplication but does not mark unused indexes for removal |

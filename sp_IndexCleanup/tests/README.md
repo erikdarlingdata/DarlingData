@@ -15,7 +15,7 @@ script at all -- the paired `DISABLE` still runs.
 | `run_tests.py` | Runs `adversarial_test.sql`, parses the output, asserts 58 expectations across 17 rule groups. |
 | `adversarial_test.sql` | Builds synthetic `test_ic_*` tables covering unique constraints, sort directions, filters, include merges, indexed views, heaps, and rule interactions. Self-cleaning. Driven by `run_tests.py`; run it directly only to eyeball output. |
 | `fixture_cases_test.py` | Drives `fixtures_more_dupe_indexes.sql` and asserts the `Expected:` comments in it -- cases 1 through 8d -- against the real `Users` table. **Also executes every generated MERGE/DISABLE script** inside a rolled-back transaction. ~2 minutes. |
-| `rule_coverage_test.py` | Small synthetic fixture in `Crap`. Covers unused-index detection (or the uptime guard, see below) and the `@min_reads`/`@min_writes` index-level screen. Fast. |
+| `rule_coverage_test.py` | Synthetic fixtures in `Crap`, `CrapA`, `CrapB` and the `ic_win_*` scratch databases (Group A-Window). Covers Rule 1 (or the uptime guard, see below) and the `@min_reads`/`@min_writes` screen. Also covers scripts that succeed but are wrong, the multi-database loop, script generation, compression and the per-database usage window. Fast. |
 | `no_access_test.py` | Creates a login with no user-database access and asserts the `HAS_DBACCESS` preflight returns instead of spinning at 100% CPU forever (PerformanceMonitor #915). Drops the login afterward. |
 
 ```

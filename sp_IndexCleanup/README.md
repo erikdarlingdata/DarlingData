@@ -4,7 +4,7 @@
 
 ## Overview
 
-This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes.
+This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes. It also finds uncompressed indexes that are candidates for page compression.
 
 **IMPORTANT: This is currently a BETA VERSION.** It needs extensive testing in real environments with real indexes to address several issues:
 * Data collection accuracy
@@ -22,11 +22,11 @@ The procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT 
 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
-| @database_name | sysname | NULL | The name of the database you wish to analyze |
-| @schema_name | sysname | NULL | The schema name to filter indexes by - limits analysis to tables in the specified schema |
-| @table_name | sysname | NULL | The table name to filter indexes by |
-| @min_reads | bigint | 0 | Minimum number of reads for an index to be considered used |
-| @min_writes | bigint | 0 | Minimum number of writes for an index to be considered used |
+| @database_name | sysname | NULL | The name of the database you wish to analyze. Defaults to the current database when that is a user database |
+| @schema_name | sysname | NULL | The schema name to filter indexes by - limits analysis to tables in the specified schema when used without @table_name |
+| @table_name | sysname | NULL | The table or view name to filter indexes by. The schema defaults to dbo if @schema_name is NULL |
+| @min_reads | bigint | 0 | Minimum reads for an index to be deduped. Applied per table and per index. An index clears by meeting this or @min_writes. Does not affect unused-index detection or compression |
+| @min_writes | bigint | 0 | Minimum writes for an index to be deduped. Applied per table and per index. An index clears by meeting this or @min_reads. Does not affect unused-index detection or compression |
 | @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
 | @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
 | @dedupe_only | bit | 0 | When set to 1, only performs index deduplication but does not mark unused indexes for removal |
@@ -90,14 +90,19 @@ EXECUTE dbo.sp_IndexCleanup
 
 ## Notes
 
-- The procedure issues a warning when server uptime is less than 14 days, as index usage stats may not be representative
-- When server uptime is less than 7 days, @dedupe_only mode is automatically enabled to prevent removing unused indexes with insufficient usage data
-- Certain features like online index operations and compression are only available in specific SQL Server editions (Enterprise, Azure SQL DB, Managed Instance)
+- Index usage statistics start over when SQL Server restarts. They also start over when a database is restored or created.
+- The `DATABASE` row in the summary shows `usage_since` and `usage_since_reason`. `usage_since` is the latest of the server start, the last restore of the database in `msdb.dbo.restorehistory`, and the `create_date` of the database. `usage_since_reason` says which of those it was.
+- If the usage window of a database is 7 days or less, Rule 1 (unused indexes) is skipped for that database only. Its `DATABASE` row says so.
+- If the server started 7 days ago or less, `@dedupe_only` is turned on automatically for every database. This prevents removing unused indexes with insufficient usage data.
+- Unused Index rows carry a warning while server uptime or the database usage window is under 14 days. Index usage stats are not representative over a short window.
+- `daily_write_ops_saved`, `daily_lock_waits_saved` and `daily_latch_waits_saved` on TABLE rows divide by the usage window of the database, not by server uptime.
+- On an availability group primary with readable secondaries, the `DATABASE` row notes that reads on the secondaries are not counted.
+- Online index operations need Enterprise, Azure SQL DB or Managed Instance. Compression needs those, or Standard edition on SQL Server 2016 or later.
 - It is recommended to have a recent backup before making any index changes
 - The multi-database processing feature (@get_all_databases) analyzes each database sequentially for better performance and resource management
 - System databases (master, model, msdb, tempdb, rdsadmin) are always excluded from processing
 - When using @get_all_databases, results for all databases are combined in a single result set
-- The index_count column for the SUMMARY row in the output table will likely indicate a lower number than is shown at the DATABASE level.  The SUMMARY level only includes indexes that have been analyzed; excluding things like clustered indexes, heaps, xml indexes, etc.  The DATABASE level index_count value is the total number of indexes in the database.
+- The index_count column on TABLE, DATABASE and SUMMARY rows counts only analyzed indexes. Clustered indexes, heaps, xml indexes and similar are not counted. The SUMMARY value is the sum of the DATABASE values.
 
 Copyright 2026 Darling Data, LLC  
 Released under MIT license
