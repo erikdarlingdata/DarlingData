@@ -85,7 +85,7 @@ Removing many queries leaves Query Store's internal tables (`sys.plan_persist_*`
 - Space freed inside LOB pages (plan XML and query text) can stay reserved to the table after compaction. Query Store reuses it for new plans and texts, but `current_storage_size_mb` may not drop by all of it.
 - In report mode it lists the indexes and their sizes without compacting them.
 
-It returns one row per index with its size before and after, in MB, and the seconds it took.
+It returns one row per index. Each row has the table name, the index id, the size before and after, the space saved, and the seconds it took. Sizes are in MB.
 
 ## Examples
 

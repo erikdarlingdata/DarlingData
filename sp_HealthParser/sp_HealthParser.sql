@@ -80,8 +80,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.10',
-        @version_date = '20261001';
+        @version = '3.11',
+        @version_date = '20261101';
 
     IF @help = 1
     BEGIN
@@ -105,9 +105,9 @@ BEGIN
                 CASE
                     ap.name
                     WHEN N'@what_to_check' THEN N'areas of system health to check'
-                    WHEN N'@start_date' THEN N'earliest date to show data for, will be internally converted to UTC'
-                    WHEN N'@end_date' THEN N'latest date to show data for, will be internally converted to UTC'
-                    WHEN N'@warnings_only' THEN N'only show rows where a warning was reported'
+                    WHEN N'@start_date' THEN N'earliest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
+                    WHEN N'@end_date' THEN N'latest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
+                    WHEN N'@warnings_only' THEN N'only show rows where a warning was reported (the blocked process report is not filtered)'
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
@@ -128,7 +128,7 @@ BEGIN
             valid_inputs =
                 CASE
                     ap.name
-                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking'
+                    WHEN N'@what_to_check' THEN N'all, waits, disk, cpu, memory, system, locking (also accepts wait, blocking, blocks, deadlock, deadlocks, lock, locks)'
                     WHEN N'@start_date' THEN N'a reasonable date'
                     WHEN N'@end_date' THEN N'a reasonable date'
                     WHEN N'@warnings_only' THEN N'NULL, 0, 1'
@@ -143,7 +143,7 @@ BEGIN
                     WHEN N'@log_database_name' THEN N'any valid database name'
                     WHEN N'@log_schema_name' THEN N'any valid schema name'
                     WHEN N'@log_table_name_prefix' THEN N'any valid identifier, 111 characters or fewer'
-                    WHEN N'@log_retention_days' THEN N'a positive integer'
+                    WHEN N'@log_retention_days' THEN N'a positive integer, or 0 to keep logs indefinitely'
                     WHEN N'@version' THEN N'none'
                     WHEN N'@version_date' THEN N'none'
                     WHEN N'@help' THEN N'0 or 1'
@@ -262,6 +262,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @temp_table sysname,
         @insert_list sysname,
         @collection_sql nvarchar(max),
+        @one_pass_template nvarchar(max) = N'',
+        @copy_template nvarchar(max) = N'',
+        @object_list nvarchar(max) = N'',
+        @event_tables integer = 0,
+        @busy_event_tables integer = 0,
+        @one_pass bit = 0,
+        @ring_buffer_events integer,
+        @ring_buffer_shown integer,
         /*
         Log to table stuff.
 
@@ -291,6 +299,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @insert_sql nvarchar(max) = N'',
         @log_database_schema nvarchar(1024),
         @max_event_time datetime2(7),
+        @fallback_date datetime2(7),
         @dsql nvarchar(max) = N'',
         @mdsql_template nvarchar(max) = N'',
         @mdsql_execute nvarchar(max) = N'',
@@ -309,10 +318,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
-    Normalize dates to UTC offset for comparison with system_health events
-    When dates are NULL, use SYSUTCDATETIME() which is already UTC
-    When dates are provided, SWITCHOFFSET converts from any timezone to UTC
-    This matches sp_QuickieStore pattern for handling date conversions
+    Normalize dates to UTC offset for comparison with system_health events.
+    When dates are NULL, use SYSUTCDATETIME(), which is already UTC.
+
+    The results show event times in server local time, so a date passed
+    without an offset is read as server local time too, the same way
+    sp_QuickieStore and sp_HumanEventsBlockViewer read plain dates.
+    It used to be read as UTC, so a window copied from the output missed
+    its own events by the UTC offset. A plain value converts to
+    datetimeoffset with an offset of +00:00, so an explicit +00:00 also
+    reads as local; pass any other offset to give an exact instant.
+    SWITCHOFFSET then converts to UTC.
     */
     SELECT
         @start_date =
@@ -320,7 +336,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @start_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @start_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @start_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @start_date
+                    END,
                     '+00:00'
                 ),
                 DATEADD
@@ -335,7 +360,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 SWITCHOFFSET
                 (
-                    @end_date,
+                    CASE
+                        WHEN DATEPART(TZOFFSET, @end_date) = 0
+                        THEN
+                            TODATETIMEOFFSET
+                            (
+                                CONVERT(datetime2(7), @end_date),
+                                DATEPART(TZOFFSET, SYSDATETIMEOFFSET())
+                            )
+                        ELSE @end_date
+                    END,
                     '+00:00'
                 ),
                 SYSUTCDATETIME()
@@ -417,6 +451,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         placeholder gets the quote-doubled value at every substitution
         site, and they cannot share a placeholder.
         */
+        /*
+        @fallback_date covers the first logging run against empty
+        tables. It used to be UTC now minus one day, which ignored
+        @start_date and was compared with event_time columns stored in
+        server local time, so a first run west of UTC logged only the
+        last 19 hours or so. It is now the start of the requested
+        window, in server local time (set below).
+        */
         @mdsql_template = N'
     IF OBJECT_ID(''{table_check_literal}'', ''U'') IS NOT NULL
     BEGIN
@@ -425,22 +467,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     MAX({date_column}),
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        DATEADD
-                        (
-                            DAY,
-                            -1,
-                            SYSDATETIME()
-                        )
-                    )
+                    @fallback_date
                 )
         FROM {table_check};
     END;
@@ -448,7 +475,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         @start_date_debug = @start_date,
-        @end_date_debug = @end_date;
+        @end_date_debug = @end_date,
+        @fallback_date =
+            CONVERT
+            (
+                datetime2(7),
+                SWITCHOFFSET
+                (
+                    @start_date,
+                    DATENAME(TZOFFSET, SYSDATETIMEOFFSET())
+                )
+            );
 
     IF @timestamp_utc_mode = 0
     BEGIN
@@ -494,6 +531,63 @@ AND   ca.utc_timestamp < @end_date';
             @cross_apply
         );
 
+    /*
+    When more than one event type is needed, the files are read once
+    for all of them into #xe_events, and @copy_template moves each type
+    into its own table. Same filters and conversion as @sql_template.
+    */
+    SELECT
+        @one_pass_template = N'
+    INSERT INTO
+        #xe_events
+    WITH
+        (TABLOCK)
+    (
+        object_name,
+        event_data
+    )
+    SELECT
+        xml.object_name,
+        event_data =
+            ISNULL
+            (
+                xml.event_data,
+                CONVERT(xml, N''<event>event</event>'')
+            )
+    FROM
+    (
+        SELECT
+            fx.object_name,
+            event_data =
+                TRY_CAST(fx.event_data AS xml)
+        FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
+        WHERE fx.object_name IN ({object_list}) ' +
+        @time_filter + N'
+    ) AS xml
+    ' +
+    REPLACE
+    (
+        @cross_apply,
+        '{object_name}',
+        'event_data'
+    ) + N'
+    OPTION(RECOMPILE);
+',
+        @copy_template = N'
+    INSERT INTO
+        {temp_table}
+    WITH
+        (TABLOCK)
+    (
+        {insert_list}
+    )
+    SELECT
+        xe.event_data
+    FROM #xe_events AS xe
+    WHERE xe.object_name = N''{object_name}''
+    OPTION(RECOMPILE);
+';
+
     /*If any parameters that expect non-NULL default values get passed in with NULLs, fix them*/
     SELECT
         @what_to_check = LOWER(ISNULL(@what_to_check, 'all')),
@@ -529,8 +623,27 @@ AND   ca.utc_timestamp < @end_date';
                            'lock', 'locks'
                          )
                     THEN 'locking'
-                    ELSE 'all'
+                    ELSE @what_to_check
                 END;
+    END;
+
+    /*
+    Anything else used to fall back to 'all' without a word, which ran
+    the full (and slowest) check for a typo. Say what is valid instead.
+    */
+    IF @what_to_check NOT IN
+        (
+            'all',
+            'cpu',
+            'disk',
+            'locking',
+            'memory',
+            'system',
+            'waits'
+        )
+    BEGIN
+        RAISERROR('@what_to_check = ''%s'' is not valid. Use all, waits, disk, cpu, memory, system, or locking (wait, blocking, blocks, deadlock, deadlocks, lock, and locks also work).', 11, 1, @what_to_check) WITH NOWAIT;
+        RETURN;
     END;
 
     /* Validate logging parameters */
@@ -828,9 +941,36 @@ AND   ca.utc_timestamp < @end_date';
                     hasUnresolvableDeadlockOccurred bit NULL,
                     hasDeadlockedSchedulersOccurred bit NULL,
                     didBlockingOccur bit NULL,
+                    pending_user_requests bigint NULL,
+                    pending_entry_points nvarchar(max) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU tasks logging.'', 0, 1, ''' + REPLACE(@log_table_cpu_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
+            END;
+
+            /*
+            Tables created by older versions do not have the pending task
+            columns, which replaced the _PendingTasks table. Add them.
+            */
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON s.schema_id = t.schema_id
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.columns AS c
+                  ON c.object_id = t.object_id
+                WHERE t.name = @table_name + N''_CPUTasks''
+                AND   s.name = @schema_name
+                AND   c.name = N''pending_user_requests''
+            )
+            BEGIN
+                ALTER TABLE ' + @log_table_cpu_tasks + N'
+                ADD
+                    pending_user_requests bigint NULL,
+                    pending_entry_points nvarchar(max) NULL;
+                IF @debug = 1 BEGIN RAISERROR(''Added the pending task columns to %s.'', 0, 1, ''' + REPLACE(@log_table_cpu_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -842,7 +982,12 @@ AND   ca.utc_timestamp < @end_date';
             @log_table_name_prefix,
             @debug;
 
-        /* Create MemoryConditions table if it doesn't exist */
+        /*
+        Create MemoryConditions table if it doesn't exist. Tables from
+        older versions also have a name column, which was always the
+        first memory report's name. It is nullable in every version, so
+        the insert below, which leaves it out, works against them too.
+        */
         SET @create_sql = N'
             IF NOT EXISTS
             (
@@ -864,7 +1009,6 @@ AND   ca.utc_timestamp < @end_date';
                     outOfMemoryExceptions bigint NULL,
                     isAnyPoolOutOfMemory bit NULL,
                     processOutOfMemoryPeriod bigint NULL,
-                    name nvarchar(128) NULL,
                     available_physical_memory_gb bigint NULL,
                     available_virtual_memory_gb bigint NULL,
                     available_paging_file_gb bigint NULL,
@@ -1156,45 +1300,6 @@ AND   ca.utc_timestamp < @end_date';
             @log_table_name_prefix,
             @debug;
 
-        /* Create PendingTasks table if it doesn't exist */
-        SET @create_sql = N'
-            IF NOT EXISTS
-            (
-                SELECT
-                    1/0
-                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
-                  ON t.schema_id = s.schema_id
-                WHERE t.name = @table_name + N''_PendingTasks''
-                AND   s.name = @schema_name
-            )
-            BEGIN
-                CREATE TABLE ' + @log_table_pending_tasks + N'
-                (
-                    id bigint IDENTITY,
-                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    event_time datetime2(7) NULL,
-                    pending_tasks bigint NULL,
-                    entry_point_name sysname NULL,
-                    module_name sysname NULL,
-                    image_base varbinary(8) NULL,
-                    size bigint NULL,
-                    address varbinary(8) NULL,
-                    entry_point_count bigint NULL,
-                    PRIMARY KEY CLUSTERED (collection_time, id)
-                );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for pending tasks logging.'', 0, 1, ''' + REPLACE(@log_table_pending_tasks, N'''', N'''''') + N''') WITH NOWAIT; END;
-            END';
-
-        EXECUTE sys.sp_executesql
-            @create_sql,
-          N'@schema_name sysname,
-            @table_name sysname,
-            @debug bit',
-            @log_schema_name,
-            @log_table_name_prefix,
-            @debug;
-
         /* Create Blocking table if it doesn't exist */
         SET @create_sql = N'
             IF NOT EXISTS
@@ -1367,8 +1472,16 @@ AND   ca.utc_timestamp < @end_date';
     DELETE FROM ' + @log_table_severe_errors + '
     WHERE collection_time < @cleanup_date;
 
-    DELETE FROM ' + @log_table_pending_tasks + '
-    WHERE collection_time < @cleanup_date;
+    /*
+    Pending task entry points used to go to _PendingTasks; they are
+    columns of _CPUTasks now. The table is no longer created or
+    written, but one left by an older version still ages out.
+    */
+    IF OBJECT_ID(N''' + REPLACE(@log_table_pending_tasks, N'''', N'''''') + ''', N''U'') IS NOT NULL
+    BEGIN
+        DELETE FROM ' + @log_table_pending_tasks + '
+        WHERE collection_time < @cleanup_date;
+    END;
 
     DELETE FROM ' + @log_table_blocking + '
     WHERE collection_time < @cleanup_date;
@@ -1488,10 +1601,14 @@ AND   ca.utc_timestamp < @end_date';
         OPTION(RECOMPILE);
     END;
 
+    /*
+    The primary key turns each NOT EXISTS probe against this list into a
+    seek; without it, every wait row scanned the whole list.
+    */
     CREATE TABLE
         #ignore_waits
     (
-        wait_type nvarchar(60) NOT NULL
+        wait_type nvarchar(60) NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
@@ -1509,7 +1626,8 @@ AND   ca.utc_timestamp < @end_date';
     CREATE TABLE
         #sp_server_diagnostics_component_result
     (
-        sp_server_diagnostics_component_result xml NOT NULL
+        sp_server_diagnostics_component_result xml NOT NULL,
+        component varchar(30) NULL
     );
 
     CREATE TABLE
@@ -1526,6 +1644,13 @@ AND   ca.utc_timestamp < @end_date';
     );
 
     CREATE TABLE
+        #xe_events
+    (
+        object_name sysname NOT NULL,
+        event_data xml NOT NULL
+    );
+
+    CREATE TABLE
         #x
     (
         x xml NOT NULL
@@ -1534,7 +1659,8 @@ AND   ca.utc_timestamp < @end_date';
     CREATE TABLE
         #ring_buffer
     (
-        ring_buffer xml NOT NULL
+        ring_buffer xml NOT NULL,
+        event_name sysname NULL
     );
 
     CREATE TABLE
@@ -1647,6 +1773,91 @@ AND   ca.utc_timestamp < @end_date';
     IF  @mi = 0
     AND @use_ring_buffer = 0
     BEGIN
+        /*
+        A pass that filters on one object_name has the filter pushed into
+        the file reader, which skips the other events: about 2 s for a
+        rare event type, and nearly 4 s for the two that fire every
+        minute or five (sp_server_diagnostics_component_result and the
+        scheduler monitor), on a week of files. A pass over a list of
+        names reads every event, 6 to 7 s whatever the list. So read
+        everything in one pass into #xe_events, and copy each type into
+        its own table, only when that replaces three or more passes, or
+        both busy ones. Otherwise keep one pass per event type. The
+        default run used to read the files seven times.
+        */
+        SELECT
+            @event_tables = COUNT_BIG(DISTINCT ca.temp_table)
+        FROM @collection_areas AS ca
+        WHERE ca.should_collect = 1;
+
+        SELECT
+            @busy_event_tables = COUNT_BIG(DISTINCT ca.temp_table)
+        FROM @collection_areas AS ca
+        WHERE ca.should_collect = 1
+        AND   ca.temp_table IN
+              (
+                  N'#sp_server_diagnostics_component_result',
+                  N'#scheduler_monitor'
+              );
+
+        IF @event_tables >= 3
+        OR @busy_event_tables = 2
+        BEGIN
+            SELECT
+                @object_list =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                N', N''' + ca.object_name + N''''
+                            FROM @collection_areas AS ca
+                            WHERE ca.should_collect = 1
+                            GROUP BY
+                                ca.object_name
+                            ORDER BY
+                                ca.object_name
+                            FOR XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        2,
+                        N''
+                    );
+
+            SET
+                @collection_sql =
+                    REPLACE
+                    (
+                        @one_pass_template,
+                        '{object_list}',
+                        @object_list
+                    );
+
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Collecting all event types in one pass for dates between %s and %s', 0, 1, @start_date_debug, @end_date_debug) WITH NOWAIT;
+                PRINT @collection_sql;
+                SET STATISTICS XML ON;
+            END;
+
+            EXECUTE sys.sp_executesql
+                @collection_sql,
+                @params,
+                @start_date,
+                @end_date;
+
+            IF @debug = 1
+            BEGIN
+                SET STATISTICS XML OFF;
+            END;
+
+            /* The loop below now copies from #xe_events instead of reading the files */
+            SELECT
+                @sql_template = @copy_template,
+                @one_pass = 1;
+        END;
+
         OPEN @collection_cursor;
 
         FETCH NEXT
@@ -1718,6 +1929,12 @@ AND   ca.utc_timestamp < @end_date';
                 @insert_list;
         END;
 
+        /* Each event type has its own copy now */
+        IF @one_pass = 1
+        BEGIN
+            TRUNCATE TABLE #xe_events;
+        END;
+
         IF @debug = 1
         BEGIN
             RAISERROR('Data collection complete', 0, 0) WITH NOWAIT;
@@ -1759,6 +1976,33 @@ AND   ca.utc_timestamp < @end_date';
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
 
+        /*
+        The ring buffer target returns about 4 MB of XML at most, oldest
+        events first, and marks the output truncated="1" when it had to
+        leave events out. The ones left out are the newest, so only warn
+        when the window (@end_date, already UTC) reaches past the newest
+        event that was returned.
+        */
+        SELECT
+            @ring_buffer_events = x.x.value('(/RingBufferTarget/@eventCount)[1]', 'integer'),
+            @ring_buffer_shown = x.x.value('count(/RingBufferTarget/event)', 'integer')
+        FROM #x AS x
+        WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+        AND   x.x.exist('(/RingBufferTarget/event/@timestamp)[last()][. < sql:variable("@end_date")]') = 1
+        OPTION(RECOMPILE);
+
+        IF @ring_buffer_shown IS NOT NULL
+        BEGIN
+            IF @mi = 0
+            BEGIN
+                RAISERROR('Warning: the system_health ring buffer output was cut off. It returned %i of its %i events, and the newest events are the ones missing. The event_file target has the full history: run with @use_ring_buffer = 0.', 0, 1, @ring_buffer_shown, @ring_buffer_events) WITH NOWAIT;
+            END;
+            ELSE
+            BEGIN
+                RAISERROR('Warning: the system_health ring buffer output was cut off. It returned %i of its %i events, and the newest events are the ones missing.', 0, 1, @ring_buffer_shown, @ring_buffer_events) WITH NOWAIT;
+            END;
+        END;
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1777,10 +2021,16 @@ AND   ca.utc_timestamp < @end_date';
         WITH
             (TABLOCKX)
         (
-            ring_buffer
+            ring_buffer,
+            event_name
         )
         SELECT
-            x = e.x.query('.')
+            x = e.x.query('.'),
+            /*
+            Keep the name, so each event type below is a plain filter
+            instead of another pass over every event with exist(@name).
+            */
+            event_name = e.x.value('@name', 'sysname')
         FROM #x AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
         WHERE 1 = 1
@@ -1814,10 +2064,9 @@ AND   ca.utc_timestamp < @end_date';
                 wait_info
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "wait_info"]') = 1
+            WHERE rb.event_name = N'wait_info'
             OPTION(RECOMPILE);
         END;
         /*
@@ -1844,10 +2093,9 @@ AND   ca.utc_timestamp < @end_date';
                 sp_server_diagnostics_component_result
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
+            WHERE rb.event_name = N'sp_server_diagnostics_component_result'
             OPTION(RECOMPILE);
         END;
 
@@ -1871,10 +2119,9 @@ AND   ca.utc_timestamp < @end_date';
                 xml_deadlock_report
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "xml_deadlock_report"]') = 1
+            WHERE rb.event_name = N'xml_deadlock_report'
             OPTION(RECOMPILE);
         END;
 
@@ -1895,10 +2142,9 @@ AND   ca.utc_timestamp < @end_date';
                 scheduler_monitor
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "scheduler_monitor_system_health_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'scheduler_monitor_system_health_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
@@ -1919,10 +2165,9 @@ AND   ca.utc_timestamp < @end_date';
                 error_reported
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "error_reported"]') = 1
+            WHERE rb.event_name = N'error_reported'
             OPTION(RECOMPILE);
         END;
 
@@ -1943,10 +2188,9 @@ AND   ca.utc_timestamp < @end_date';
                 memory_broker
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'memory_broker_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
@@ -1967,14 +2211,33 @@ AND   ca.utc_timestamp < @end_date';
                 memory_node_oom
             )
             SELECT
-                e.x.query('.')
+                rb.ring_buffer
             FROM #ring_buffer AS rb
-            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-            WHERE e.x.exist('@name[.= "memory_node_oom_ring_buffer_recorded"]') = 1
+            WHERE rb.event_name = N'memory_node_oom_ring_buffer_recorded'
             OPTION(RECOMPILE);
         END;
 
     END; /*End Managed Instance collection*/
+
+    /*
+    Each sp_server_diagnostics_component_result event belongs to one
+    component (SYSTEM, RESOURCE, QUERY_PROCESSING, IO_SUBSYSTEM, EVENTS).
+    Tag every row once so each section below reads only its own events,
+    instead of running an exist() over all of them. component is the
+    event's first data field, so the first text in the event is its
+    name; the @name lookup is the fallback.
+    */
+    UPDATE
+        sdcr
+    SET
+        sdcr.component =
+            CASE
+                WHEN sdcr.sp_server_diagnostics_component_result.value('(/event/data/@name)[1]', 'varchar(30)') = 'component'
+                THEN sdcr.sp_server_diagnostics_component_result.value('(/event/data/text/text())[1]', 'varchar(30)')
+                ELSE sdcr.sp_server_diagnostics_component_result.value('(/event/data[@name="component"]/text/text())[1]', 'varchar(30)')
+            END
+    FROM #sp_server_diagnostics_component_result AS sdcr
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -2042,7 +2305,12 @@ AND   ca.utc_timestamp < @end_date';
             wait_resource = w.x.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)'),
             sql_text_pre = w.x.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(max)'),
             session_id = w.x.value('(action[@name="session_id"]/value/text())[1]', 'integer'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #waits_queries
         FROM #wait_info AS wi
         CROSS APPLY wi.wait_info.nodes('//event') AS w(x)
@@ -2050,12 +2318,13 @@ AND   ca.utc_timestamp < @end_date';
         AND   w.x.exist('(action[@name="sql_text"]/value/text())') = 1
         AND   w.x.exist('(action[@name="sql_text"]/value/text()[contains(upper-case(.), "BACKUP")] )') = 0
         AND   w.x.exist('(data[@name="duration"]/value/text())[.>= sql:variable("@wait_duration_ms")]') = 1
+        /* Compare the wait type as a value, not one exist() per ignored wait */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w.x.exist('(data[@name="wait_type"]/text/text())[1][.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w.x.value('(data[@name="wait_type"]/text/text())[1]', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -2204,8 +2473,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE wq.event_time > @max_event_time';
@@ -2276,24 +2547,32 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
             average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
             max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #topwaits_count
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
+        WHERE wi.component = 'QUERY_PROCESSING'
+        /*
+        Compare the wait type as a value: an exist() per ignored wait ran
+        one XQuery for every wait row times every row in #ignore_waits.
+        */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w2.x2.value('@waitType', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -2484,8 +2763,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2555,25 +2836,33 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
             average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
             max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #topwaits_duration
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
+        WHERE wi.component = 'QUERY_PROCESSING'
         AND   w2.x2.exist('@averageWaitTime[.>= sql:variable("@wait_duration_ms")]') = 1
+        /*
+        Compare the wait type as a value: an exist() per ignored wait ran
+        one XQuery for every wait row times every row in #ignore_waits.
+        */
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w2.x2.value('@waitType', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
@@ -2745,8 +3034,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE t.event_time_rounded > @max_event_time';
@@ -2818,21 +3109,25 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            ioLatchTimeouts = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
-            intervalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
-            totalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            ioLatchTimeouts = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
+            intervalLongIos = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
+            totalLongIos = wi.sp_server_diagnostics_component_result.value('(/event/data/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
             longestPendingRequests_duration_ms = CONVERT(bigint, w2.x2.value('@duration', 'bigint')),
             longestPendingRequests_filePath = w2.x2.value('@filePath', 'nvarchar(500)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #io
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "IO_SUBSYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        OUTER APPLY wi.sp_server_diagnostics_component_result.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
+        WHERE wi.component = 'IO_SUBSYSTEM'
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -2962,8 +3257,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE i.event_time > @max_event_time';
@@ -3037,31 +3334,146 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            name = w.x.value('@name', 'nvarchar(256)'),
-            component = w.x.value('(data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            maxWorkers = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@maxWorkers)[1]', 'bigint'),
-            workersCreated = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@workersCreated)[1]', 'bigint'),
-            workersIdle = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@workersIdle)[1]', 'bigint'),
-            tasksCompletedWithinInterval = w.x.value('(//data[@name="data"]/value/queryProcessing/@tasksCompletedWithinInterval)[1]', 'bigint'),
-            pendingTasks = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks)[1]', 'bigint'),
-            oldestPendingTaskWaitingTime = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
-            hasUnresolvableDeadlockOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
-            hasDeadlockedSchedulersOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
-            didBlockingOccur = w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report'),
-            xml = w.x.query('.')
+            name = wi.sp_server_diagnostics_component_result.value('(/event/@name)[1]', 'nvarchar(256)'),
+            component = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            maxWorkers = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@maxWorkers)[1]', 'bigint'),
+            workersCreated = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@workersCreated)[1]', 'bigint'),
+            workersIdle = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@workersIdle)[1]', 'bigint'),
+            tasksCompletedWithinInterval = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@tasksCompletedWithinInterval)[1]', 'bigint'),
+            pendingTasks = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint'),
+            oldestPendingTaskWaitingTime = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
+            /*
+            How to read the pending task columns: pendingTasks is how many
+            tasks were waiting for a worker thread when the snapshot was
+            taken. pending_user_requests is how many of them were client
+            requests (batches and RPCs, the Process Command entry point).
+            pending_entry_points lists the function each pending task will
+            start in, with its count: the name SQL Server gives it, or
+            module+offset for internal tasks, which stays the same across
+            restarts of one build and can be looked up in that build's
+            public symbols. User requests pending, with a non-zero
+            oldestPendingTaskWaitingTime and workersCreated near
+            maxWorkers, means worker thread starvation (THREADPOOL waits);
+            look at blocking and parallelism in the same snapshot.
+            Internal tasks pending for 0 ms are noise.
+            */
+            pending_user_requests =
+                CONVERT
+                (
+                    bigint,
+                    wi.sp_server_diagnostics_component_result.value
+                    (
+                        'sum(/event/data/value/queryProcessing/pendingTasks/entryPoint[@name = "Process Command"]/@count)',
+                        'float'
+                    )
+                ),
+            pending_entry_points =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ep.entry_point +
+                            N' (' +
+                            CONVERT(nvarchar(20), ep.entry_point_count) +
+                            N')'
+                        FROM
+                        (
+                            SELECT
+                                entry_point =
+                                    ISNULL
+                                    (
+                                        e.e.value('@name', 'sysname'),
+                                        e.e.value('@moduleName', 'sysname') +
+                                        N'+0x' +
+                                        LOWER
+                                        (
+                                            SUBSTRING
+                                            (
+                                                hx.offset_hex,
+                                                PATINDEX('%[^0]%', hx.offset_hex),
+                                                16
+                                            )
+                                        )
+                                    ),
+                                entry_point_count =
+                                    e.e.value('@count', 'bigint')
+                            FROM wi.sp_server_diagnostics_component_result.nodes('/event/data/value/queryProcessing/pendingTasks/entryPoint') AS e(e)
+                            CROSS APPLY
+                            (
+                                /*
+                                The hex attributes can have an odd number of
+                                digits, and xs:hexBinary returns nothing for
+                                those, so pad them to an even length.
+                                */
+                                SELECT
+                                    image_base =
+                                        e.e.value
+                                        (
+                                            '
+                                            for $h in substring(string((@imageBase)[1]), 3)[. != ""]
+                                            return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                                            ',
+                                            'varbinary(8)'
+                                        ),
+                                    address =
+                                        e.e.value
+                                        (
+                                            '
+                                            for $h in substring(string((@address)[1]), 3)[. != ""]
+                                            return xs:hexBinary(if (string-length($h) mod 2 = 1) then concat("0", $h) else $h)
+                                            ',
+                                            'varbinary(8)'
+                                        )
+                            ) AS hp
+                            CROSS APPLY
+                            (
+                                SELECT
+                                    offset_hex =
+                                        CONVERT
+                                        (
+                                            varchar(16),
+                                            CONVERT
+                                            (
+                                                varbinary(8),
+                                                CONVERT(bigint, hp.address) - CONVERT(bigint, hp.image_base)
+                                            ),
+                                            2
+                                        )
+                            ) AS hx
+                        ) AS ep
+                        ORDER BY
+                            ep.entry_point_count DESC,
+                            ep.entry_point
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                ),
+            hasUnresolvableDeadlockOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
+            hasDeadlockedSchedulersOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
+            didBlockingOccur = wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report'),
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        WHERE wi.component = 'QUERY_PROCESSING'
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         /* Threshold is honored whether or not @warnings_only is set — the
            parameter documents "minimum pending tasks to display" and the
            previous `OR @warnings_only = 0` short-circuit silently ignored
            the user-supplied value whenever warnings-only was off. */
-        AND   w.x.exist('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks[.>= sql:variable("@pending_task_threshold")])') = 1
+        AND   wi.sp_server_diagnostics_component_result.value('(/event/data/value/queryProcessing/@pendingTasks)[1]', 'bigint') >= @pending_task_threshold
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -3132,6 +3544,8 @@ AND   ca.utc_timestamp < @end_date';
                     sd.tasksCompletedWithinInterval,
                     sd.pendingTasks,
                     sd.oldestPendingTaskWaitingTime,
+                    sd.pending_user_requests,
+                    sd.pending_entry_points,
                     sd.hasUnresolvableDeadlockOccurred,
                     sd.hasDeadlockedSchedulersOccurred,
                     sd.didBlockingOccur
@@ -3166,8 +3580,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE sd.event_time > @max_event_time';
@@ -3195,6 +3611,8 @@ AND   ca.utc_timestamp < @end_date';
                     tasksCompletedWithinInterval,
                     pendingTasks,
                     oldestPendingTaskWaitingTime,
+                    pending_user_requests,
+                    pending_entry_points,
                     hasUnresolvableDeadlockOccurred,
                     hasDeadlockedSchedulersOccurred,
                     didBlockingOccur
@@ -3226,234 +3644,6 @@ AND   ca.utc_timestamp < @end_date';
         END;
     END;/*End CPU*/
 
-    /*Grab pending task entry point details*/
-    IF @what_to_check IN ('all', 'cpu')
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Parsing pending task entry point details', 0, 0) WITH NOWAIT;
-        END;
-
-        SELECT
-            event_time =
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        GETUTCDATE(),
-                        SYSDATETIME()
-                    ),
-                    w.x.value('@timestamp', 'datetime2')
-                ),
-            pending_tasks =
-                w.x.value
-                (
-                    '(/event/data[@name="data"]/value/queryProcessing/@pendingTasks)[1]',
-                    'bigint'
-                ),
-            entry_point_name =
-                ep.e.value('@name', 'sysname'),
-            module_name =
-                ep.e.value('@moduleName', 'sysname'),
-            image_base =
-                ep.e.value
-                (
-                    'xs:hexBinary(substring(string(@imageBase), 3))',
-                    'varbinary(8)'
-                ),
-            size =
-                CONVERT
-                (
-                    bigint,
-                    ep.e.value
-                    (
-                        '
-                        xs:hexBinary
-                        (
-                          if (string-length(substring(string(@size), 3)) mod 2 = 1)
-                          then concat("0", substring(string(@size), 3))
-                          else substring(string(@size), 3)
-                        )
-                        ',
-                        'varbinary(8)'
-                    )
-                ),
-            address =
-                ep.e.value
-                (
-                    'xs:hexBinary(substring(string(@address), 3))',
-                    'varbinary(8)'
-                ),
-            entry_point_count =
-                ep.e.value('@count', 'bigint')
-        INTO #pending_task_details
-        FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        /* Hardcoded threshold > 1 ignored the @pending_task_threshold
-           parameter. Replaced with sql:variable() binding so the user's
-           value actually takes effect here too. */
-        CROSS APPLY w.x.nodes('/event/data[@name="data"]/value/queryProcessing[@pendingTasks >= sql:variable("@pending_task_threshold")]/pendingTasks/entryPoint') AS ep(e)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE, MAXDOP 1);
-
-        IF @debug = 1
-        BEGIN
-            SELECT TOP (100)
-                table_name = '#pending_task_details, top 100 rows',
-                x.*
-            FROM #pending_task_details AS x
-            ORDER BY
-                x.event_time DESC;
-        END;
-    END;
-
-    /*Pending task entry point details output*/
-    IF @what_to_check IN ('all', 'cpu')
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Parsing pending task entry point output', 0, 0) WITH NOWAIT;
-        END;
-
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #pending_task_details AS ptd
-        )
-        BEGIN
-            IF @log_to_table = 0
-            BEGIN
-                SELECT
-                    finding =
-                        CASE
-                            WHEN @what_to_check NOT IN ('all', 'cpu')
-                            THEN 'cpu skipped, @what_to_check set to ' +
-                                 @what_to_check
-                            WHEN @what_to_check IN ('all', 'cpu')
-                            THEN 'no pending task entry point details found between ' +
-                                 RTRIM(CONVERT(date, @start_date)) +
-                                 ' and ' +
-                                 RTRIM(CONVERT(date, @end_date)) +
-                                 ' with @warnings_only set to ' +
-                                 RTRIM(@warnings_only) +
-                                 '.'
-                            ELSE 'no pending task entry point details found!'
-                        END;
-
-                RAISERROR('No pending task entry point data found', 0, 0) WITH NOWAIT;
-            END;
-        END;
-        ELSE
-        BEGIN
-            /* Build the query */
-            SET @dsql = N'
-                SELECT
-                    ' + CASE
-                            WHEN @log_to_table = 1
-                            THEN N''
-                            ELSE N'finding = ''pending task entry point details'','
-                        END +
-                  N'
-                    ptd.event_time,
-                    ptd.pending_tasks,
-                    ptd.entry_point_name,
-                    ptd.module_name,
-                    ptd.image_base,
-                    ptd.size,
-                    ptd.address,
-                    ptd.entry_point_count
-                FROM #pending_task_details AS ptd';
-
-            /* Add the WHERE clause only for table logging */
-            IF @log_to_table = 1
-            BEGIN
-                /* Get max event_time for pending task details */
-                SET @mdsql_execute =
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            REPLACE
-                            (
-                                @mdsql_template,
-                                '{table_check_literal}',
-                                REPLACE(@log_table_pending_tasks, N'''', N'''''')
-                            ),
-                            '{table_check}',
-                            @log_table_pending_tasks
-                        ),
-                        '{date_column}',
-                        'event_time'
-                    );
-
-                IF @debug = 1
-                BEGIN
-                    PRINT @mdsql_execute;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
-
-                SET @dsql += N'
-            WHERE ptd.event_time > @max_event_time';
-            END;
-
-            /* Add the ORDER BY clause */
-            SET @dsql += N'
-            ORDER BY
-                ptd.event_time DESC
-            OPTION(RECOMPILE);
-            ';
-
-            /* Handle table logging */
-            IF @log_to_table = 1
-            BEGIN
-                SET @insert_sql = N'
-                INSERT INTO
-                    ' + @log_table_pending_tasks + N'
-                (
-                    event_time,
-                    pending_tasks,
-                    entry_point_name,
-                    module_name,
-                    image_base,
-                    size,
-                    address,
-                    entry_point_count
-                )' +
-                    @dsql;
-
-                IF @debug = 1
-                BEGIN
-                    PRINT @insert_sql;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @insert_sql,
-                  N'@max_event_time datetime2(7)',
-                    @max_event_time;
-            END;
-
-            /* Execute the query for client results */
-            IF @log_to_table = 0
-            BEGIN
-                IF @debug = 1
-                BEGIN
-                    PRINT @dsql;
-                END;
-
-                EXECUTE sys.sp_executesql
-                    @dsql;
-            END;
-        END;
-    END;/*End pending task entry point details*/
-
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
     BEGIN
@@ -3479,38 +3669,121 @@ AND   ca.utc_timestamp < @end_date';
             outOfMemoryExceptions = r.c.value('@outOfMemoryExceptions', 'bigint'),
             isAnyPoolOutOfMemory = r.c.value('@isAnyPoolOutOfMemory', 'bit'),
             processOutOfMemoryPeriod = r.c.value('@processOutOfMemoryPeriod', 'bigint'),
-            name = r.c.value('(//memoryReport/@name)[1]', 'varchar(128)'),
-            available_physical_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            available_virtual_memory_gb =  CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            available_paging_file_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            working_set_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
-            percent_of_committed_memory_in_ws = r.c.value('(//memoryReport/entry[@description[.="Percent of Committed Memory in WS"]]/@value)[1]', 'bigint'),
-            page_faults = r.c.value('(//memoryReport/entry[@description[.="Page Faults"]]/@value)[1]', 'bigint'),
-            system_physical_memory_high = r.c.value('(//memoryReport/entry[@description[.="System physical memory high"]]/@value)[1]', 'bigint'),
-            system_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="System physical memory low"]]/@value)[1]', 'bigint'),
-            process_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process physical memory low"]]/@value)[1]', 'bigint'),
-            process_virtual_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process virtual memory low"]]/@value)[1]', 'bigint'),
-            vm_reserved_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Reserved"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            vm_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            locked_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Locked Pages Allocated"]]/@value)[1]', 'bigint'),
-            large_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Large Pages Allocated"]]/@value)[1]', 'bigint'),
-            emergency_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            emergency_memory_in_use_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory In Use"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            target_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Target Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            current_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Current Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
-            pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Pages Allocated"]]/@value)[1]', 'bigint'),
-            pages_reserved = r.c.value('(//memoryReport/entry[@description[.="Pages Reserved"]]/@value)[1]', 'bigint'),
-            pages_free = r.c.value('(//memoryReport/entry[@description[.="Pages Free"]]/@value)[1]', 'bigint'),
-            pages_in_use = r.c.value('(//memoryReport/entry[@description[.="Pages In Use"]]/@value)[1]', 'bigint'),
-            page_alloc_potential = r.c.value('(//memoryReport/entry[@description[.="Page Alloc Potential"]]/@value)[1]', 'bigint'),
-            numa_growth_phase = r.c.value('(//memoryReport/entry[@description[.="NUMA Growth Phase"]]/@value)[1]', 'bigint'),
-            last_oom_factor = r.c.value('(//memoryReport/entry[@description[.="Last OOM Factor"]]/@value)[1]', 'bigint'),
-            last_os_error = r.c.value('(//memoryReport/entry[@description[.="Last OS Error"]]/@value)[1]', 'bigint'),
-            xml = r.c.query('.')
+            available_physical_memory_gb = CONVERT(bigint, mr.available_physical_memory / 1024 / 1024 / 1024),
+            available_virtual_memory_gb = CONVERT(bigint, mr.available_virtual_memory / 1024 / 1024 / 1024),
+            available_paging_file_gb = CONVERT(bigint, mr.available_paging_file / 1024 / 1024 / 1024),
+            working_set_gb = CONVERT(bigint, mr.working_set / 1024 / 1024 / 1024),
+            percent_of_committed_memory_in_ws = mr.percent_of_committed_memory_in_ws,
+            page_faults = mr.page_faults,
+            system_physical_memory_high = mr.system_physical_memory_high,
+            system_physical_memory_low = mr.system_physical_memory_low,
+            process_physical_memory_low = mr.process_physical_memory_low,
+            process_virtual_memory_low = mr.process_virtual_memory_low,
+            vm_reserved_gb = CONVERT(bigint, mr.vm_reserved / 1024 / 1024),
+            vm_committed_gb = CONVERT(bigint, mr.vm_committed / 1024 / 1024),
+            locked_pages_allocated = mr.locked_pages_allocated,
+            large_pages_allocated = mr.large_pages_allocated,
+            emergency_memory_gb = CONVERT(bigint, mr.emergency_memory / 1024 / 1024),
+            emergency_memory_in_use_gb = CONVERT(bigint, mr.emergency_memory_in_use / 1024 / 1024),
+            target_committed_gb = CONVERT(bigint, mr.target_committed / 1024 / 1024),
+            current_committed_gb = CONVERT(bigint, mr.current_committed / 1024 / 1024),
+            pages_allocated = mr.pages_allocated,
+            pages_reserved = mr.pages_reserved,
+            pages_free = mr.pages_free,
+            pages_in_use = mr.pages_in_use,
+            page_alloc_potential = mr.page_alloc_potential,
+            numa_growth_phase = mr.numa_growth_phase,
+            last_oom_factor = mr.last_oom_factor,
+            last_os_error = mr.last_os_error,
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN r.c.query('.')
+                END
         INTO #memory
         FROM #sp_server_diagnostics_component_result AS s
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
-        WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
+        OUTER APPLY
+        (
+            /*
+            Each entry used to be its own //memoryReport/entry[@description]
+            search of the whole event, 26 of them per row. Shred the
+            entries once and PIVOT them by description instead.
+            Descriptions are unique within an event, so MAX returns the
+            same value the [1] did, and only the 26 values we read are
+            converted.
+            */
+            SELECT
+                available_physical_memory = CONVERT(bigint, p.[Available Physical Memory]),
+                available_virtual_memory = CONVERT(bigint, p.[Available Virtual Memory]),
+                available_paging_file = CONVERT(bigint, p.[Available Paging File]),
+                working_set = CONVERT(bigint, p.[Working Set]),
+                percent_of_committed_memory_in_ws = CONVERT(bigint, p.[Percent of Committed Memory in WS]),
+                page_faults = CONVERT(bigint, p.[Page Faults]),
+                system_physical_memory_high = CONVERT(bigint, p.[System physical memory high]),
+                system_physical_memory_low = CONVERT(bigint, p.[System physical memory low]),
+                process_physical_memory_low = CONVERT(bigint, p.[Process physical memory low]),
+                process_virtual_memory_low = CONVERT(bigint, p.[Process virtual memory low]),
+                vm_reserved = CONVERT(bigint, p.[VM Reserved]),
+                vm_committed = CONVERT(bigint, p.[VM Committed]),
+                locked_pages_allocated = CONVERT(bigint, p.[Locked Pages Allocated]),
+                large_pages_allocated = CONVERT(bigint, p.[Large Pages Allocated]),
+                emergency_memory = CONVERT(bigint, p.[Emergency Memory]),
+                emergency_memory_in_use = CONVERT(bigint, p.[Emergency Memory In Use]),
+                target_committed = CONVERT(bigint, p.[Target Committed]),
+                current_committed = CONVERT(bigint, p.[Current Committed]),
+                pages_allocated = CONVERT(bigint, p.[Pages Allocated]),
+                pages_reserved = CONVERT(bigint, p.[Pages Reserved]),
+                pages_free = CONVERT(bigint, p.[Pages Free]),
+                pages_in_use = CONVERT(bigint, p.[Pages In Use]),
+                page_alloc_potential = CONVERT(bigint, p.[Page Alloc Potential]),
+                numa_growth_phase = CONVERT(bigint, p.[NUMA Growth Phase]),
+                last_oom_factor = CONVERT(bigint, p.[Last OOM Factor]),
+                last_os_error = CONVERT(bigint, p.[Last OS Error])
+            FROM
+            (
+                SELECT
+                    description = en.e.value('@description', 'nvarchar(128)'),
+                    value = en.e.value('@value', 'nvarchar(30)')
+                FROM r.c.nodes('memoryReport/entry') AS en(e)
+            ) AS e
+            PIVOT
+            (
+                MAX(e.value)
+                FOR e.description IN
+                (
+                    [Available Physical Memory],
+                    [Available Virtual Memory],
+                    [Available Paging File],
+                    [Working Set],
+                    [Percent of Committed Memory in WS],
+                    [Page Faults],
+                    [System physical memory high],
+                    [System physical memory low],
+                    [Process physical memory low],
+                    [Process virtual memory low],
+                    [VM Reserved],
+                    [VM Committed],
+                    [Locked Pages Allocated],
+                    [Large Pages Allocated],
+                    [Emergency Memory],
+                    [Emergency Memory In Use],
+                    [Target Committed],
+                    [Current Committed],
+                    [Pages Allocated],
+                    [Pages Reserved],
+                    [Pages Free],
+                    [Pages In Use],
+                    [Page Alloc Potential],
+                    [NUMA Growth Phase],
+                    [Last OOM Factor],
+                    [Last OS Error]
+                )
+            ) AS p
+        ) AS mr
+        WHERE s.component = 'RESOURCE'
+        AND  (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -3569,7 +3842,6 @@ AND   ca.utc_timestamp < @end_date';
                 m.outOfMemoryExceptions,
                 m.isAnyPoolOutOfMemory,
                 m.processOutOfMemoryPeriod,
-                m.name,
                 m.available_physical_memory_gb,
                 m.available_virtual_memory_gb,
                 m.available_paging_file_gb,
@@ -3627,8 +3899,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE m.event_time > @max_event_time';
@@ -3653,7 +3927,6 @@ AND   ca.utc_timestamp < @end_date';
                 outOfMemoryExceptions,
                 isAnyPoolOutOfMemory,
                 processOutOfMemoryPeriod,
-                name,
                 available_physical_memory_gb,
                 available_virtual_memory_gb,
                 available_paging_file_gb,
@@ -3742,7 +4015,12 @@ AND   ca.utc_timestamp < @end_date';
             previously_allocated = w.x.value('(data[@name="previously_allocated"]/value)[1]', 'bigint'),
             broker = w.x.value('(data[@name="broker"]/value)[1]', 'nvarchar(256)'),
             notification = w.x.value('(data[@name="notification"]/value)[1]', 'nvarchar(256)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #memory_broker_info
         FROM #memory_broker AS mb
         CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
@@ -3932,8 +4210,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mbi.event_time > @max_event_time';
@@ -3942,7 +4222,10 @@ AND   ca.utc_timestamp < @end_date';
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
-                mbi.event_time DESC
+                mbi.event_time DESC,
+                mbi.broker_id,
+                mbi.pool_metadata_id,
+                mbi.notification
             OPTION(RECOMPILE);
             ';
 
@@ -4042,7 +4325,12 @@ AND   ca.utc_timestamp < @end_date';
             is_system_physical_memory_low = w.x.value('(data[@name="is_system_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
             is_process_physical_memory_low = w.x.value('(data[@name="is_process_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
             is_process_virtual_memory_low = w.x.value('(data[@name="is_process_virtual_memory_low"]/value)[1]', 'nvarchar(10)'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #memory_node_oom_info
         FROM #memory_node_oom AS mno
         CROSS APPLY mno.memory_node_oom.nodes('//event') AS w(x)
@@ -4332,8 +4620,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
             WHERE mnoi.event_time > @max_event_time';
@@ -4428,29 +4718,33 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
-            spinlockBackoffs = w.x.value('(/event/data[@name="data"]/value/system/@spinlockBackoffs)[1]', 'bigint'),
-            sickSpinlockType = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),
-            sickSpinlockTypeAfterAv = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
-            latchWarnings = w.x.value('(/event/data[@name="data"]/value/system/@latchWarnings)[1]', 'bigint'),
-            isAccessViolationOccurred = w.x.value('(/event/data[@name="data"]/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
-            writeAccessViolationCount = w.x.value('(/event/data[@name="data"]/value/system/@writeAccessViolationCount)[1]', 'bigint'),
-            totalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@totalDumpRequests)[1]', 'bigint'),
-            intervalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@intervalDumpRequests)[1]', 'bigint'),
-            nonYieldingTasksReported = w.x.value('(/event/data[@name="data"]/value/system/@nonYieldingTasksReported)[1]', 'bigint'),
-            pageFaults = w.x.value('(/event/data[@name="data"]/value/system/@pageFaults)[1]', 'bigint'),
-            systemCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@systemCpuUtilization)[1]', 'bigint'),
-            sqlCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@sqlCpuUtilization)[1]', 'bigint'),
-            BadPagesDetected = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesDetected)[1]', 'bigint'),
-            BadPagesFixed = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesFixed)[1]', 'bigint'),
-            xml = w.x.query('.')
+            state = wi.sp_server_diagnostics_component_result.value('(/event/data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
+            spinlockBackoffs = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@spinlockBackoffs)[1]', 'bigint'),
+            sickSpinlockType = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),
+            sickSpinlockTypeAfterAv = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
+            latchWarnings = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@latchWarnings)[1]', 'bigint'),
+            isAccessViolationOccurred = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
+            writeAccessViolationCount = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@writeAccessViolationCount)[1]', 'bigint'),
+            totalDumpRequests = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@totalDumpRequests)[1]', 'bigint'),
+            intervalDumpRequests = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@intervalDumpRequests)[1]', 'bigint'),
+            nonYieldingTasksReported = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@nonYieldingTasksReported)[1]', 'bigint'),
+            pageFaults = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@pageFaults)[1]', 'bigint'),
+            systemCpuUtilization = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@systemCpuUtilization)[1]', 'bigint'),
+            sqlCpuUtilization = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@sqlCpuUtilization)[1]', 'bigint'),
+            BadPagesDetected = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@BadPagesDetected)[1]', 'bigint'),
+            BadPagesFixed = wi.sp_server_diagnostics_component_result.value('(/event/data/value/system/@BadPagesFixed)[1]', 'bigint'),
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN wi.sp_server_diagnostics_component_result.query('/event')
+                END
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "SYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        WHERE wi.component = 'SYSTEM'
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -4552,8 +4846,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE h.event_time > @max_event_time';
@@ -4653,7 +4949,7 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('@timestamp', 'datetime2')
+                    sm.scheduler_monitor.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
             sql_cpu_utilization = v.sql_cpu_utilization,
             other_process_cpu =
@@ -4662,23 +4958,51 @@ AND   ca.utc_timestamp < @end_date';
             memory_utilization = v.memory_utilization,
             page_faults = v.page_faults,
             working_set_delta_mb = v.working_set_delta_mb,
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN sm.scheduler_monitor.query('/event')
+                END
         INTO #scheduler_issues
         FROM #scheduler_monitor AS sm
-        CROSS APPLY sm.scheduler_monitor.nodes('//event') AS w(x)
-        CROSS APPLY
+        OUTER APPLY
         (
+            /*
+            One pass over the event's data elements, PIVOTed by name. A
+            separate (data[@name="..."]/value)[1] per column walked all
+            ten data elements again for each of the five columns.
+            */
             SELECT
-                sql_cpu_utilization = w.x.value('(data[@name="process_utilization"]/value)[1]', 'integer'),
-                system_idle = w.x.value('(data[@name="system_idle"]/value)[1]', 'integer'),
-                memory_utilization = w.x.value('(data[@name="memory_utilization"]/value)[1]', 'integer'),
-                page_faults = w.x.value('(data[@name="page_faults"]/value)[1]', 'bigint'),
+                sql_cpu_utilization = CONVERT(integer, p.process_utilization),
+                system_idle = CONVERT(integer, p.system_idle),
+                memory_utilization = CONVERT(integer, p.memory_utilization),
+                page_faults = CONVERT(bigint, p.page_faults),
                 working_set_delta_mb =
                     CONVERT
                     (
                         decimal(19, 2),
-                        w.x.value('(data[@name="working_set_delta"]/value)[1]', 'bigint') / 1048576.
+                        CONVERT(bigint, p.working_set_delta) / 1048576.
                     )
+            FROM
+            (
+                SELECT
+                    name = dt.d.value('@name', 'nvarchar(60)'),
+                    value = dt.d.value('(value/text())[1]', 'nvarchar(30)')
+                FROM sm.scheduler_monitor.nodes('/event/data') AS dt(d)
+            ) AS d
+            PIVOT
+            (
+                MAX(d.value)
+                FOR d.name IN
+                (
+                    process_utilization,
+                    system_idle,
+                    memory_utilization,
+                    page_faults,
+                    working_set_delta
+                )
+            ) AS p
         ) AS v
         WHERE
         (
@@ -4794,8 +5118,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE si.event_time > @max_event_time';
@@ -4890,11 +5216,18 @@ AND   ca.utc_timestamp < @end_date';
             data element — reading the data axis returns NULL for every
             event, which blanked these two columns for all severe
             errors. session_id further up reads the action axis the
-            same way.
+            same way. DB_NAME(0) returns the current database, so
+            errors raised outside any database (database_id 0) were
+            labeled with the caller's database; NULLIF leaves them NULL.
             */
-            database_name = DB_NAME(w.x.value('(action[@name="database_id"]/value)[1]', 'integer')),
+            database_name = DB_NAME(NULLIF(w.x.value('(action[@name="database_id"]/value)[1]', 'integer'), 0)),
             database_id = w.x.value('(action[@name="database_id"]/value)[1]', 'integer'),
-            xml = w.x.query('.')
+            /* Only the @debug output reads this XML copy */
+            xml =
+                CASE
+                    WHEN @debug = 1
+                    THEN w.x.query('.')
+                END
         INTO #error_info
         FROM #error_reported AS er
         CROSS APPLY er.error_reported.nodes('//event') AS w(x)
@@ -4999,8 +5332,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql = @dsql + N'
             WHERE ei.event_time > @max_event_time';
@@ -5010,7 +5345,8 @@ AND   ca.utc_timestamp < @end_date';
             SET @dsql = @dsql + N'
             ORDER BY
                 ei.event_time DESC,
-                ei.severity DESC
+                ei.severity DESC,
+                ei.error_number
             OPTION(RECOMPILE);
             ';
 
@@ -5180,14 +5516,18 @@ AND   ca.utc_timestamp < @end_date';
                         GETUTCDATE(),
                         SYSDATETIME()
                     ),
-                    w.x.value('(//@timestamp)[1]', 'datetime2')
+                    wi.sp_server_diagnostics_component_result.value('(/event/@timestamp)[1]', 'datetime2')
                 ),
-            human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
+            human_events_xml = wi.sp_server_diagnostics_component_result.query('/event/data/value/queryProcessing/blockingTasks/blocked-process-report')
         FROM #sp_server_diagnostics_component_result AS wi
-        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        WHERE wi.component = 'QUERY_PROCESSING'
+        AND   wi.sp_server_diagnostics_component_result.exist('/event/data/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+        /*
+        No @warnings_only filter here. It used to keep a blocked process
+        report only when the QUERY_PROCESSING component was in a WARNING
+        state, and that state follows pending tasks, not blocking, so
+        @warnings_only = 1 dropped most of the blocking.
+        */
         OPTION(RECOMPILE);
 
         IF @debug = 1
@@ -5208,44 +5548,133 @@ AND   ca.utc_timestamp < @end_date';
 
         SELECT
             bx.event_time,
-            currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
-            spid = bd.value('(process/@spid)[1]', 'integer'),
-            ecid = bd.value('(process/@ecid)[1]', 'integer'),
+            currentdbname = pa.currentdbname,
+            spid = pa.spid,
+            ecid = pa.ecid,
             query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-            wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-            lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-            lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-            status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-            priority = bd.value('(process/@priority)[1]', 'integer'),
-            transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-            client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-            host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
-            login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
-            isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-            log_used = bd.value('(process/@logused)[1]', 'bigint'),
-            clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-            clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
-            process_id = bd.value('(process/@id)[1]', 'sysname'),
-            scheduler_id = bd.value('(process/@schedulerid)[1]', 'bigint'),
-            kpid = bd.value('(process/@kpid)[1]', 'bigint'),
-            sbid = bd.value('(process/@sbid)[1]', 'bigint'),
-            last_attention = bd.value('(process/@lastattention)[1]', 'datetime2'),
-            xactid = bd.value('(process/@xactid)[1]', 'bigint'),
-            currentdb = bd.value('(process/@currentdb)[1]', 'bigint'),
-            lock_timeout = bd.value('(process/@lockTimeout)[1]', 'bigint'),
-            host_pid = bd.value('(process/@hostpid)[1]', 'bigint'),
-            task_priority = bd.value('(process/@taskpriority)[1]', 'bigint'),
-            owner_id = bd.value('(process/@ownerId)[1]', 'bigint'),
-            transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
-            last_tran_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
-            xdes = bd.value('(process/@XDES)[1]', 'sysname'),
-            lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
+            wait_time = pa.wait_time,
+            lastbatchstarted = pa.lastbatchstarted,
+            lastbatchcompleted = pa.lastbatchcompleted,
+            wait_resource = pa.wait_resource,
+            status = pa.status,
+            priority = pa.priority,
+            transaction_count = pa.transaction_count,
+            client_app = pa.client_app,
+            host_name = pa.host_name,
+            login_name = pa.login_name,
+            isolation_level = pa.isolation_level,
+            log_used = pa.log_used,
+            clientoption1 = pa.clientoption1,
+            clientoption2 = pa.clientoption2,
+            process_id = pa.process_id,
+            scheduler_id = pa.scheduler_id,
+            kpid = pa.kpid,
+            sbid = pa.sbid,
+            last_attention = pa.last_attention,
+            xactid = pa.xactid,
+            currentdb = pa.currentdb,
+            lock_timeout = pa.lock_timeout,
+            host_pid = pa.host_pid,
+            task_priority = pa.task_priority,
+            owner_id = pa.owner_id,
+            transaction_name = pa.transaction_name,
+            last_tran_started = pa.last_tran_started,
+            xdes = pa.xdes,
+            lock_mode = pa.lock_mode,
             activity = 'blocked',
             blocked_process_report = bd.query('.')
         INTO #blocked
         FROM #blocking_xml AS bx
         OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocked-process') AS bd(bd)
+        OUTER APPLY
+        (
+            /*
+            One pass over the process attributes, PIVOTed by name. A
+            separate value('(process/@...)[1]') per column walked the
+            whole process element, stack frames and all, 32 times per
+            row. The names compare in Latin1_General_BIN2, so they stay
+            case-sensitive the way the XPath was.
+            */
+            SELECT
+                currentdbname = CONVERT(sysname, p.currentdbname),
+                spid = CONVERT(integer, p.spid),
+                ecid = CONVERT(integer, p.ecid),
+                wait_time = CONVERT(bigint, p.waittime),
+                lastbatchstarted = CONVERT(datetime2, p.lastbatchstarted),
+                lastbatchcompleted = CONVERT(datetime2, p.lastbatchcompleted),
+                wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+                status = CONVERT(nvarchar(10), p.status),
+                priority = CONVERT(integer, p.priority),
+                transaction_count = CONVERT(integer, p.trancount),
+                client_app = CONVERT(nvarchar(256), p.clientapp),
+                host_name = CONVERT(nvarchar(256), p.hostname),
+                login_name = CONVERT(nvarchar(256), p.loginname),
+                isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+                log_used = CONVERT(bigint, p.logused),
+                clientoption1 = CONVERT(bigint, p.clientoption1),
+                clientoption2 = CONVERT(bigint, p.clientoption2),
+                process_id = CONVERT(sysname, p.id),
+                scheduler_id = CONVERT(bigint, p.schedulerid),
+                kpid = CONVERT(bigint, p.kpid),
+                sbid = CONVERT(bigint, p.sbid),
+                last_attention = CONVERT(datetime2, p.lastattention),
+                xactid = CONVERT(bigint, p.xactid),
+                currentdb = CONVERT(bigint, p.currentdb),
+                lock_timeout = CONVERT(bigint, p.lockTimeout),
+                host_pid = CONVERT(bigint, p.hostpid),
+                task_priority = CONVERT(bigint, p.taskpriority),
+                owner_id = CONVERT(bigint, p.ownerId),
+                transaction_name = CONVERT(nvarchar(1024), p.transactionname),
+                last_tran_started = CONVERT(datetime2, p.lasttranstarted),
+                xdes = CONVERT(sysname, p.XDES),
+                lock_mode = CONVERT(nvarchar(10), p.lockMode)
+            FROM
+            (
+                SELECT
+                    name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                    value = pat.a.value('.', 'nvarchar(1024)')
+                FROM bd.bd.nodes('process[1]/@*') AS pat(a)
+            ) AS a
+            PIVOT
+            (
+                MAX(a.value)
+                FOR a.name IN
+                (
+                    currentdbname,
+                    spid,
+                    ecid,
+                    waittime,
+                    lastbatchstarted,
+                    lastbatchcompleted,
+                    waitresource,
+                    status,
+                    priority,
+                    trancount,
+                    clientapp,
+                    hostname,
+                    loginname,
+                    isolationlevel,
+                    logused,
+                    clientoption1,
+                    clientoption2,
+                    id,
+                    schedulerid,
+                    kpid,
+                    sbid,
+                    lastattention,
+                    xactid,
+                    currentdb,
+                    lockTimeout,
+                    hostpid,
+                    taskpriority,
+                    ownerId,
+                    transactionname,
+                    lasttranstarted,
+                    XDES,
+                    lockMode
+                )
+            ) AS p
+        ) AS pa
         WHERE bd.exist('process/@spid') = 1
         AND   (bd.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE, MAXDOP 1);
@@ -5284,44 +5713,133 @@ AND   ca.utc_timestamp < @end_date';
 
         SELECT
             bx.event_time,
-            currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
-            spid = bg.value('(process/@spid)[1]', 'integer'),
-            ecid = bg.value('(process/@ecid)[1]', 'integer'),
+            currentdbname = pa.currentdbname,
+            spid = pa.spid,
+            ecid = pa.ecid,
             query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-            wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-            last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-            last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-            status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-            priority = bg.value('(process/@priority)[1]', 'integer'),
-            transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-            client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-            host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
-            login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
-            isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-            log_used = bg.value('(process/@logused)[1]', 'bigint'),
-            clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-            clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
-            process_id = bg.value('(process/@id)[1]', 'sysname'),
-            scheduler_id = bg.value('(process/@schedulerid)[1]', 'bigint'),
-            kpid = bg.value('(process/@kpid)[1]', 'bigint'),
-            sbid = bg.value('(process/@sbid)[1]', 'bigint'),
-            last_attention = bg.value('(process/@lastattention)[1]', 'datetime2'),
-            xactid = bg.value('(process/@xactid)[1]', 'bigint'),
-            currentdb = bg.value('(process/@currentdb)[1]', 'bigint'),
-            lock_timeout = bg.value('(process/@lockTimeout)[1]', 'bigint'),
-            host_pid = bg.value('(process/@hostpid)[1]', 'bigint'),
-            task_priority = bg.value('(process/@taskpriority)[1]', 'bigint'),
-            owner_id = bg.value('(process/@ownerId)[1]', 'bigint'),
-            transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
-            last_tran_started = bg.value('(process/@lasttranstarted)[1]', 'datetime2'),
-            xdes = bg.value('(process/@XDES)[1]', 'sysname'),
-            lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
+            wait_time = pa.wait_time,
+            last_transaction_started = pa.last_transaction_started,
+            last_transaction_completed = pa.last_transaction_completed,
+            wait_resource = pa.wait_resource,
+            status = pa.status,
+            priority = pa.priority,
+            transaction_count = pa.transaction_count,
+            client_app = pa.client_app,
+            host_name = pa.host_name,
+            login_name = pa.login_name,
+            isolation_level = pa.isolation_level,
+            log_used = pa.log_used,
+            clientoption1 = pa.clientoption1,
+            clientoption2 = pa.clientoption2,
+            process_id = pa.process_id,
+            scheduler_id = pa.scheduler_id,
+            kpid = pa.kpid,
+            sbid = pa.sbid,
+            last_attention = pa.last_attention,
+            xactid = pa.xactid,
+            currentdb = pa.currentdb,
+            lock_timeout = pa.lock_timeout,
+            host_pid = pa.host_pid,
+            task_priority = pa.task_priority,
+            owner_id = pa.owner_id,
+            transaction_name = pa.transaction_name,
+            last_tran_started = pa.last_tran_started,
+            xdes = pa.xdes,
+            lock_mode = pa.lock_mode,
             activity = 'blocking',
             blocked_process_report = bg.query('.')
         INTO #blocking
         FROM #blocking_xml AS bx
         OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocking-process') AS bg(bg)
+        OUTER APPLY
+        (
+            /*
+            One pass over the process attributes, PIVOTed by name. A
+            separate value('(process/@...)[1]') per column walked the
+            whole process element, stack frames and all, 32 times per
+            row. The names compare in Latin1_General_BIN2, so they stay
+            case-sensitive the way the XPath was.
+            */
+            SELECT
+                currentdbname = CONVERT(sysname, p.currentdbname),
+                spid = CONVERT(integer, p.spid),
+                ecid = CONVERT(integer, p.ecid),
+                wait_time = CONVERT(bigint, p.waittime),
+                last_transaction_started = CONVERT(datetime2, p.lastbatchstarted),
+                last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+                wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+                status = CONVERT(nvarchar(10), p.status),
+                priority = CONVERT(integer, p.priority),
+                transaction_count = CONVERT(integer, p.trancount),
+                client_app = CONVERT(nvarchar(256), p.clientapp),
+                host_name = CONVERT(nvarchar(256), p.hostname),
+                login_name = CONVERT(nvarchar(256), p.loginname),
+                isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+                log_used = CONVERT(bigint, p.logused),
+                clientoption1 = CONVERT(bigint, p.clientoption1),
+                clientoption2 = CONVERT(bigint, p.clientoption2),
+                process_id = CONVERT(sysname, p.id),
+                scheduler_id = CONVERT(bigint, p.schedulerid),
+                kpid = CONVERT(bigint, p.kpid),
+                sbid = CONVERT(bigint, p.sbid),
+                last_attention = CONVERT(datetime2, p.lastattention),
+                xactid = CONVERT(bigint, p.xactid),
+                currentdb = CONVERT(bigint, p.currentdb),
+                lock_timeout = CONVERT(bigint, p.lockTimeout),
+                host_pid = CONVERT(bigint, p.hostpid),
+                task_priority = CONVERT(bigint, p.taskpriority),
+                owner_id = CONVERT(bigint, p.ownerId),
+                transaction_name = CONVERT(nvarchar(1024), p.transactionname),
+                last_tran_started = CONVERT(datetime2, p.lasttranstarted),
+                xdes = CONVERT(sysname, p.XDES),
+                lock_mode = CONVERT(nvarchar(10), p.lockMode)
+            FROM
+            (
+                SELECT
+                    name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                    value = pat.a.value('.', 'nvarchar(1024)')
+                FROM bg.bg.nodes('process[1]/@*') AS pat(a)
+            ) AS a
+            PIVOT
+            (
+                MAX(a.value)
+                FOR a.name IN
+                (
+                    currentdbname,
+                    spid,
+                    ecid,
+                    waittime,
+                    lastbatchstarted,
+                    lastbatchcompleted,
+                    waitresource,
+                    status,
+                    priority,
+                    trancount,
+                    clientapp,
+                    hostname,
+                    loginname,
+                    isolationlevel,
+                    logused,
+                    clientoption1,
+                    clientoption2,
+                    id,
+                    schedulerid,
+                    kpid,
+                    sbid,
+                    lastattention,
+                    xactid,
+                    currentdb,
+                    lockTimeout,
+                    hostpid,
+                    taskpriority,
+                    ownerId,
+                    transactionname,
+                    lasttranstarted,
+                    XDES,
+                    lockMode
+                )
+            ) AS p
+        ) AS pa
         WHERE bg.exist('process/@spid') = 1
         AND   (bg.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE, MAXDOP 1);
@@ -5620,8 +6138,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE b.event_time > @max_event_time';
@@ -5635,7 +6155,9 @@ AND   ca.utc_timestamp < @end_date';
                         WHEN b.activity = ''blocking''
                         THEN -1
                         ELSE +1
-                    END
+                    END,
+                    b.spid,
+                    b.ecid
                 OPTION(RECOMPILE);
             ';
 
@@ -5727,9 +6249,7 @@ AND   ca.utc_timestamp < @end_date';
                         THEN 'no blocking found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only)
+                             RTRIM(CONVERT(date, @end_date))
                         ELSE 'no blocking found!'
                     END;
             END;
@@ -5815,9 +6335,17 @@ AND   ca.utc_timestamp < @end_date';
             x.event_date,
             x.id,
             x.victim_id,
+            /*
+            The process element carries the name of the database it ran
+            in (currentdbname), so use that. DB_NAME() of the id is a
+            lookup at run time: once a database is dropped and its id
+            reused, an old deadlock showed the new database's name. The
+            lookup is only the fallback when the element has no name.
+            */
             database_name =
-                ISNULL
+                COALESCE
                 (
+                    x.current_database_name,
                     DB_NAME(x.database_id),
                     N'UNKNOWN'
                 ),
@@ -6112,8 +6640,10 @@ AND   ca.utc_timestamp < @end_date';
 
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
-                  N'@max_event_time datetime2(7) OUTPUT',
-                    @max_event_time OUTPUT;
+                  N'@max_event_time datetime2(7) OUTPUT,
+                    @fallback_date datetime2(7)',
+                    @max_event_time OUTPUT,
+                    @fallback_date;
 
                 SET @dsql += N'
                 WHERE dp.event_date > @max_event_time';
@@ -6222,17 +6752,26 @@ AND   ca.utc_timestamp < @end_date';
             stmtstart,
             stmtend
         )
-        SELECT
+        /*
+        #deadlocks_parsed has one row per process per deadlock, so the
+        same frame repeats. DISTINCT matches the blocking branch.
+        */
+        SELECT DISTINCT
             finding =
                 'available plans for deadlocks',
             dp.database_name,
             dp.query_text,
             sql_handle =
                 CONVERT(varbinary(64), e.x.value('@sqlhandle', 'varchar(130)'), 1),
+            /*
+            The plan lookup joins on these offsets, so hard-coded zeros
+            never matched a cached statement. Read them from the frame,
+            with the same defaults as the blocking branch.
+            */
             stmtstart =
-                0,
+                ISNULL(e.x.value('@stmtstart', 'integer'), 0),
             stmtend =
-                0
+                ISNULL(e.x.value('@stmtend', 'integer'), -1)
         FROM #deadlocks_parsed AS dp
         CROSS APPLY dp.process_xml.nodes('//executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS e(x)
         OPTION(RECOMPILE);
@@ -6266,21 +6805,26 @@ AND   ca.utc_timestamp < @end_date';
                 deqs.total_elapsed_time / 1000.,
             avg_elapsed_time =
                 CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+            /* * 1.0 forces decimal division; bigint / integer truncates */
             executions_per_second =
                 ISNULL
                 (
-                    deqs.execution_count /
-                        NULLIF
-                        (
-                            DATEDIFF
+                    CONVERT
+                    (
+                        decimal(38,2),
+                        deqs.execution_count * 1.0 /
+                            NULLIF
                             (
-                                SECOND,
-                                deqs.creation_time,
-                                NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
-                            ),
-                            0
-                        ),
-                        0
+                                DATEDIFF
+                                (
+                                    SECOND,
+                                    deqs.creation_time,
+                                    NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
+                                ),
+                                0
+                            )
+                    ),
+                    0
                 ),
             total_physical_reads_mb =
                 deqs.total_physical_reads * 8. / 1024.,

@@ -40,6 +40,28 @@ DROP TABLE IF EXISTS dbo.test_ic_filter_eq;
 DROP TABLE IF EXISTS dbo.test_ic_uc_replace;
 DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk;
+DROP TABLE IF EXISTS dbo.test_ic_idk_pair;
+DROP TABLE IF EXISTS dbo.test_ic_idk_rule7;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con;
+DROP TABLE IF EXISTS dbo.test_ic_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
+DROP TABLE IF EXISTS dbo.test_ic_uc_solo;
+DROP TABLE IF EXISTS dbo.test_ic_uc_pair;
+DROP TABLE IF EXISTS dbo.test_ic_filt_sub;
+DROP TABLE IF EXISTS dbo.test_ic_filt_merge;
+DROP TABLE IF EXISTS dbo.test_ic_ks_narrow_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_wide_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_1;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_2;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_fk;
+DROP TABLE IF EXISTS dbo.test_ic_idk_pair;
+DROP TABLE IF EXISTS dbo.test_ic_idk_rule7;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con_child;
+DROP TABLE IF EXISTS dbo.test_ic_idk_con;
 GO
 
 /* ============================================= */
@@ -130,6 +152,87 @@ CREATE TABLE dbo.test_ic_uc_dup
     col_c integer NOT NULL
 );
 
+CREATE TABLE dbo.test_ic_fk_parent
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_fk_child
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
+/* Group 14: a unique constraint with no other index on its key (issue #903) */
+CREATE TABLE dbo.test_ic_uc_solo
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
+/* Group 14: two unique constraints on the same key, the pair that really is a duplicate */
+CREATE TABLE dbo.test_ic_uc_pair
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    code integer NOT NULL
+);
+
+/* Group 15: a column whose name is a substring of another's (issue #904) */
+CREATE TABLE dbo.test_ic_filt_sub
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    site_id integer NOT NULL,
+    qty integer NULL
+);
+
+/* Group 15: filtered key duplicates, where the merge and the disable change what the finder sees */
+CREATE TABLE dbo.test_ic_filt_merge
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    k integer NOT NULL,
+    status integer NOT NULL,
+    flag integer NOT NULL,
+    wide_col integer NULL
+);
+
+/* Group 16: Same Keys Different Order, which needs one table per index pair (issue #908) */
+CREATE TABLE dbo.test_ic_ks_narrow_first
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_ks_wide_first
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_ks_same_1
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
+CREATE TABLE dbo.test_ic_ks_same_2
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL
+);
+
 CREATE TABLE dbo.test_ic_interact
 (
     id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
@@ -211,6 +314,92 @@ SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
     ABS(CHECKSUM(NEWID())) % 100
 FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
 
+INSERT INTO dbo.test_ic_fk_parent (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_fk_child (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+/*
+Group 17: IGNORE_DUP_KEY (issue #916)
+
+Four tables, because the four outcomes are decided in four different places:
+
+  test_ic_idk_pair    two unique indexes, the skipper sorting LAST, so the name
+                      tiebreak used to pick it as the loser. The term decides it now.
+  test_ic_idk_fk      the interaction: the strict index backs a foreign key, the
+                      skipper backs nothing. The key's index wins and takes the option.
+  test_ic_idk_rule7   Rule 7, which reads no priority: the skipping CONSTRAINT is
+                      dropped for the already-unique strict INDEX, so there is no
+                      rebuild for the option to ride along in.
+  test_ic_idk_con     two unique CONSTRAINTS, one backing a key and one skipping.
+                      ALTER INDEX cannot give a constraint the option (error 1979),
+                      so both have to stay.
+
+ROW_NUMBER rather than a random value everywhere: every key below is unique, and
+a duplicate would make the CREATE fail rather than the test.
+*/
+CREATE TABLE dbo.test_ic_idk_pair (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_fk (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_fk_child (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_rule7 (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_con (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+CREATE TABLE dbo.test_ic_idk_con_child (id integer IDENTITY PRIMARY KEY, code integer NOT NULL);
+
+INSERT INTO dbo.test_ic_idk_pair (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_fk (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_fk_child (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_rule7 (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_con (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_idk_con_child (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+/* ROW_NUMBER and not a random value: the unique constraints below have to be creatable, see the note on test_ic_interact */
+INSERT INTO dbo.test_ic_uc_solo (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_uc_pair (code)
+SELECT TOP (100) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns;
+
+INSERT INTO dbo.test_ic_filt_merge (k, status, flag, wide_col)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 3,
+    ABS(CHECKSUM(NEWID())) % 2, ABS(CHECKSUM(NEWID())) % 50
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_filt_sub (site_id, qty)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 10, ABS(CHECKSUM(NEWID())) % 20
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_narrow_first (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_wide_first (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_same_1 (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
+INSERT INTO dbo.test_ic_ks_same_2 (col_a, col_b, col_c, col_d)
+SELECT TOP (1000) ABS(CHECKSUM(NEWID())) % 100, ABS(CHECKSUM(NEWID())) % 50,
+    ABS(CHECKSUM(NEWID())) % 20, ABS(CHECKSUM(NEWID())) % 10
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
 INSERT INTO dbo.test_ic_uc_dup (col_a, col_b, col_c)
 SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
     ABS(CHECKSUM(NEWID())) % 500, ABS(CHECKSUM(NEWID())) % 200
@@ -244,7 +433,8 @@ CREATE NONCLUSTERED INDEX ix_uc_ab ON dbo.test_ic_uc (col_a, col_b);
 CREATE NONCLUSTERED INDEX ix_uc_ab_inc ON dbo.test_ic_uc (col_a, col_b) INCLUDE (col_e);
 CREATE NONCLUSTERED INDEX ix_uc_bc ON dbo.test_ic_uc (col_b, col_c);
 CREATE UNIQUE NONCLUSTERED INDEX uix_uc_acd ON dbo.test_ic_uc (col_a, col_c, col_d);
-CREATE NONCLUSTERED INDEX ix_uc_ac ON dbo.test_ic_uc (col_a, col_c);
+/* col_e is what uix_uc_acd gains from the merge: without it the merge would change nothing (#906) */
+CREATE NONCLUSTERED INDEX ix_uc_ac ON dbo.test_ic_uc (col_a, col_c) INCLUDE (col_e);
 ALTER TABLE dbo.test_ic_uc ADD CONSTRAINT uq_uc_ad UNIQUE (col_a, col_d);
 
 /* Group 2: Sort direction */
@@ -305,6 +495,92 @@ CREATE NONCLUSTERED INDEX ix_ucr_ab_inc ON dbo.test_ic_uc_replace (col_a, col_b)
    — keeper kept, duplicate dropped via DROP CONSTRAINT */
 ALTER TABLE dbo.test_ic_uc_dup ADD CONSTRAINT uq_ucd_keeper UNIQUE (col_a, col_b, col_c);
 ALTER TABLE dbo.test_ic_uc_dup ADD CONSTRAINT uq_ucd_zloser UNIQUE (col_a, col_b, col_c);
+
+/* Group 13: A unique index a foreign key is backed by (issue #902)
+   - ux_z is created first, so sys.foreign_keys.key_index_id names it
+   - ux_a is an exact duplicate that sorts earlier by name, which is the
+     tiebreak that used to make ux_z the loser and emit DISABLE against it,
+     silently disabling the foreign key too */
+CREATE UNIQUE INDEX ux_fkp_z_code ON dbo.test_ic_fk_parent (code);
+ALTER TABLE dbo.test_ic_fk_child ADD CONSTRAINT fk_ic_child_code
+    FOREIGN KEY (code) REFERENCES dbo.test_ic_fk_parent (code);
+CREATE UNIQUE INDEX ux_fkp_a_code ON dbo.test_ic_fk_parent (code);
+
+/* Group 17: IGNORE_DUP_KEY (issue #916) */
+
+/* 17a: the skipper sorts LAST, which is what the name tiebreak used to punish */
+CREATE UNIQUE INDEX ux_idkp_a_strict ON dbo.test_ic_idk_pair (code);
+CREATE UNIQUE INDEX ux_idkp_z_skip ON dbo.test_ic_idk_pair (code) WITH (IGNORE_DUP_KEY = ON);
+
+/* 17b: the strict one backs the key, so it outranks the skipper and takes the option */
+CREATE UNIQUE INDEX ux_idkf_strict ON dbo.test_ic_idk_fk (code);
+ALTER TABLE dbo.test_ic_idk_fk_child ADD CONSTRAINT fk_ic_idk_child_code
+    FOREIGN KEY (code) REFERENCES dbo.test_ic_idk_fk (code);
+CREATE UNIQUE INDEX ux_idkf_skip ON dbo.test_ic_idk_fk (code) WITH (IGNORE_DUP_KEY = ON);
+
+/* 17c: Rule 7 drops the skipping constraint for the already-unique strict index */
+ALTER TABLE dbo.test_ic_idk_rule7 ADD CONSTRAINT uq_idk7_skip UNIQUE (code) WITH (IGNORE_DUP_KEY = ON);
+CREATE UNIQUE INDEX ux_idk7_strict ON dbo.test_ic_idk_rule7 (code);
+
+/* 17d: two CONSTRAINTS, one backing a key and one skipping. Neither can be altered. */
+ALTER TABLE dbo.test_ic_idk_con ADD CONSTRAINT uq_idkc_a_key UNIQUE (code);
+ALTER TABLE dbo.test_ic_idk_con_child ADD CONSTRAINT fk_ic_idkc_child_code
+    FOREIGN KEY (code) REFERENCES dbo.test_ic_idk_con (code);
+ALTER TABLE dbo.test_ic_idk_con ADD CONSTRAINT uq_idkc_z_skip UNIQUE (code) WITH (IGNORE_DUP_KEY = ON);
+
+/* Group 14: A unique constraint with no other index on its key (issue #903)
+   - Rule 7 used to match every unique constraint against ITSELF, so each one
+     came back KEPT under 'Unique Constraint Replacement' with nothing to replace
+   - nothing else on this table has the key (code), so there is no replacement
+   - the table is compressed already, the way the issue's repro does it. An index
+     that still needs compression gets a COMPRESSION SCRIPT row and no KEPT row,
+     so the label would never reach the results and the test would pass for nothing
+   - uc_pair is the control: two constraints on one key ARE duplicates of each
+     other, so the keeper keeps its label and the loser is dropped */
+ALTER TABLE dbo.test_ic_uc_solo ADD CONSTRAINT uq_ucs_code UNIQUE (code);
+ALTER INDEX ALL ON dbo.test_ic_uc_solo REBUILD WITH (DATA_COMPRESSION = PAGE);
+ALTER TABLE dbo.test_ic_uc_pair ADD CONSTRAINT uq_ucp_keeper UNIQUE (code);
+ALTER TABLE dbo.test_ic_uc_pair ADD CONSTRAINT uq_ucp_zloser UNIQUE (code);
+ALTER INDEX ALL ON dbo.test_ic_uc_pair REBUILD WITH (DATA_COMPRESSION = PAGE);
+
+/* Group 15: Filtered indexes on a table whose column names overlap (issue #904)
+   - id is a substring of site_id, and the finder used to match column names
+     with LIKE '%' + name + '%', so a filter naming site_id also "needed" id
+   - ix_fs_site: the filter names site_id, which is the key. Nothing is missing.
+   - ix_fs_qty: the filter names qty and the index does not carry it. A real finding.
+   - ix_fs_site_qty: both. Only qty is missing, and only qty may be reported. */
+CREATE INDEX ix_fs_site ON dbo.test_ic_filt_sub (site_id) INCLUDE (qty) WHERE site_id = 1;
+CREATE INDEX ix_fs_qty ON dbo.test_ic_filt_sub (site_id) WHERE qty = 5;
+CREATE INDEX ix_fs_site_qty ON dbo.test_ic_filt_sub (site_id) WHERE site_id = 1 AND qty > 0;
+
+/* Group 15: two filtered key duplicates on the same filter
+   - fx_fm_a wins on name and absorbs fx_fm_b's include, status. After the merge
+     only flag is missing, so status may not be reported or scripted again: the
+     finder used to read the index from before the merge and listed status twice.
+   - fx_fm_b is disabled, so it gets no finding: its DROP_EXISTING script would
+     rebuild it, and a rebuild re-enables a disabled index. */
+CREATE INDEX fx_fm_a ON dbo.test_ic_filt_merge (k) INCLUDE (wide_col) WHERE status = 1 AND flag = 1;
+CREATE INDEX fx_fm_b ON dbo.test_ic_filt_merge (k) INCLUDE (status) WHERE status = 1 AND flag = 1;
+
+/* Group 16: Same Keys Different Order, Rule 8 (issue #908)
+   Rule 8 only checked that every key of the FIRST index is a key of the second,
+   and visits each pair once with the lower index name first, so the answer
+   depended on the names:
+   - narrow_first: (a,b,c) sorts ahead of (a,c,b,d), passed the one-way test and
+     was labelled "same keys" although the other index has an extra key column
+   - wide_first: the same two indexes with the names swapped. The wide index
+     sorts first, its extra column failed the one-way test, nothing was flagged
+   Neither pair has the same SET of keys, so neither gets the label.
+   - same_1 and same_2: positive controls. Exactly the same key set, a different
+     order after the first column, once with each name order. Both are flagged. */
+CREATE INDEX ix_ksn_a_abc ON dbo.test_ic_ks_narrow_first (col_a, col_b, col_c);
+CREATE INDEX ix_ksn_b_acbd ON dbo.test_ic_ks_narrow_first (col_a, col_c, col_b, col_d);
+CREATE INDEX ix_ksw_a_acbd ON dbo.test_ic_ks_wide_first (col_a, col_c, col_b, col_d);
+CREATE INDEX ix_ksw_b_abc ON dbo.test_ic_ks_wide_first (col_a, col_b, col_c);
+CREATE INDEX ix_kss1_a_abc ON dbo.test_ic_ks_same_1 (col_a, col_b, col_c);
+CREATE INDEX ix_kss1_b_acb ON dbo.test_ic_ks_same_1 (col_a, col_c, col_b);
+CREATE INDEX ix_kss2_a_acb ON dbo.test_ic_ks_same_2 (col_a, col_c, col_b);
+CREATE INDEX ix_kss2_b_abc ON dbo.test_ic_ks_same_2 (col_a, col_b, col_c);
 
 /* Group 12: Rule interactions */
 /* 12a: Multi-level subset: A ⊂ AB ⊂ ABC */
@@ -390,6 +666,35 @@ BEGIN
     /* Group 11b: UC-vs-UC duplicates */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_dup WITH (INDEX = uq_ucd_keeper) WHERE col_a = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_dup WITH (INDEX = uq_ucd_zloser) WHERE col_a = 1;
+    /* Group 13: FK-backed unique index */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_z_code) WHERE code = 1;
+    /* Group 17: IGNORE_DUP_KEY */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_pair WITH (INDEX = ux_idkp_a_strict) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_pair WITH (INDEX = ux_idkp_z_skip) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_fk WITH (INDEX = ux_idkf_strict) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_fk WITH (INDEX = ux_idkf_skip) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_rule7 WITH (INDEX = uq_idk7_skip) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_rule7 WITH (INDEX = ux_idk7_strict) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_con WITH (INDEX = uq_idkc_a_key) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_idk_con WITH (INDEX = uq_idkc_z_skip) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_fk_parent WITH (INDEX = ux_fkp_a_code) WHERE code = 1;
+    /* Group 14: unique constraint with no sibling */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_solo WITH (INDEX = uq_ucs_code) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_pair WITH (INDEX = uq_ucp_keeper) WHERE code = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_pair WITH (INDEX = uq_ucp_zloser) WHERE code = 1;
+    /* Group 15: filtered indexes, overlapping column names */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_filt_sub WITH (INDEX = ix_fs_site) WHERE site_id = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_filt_sub WITH (INDEX = ix_fs_qty) WHERE site_id = 1 AND qty = 5;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_filt_sub WITH (INDEX = ix_fs_site_qty) WHERE site_id = 1 AND qty > 0;
+    /* Group 16: Same Keys Different Order */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_narrow_first WITH (INDEX = ix_ksn_a_abc) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_narrow_first WITH (INDEX = ix_ksn_b_acbd) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_wide_first WITH (INDEX = ix_ksw_a_acbd) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_wide_first WITH (INDEX = ix_ksw_b_abc) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_1 WITH (INDEX = ix_kss1_a_abc) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_1 WITH (INDEX = ix_kss1_b_acb) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_2 WITH (INDEX = ix_kss2_a_acb) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_ks_same_2 WITH (INDEX = ix_kss2_b_abc) WHERE col_a = 1;
     /* Group 12: Interactions */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_a) WHERE col_a = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_ab) WHERE col_a = 1;
@@ -433,4 +738,14 @@ DROP TABLE IF EXISTS dbo.test_ic_filter_eq;
 DROP TABLE IF EXISTS dbo.test_ic_uc_replace;
 DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
+DROP TABLE IF EXISTS dbo.test_ic_fk_child;
+DROP TABLE IF EXISTS dbo.test_ic_fk_parent;
+DROP TABLE IF EXISTS dbo.test_ic_uc_solo;
+DROP TABLE IF EXISTS dbo.test_ic_uc_pair;
+DROP TABLE IF EXISTS dbo.test_ic_filt_sub;
+DROP TABLE IF EXISTS dbo.test_ic_filt_merge;
+DROP TABLE IF EXISTS dbo.test_ic_ks_narrow_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_wide_first;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_1;
+DROP TABLE IF EXISTS dbo.test_ic_ks_same_2;
 GO

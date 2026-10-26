@@ -55,8 +55,8 @@ ALTER PROCEDURE
     dbo.sp_QueryReproBuilder
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
-    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
-    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @include_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
     @include_query_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
     @include_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to search for*/
@@ -71,6 +71,8 @@ ALTER PROCEDURE
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
+    @top bigint = NULL, /*the number of plans you want to pull back, most recently executed first; NULL means 10, or every matching plan when an @include_ list or @procedure_name is given*/
+    @include_maintenance bit = 0, /*set this bit to 1 to keep index and statistics maintenance plans in the result set*/
     @query_plan_xml xml = NULL, /*a single query plan XML to process directly, bypassing Query Store*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
@@ -90,8 +92,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.10',
-    @version_date = '20261001';
+    @version = '1.11',
+    @version_date = '20261101';
 
 /*Help*/
 IF @help = 1
@@ -115,8 +117,8 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
-                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
-                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
+                WHEN N'@start_date' THEN 'the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
                 WHEN N'@include_query_ids' THEN 'a list of query ids to search for'
                 WHEN N'@include_query_hashes' THEN 'a list of query hashes to search for'
@@ -131,6 +133,8 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@query_text_search_not' THEN 'query text to exclude'
+                WHEN N'@top' THEN 'the number of plans you want to pull back, most recently executed first'
+                WHEN N'@include_maintenance' THEN 'set this bit to 1 to keep index and statistics maintenance plans (index builds, statistics updates, StatMan, DBCC) in the result set'
                 WHEN N'@query_plan_xml' THEN 'a single query plan XML to process directly, bypassing Query Store'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values'
@@ -158,6 +162,8 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@include_maintenance' THEN '0 or 1'
                 WHEN N'@query_plan_xml' THEN 'a valid ShowPlanXML document; when supplied, all Query Store filters are ignored'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
@@ -185,6 +191,8 @@ BEGIN
                 WHEN N'@procedure_name' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@query_text_search_not' THEN 'NULL'
+                WHEN N'@top' THEN '10, or every matching plan when an @include_ list or @procedure_name is given'
+                WHEN N'@include_maintenance' THEN '0'
                 WHEN N'@query_plan_xml' THEN 'NULL'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
@@ -262,10 +270,16 @@ DECLARE
     @azure bit = 0,
     @sql_2017 bit = 0,
     @sql_2022_views bit = 0,
+    @procedure_variants_single nvarchar(max) = N'',
+    @procedure_variants_wildcard nvarchar(max) = N'',
     @new bit = 0,
     @current_table nvarchar(100),
     @include_plans_seeded bit = 0,
-    @match nvarchar(max) = N'';
+    @match nvarchar(max) = N'',
+    @psp_message nvarchar(max) = N'',
+    @list_parameter sysname = NULL,
+    @list_item nvarchar(4000) = NULL,
+    @list_is_binary bit = 0;
 
 /*
 Attempt at overloading procedure name so it can accept a schema.procedure or
@@ -538,6 +552,13 @@ SELECT
 
 /*
 Convert dates to UTC for filtering
+
+A value without a time zone offset arrives as +00:00 and is taken as
+local server time, so it is moved by the server's UTC difference. A value
+with an offset other than +00:00 is already an exact point in time, and
+moving it again shifted the window by the server's UTC difference a
+second time. Those are only switched to +00:00. An explicit +00:00 cannot
+be told apart from no offset, so it is still taken as local time.
 */
 SELECT
     @start_date =
@@ -555,6 +576,9 @@ SELECT
                         SYSUTCDATETIME()
                     )
                 )
+            WHEN @start_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @start_date) <> 0
+            THEN SWITCHOFFSET(@start_date_original, N'+00:00')
             WHEN @start_date IS NOT NULL
             THEN
                 DATEADD
@@ -584,6 +608,9 @@ SELECT
                         )
                     )
                 )
+            WHEN @end_date IS NOT NULL
+            AND  DATEPART(TZOFFSET, @end_date) <> 0
+            THEN SWITCHOFFSET(@end_date_original, N'+00:00')
             WHEN @end_date IS NOT NULL
             THEN
                 DATEADD
@@ -622,6 +649,20 @@ BEGIN
 END;
 
 /*
+@top limits the run to the most recently executed plans. Left NULL, it
+becomes 10 as in sp_QuickieStore, unless an @include_ list or
+@procedure_name names the plans or queries to build repros for: then every
+matching plan comes back (see below, after the lists are cleaned up). Without a limit, a busy database
+gives thousands of repros and hundreds of MB of output (14,930 repros,
+797 MB, more than two minutes, on one test database).
+*/
+IF @top < 1
+BEGIN
+    RAISERROR('@top must be at least 1. Leave it NULL for 10 plans, or for every matching plan when an @include_ list or @procedure_name is given', 10, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
 NULLIF blank strings to NULL for consistent handling.
 @procedure_schema and @procedure_name are cleaned up earlier, alongside the
 procedure name parsing that depends on them.
@@ -650,7 +691,158 @@ SELECT
     @query_text_search =
         NULLIF(@query_text_search, ''),
     @query_text_search_not =
-        NULLIF(@query_text_search_not, '');
+        NULLIF(@query_text_search_not, ''),
+    @include_maintenance =
+        ISNULL(@include_maintenance, 0);
+
+/*
+Line breaks and tabs separate list items the way commas do, so a list
+pasted one value per line works. The lists are split on commas only, and
+an id next to a line break passed the check below and then failed to
+convert to bigint with a bare Msg 8114. The empty items this leaves
+between a comma and a line break are skipped, like any empty item.
+*/
+SELECT
+    @include_plan_ids =
+        REPLACE(REPLACE(REPLACE(@include_plan_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_query_ids =
+        REPLACE(REPLACE(REPLACE(@include_query_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_query_hashes =
+        REPLACE(REPLACE(REPLACE(@include_query_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_plan_hashes =
+        REPLACE(REPLACE(REPLACE(@include_plan_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @include_sql_handles =
+        REPLACE(REPLACE(REPLACE(@include_sql_handles, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_plan_ids =
+        REPLACE(REPLACE(REPLACE(@ignore_plan_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_query_ids =
+        REPLACE(REPLACE(REPLACE(@ignore_query_ids, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_query_hashes =
+        REPLACE(REPLACE(REPLACE(@ignore_query_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_plan_hashes =
+        REPLACE(REPLACE(REPLACE(@ignore_plan_hashes, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N','),
+    @ignore_sql_handles =
+        REPLACE(REPLACE(REPLACE(@ignore_sql_handles, NCHAR(13), N','), NCHAR(10), N','), NCHAR(9), N',');
+
+/*
+The default @top, once blank lists are NULL: 10 plans, unless an @include_
+list or @procedure_name asks for specific plans or queries, which all come
+back
+*/
+IF  @top IS NULL
+AND @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+BEGIN
+    SELECT
+        @top = 10;
+END;
+
+/*
+Check the id, hash, and handle lists before they are used, so a typo gets a
+message that names the parameter and the value instead of a bare Msg 8114
+from a conversion inside dynamic SQL. Ids are whole numbers; hashes and
+handles are hex that starts with 0x (CONVERT style 1 needs the 0x).
+*/
+IF @query_plan_xml IS NULL
+BEGIN
+    SELECT TOP (1)
+        @list_parameter = l.parameter_name,
+        @list_item =
+            CASE
+                WHEN l.list_value LIKE N'%[<&]%'
+                THEN l.list_value
+                ELSE i.item
+            END,
+        @list_is_binary = l.is_binary
+    FROM
+    (
+        VALUES
+            (N'@include_plan_ids', @include_plan_ids, 0),
+            (N'@include_query_ids', @include_query_ids, 0),
+            (N'@ignore_plan_ids', @ignore_plan_ids, 0),
+            (N'@ignore_query_ids', @ignore_query_ids, 0),
+            (N'@include_query_hashes', @include_query_hashes, 1),
+            (N'@include_plan_hashes', @include_plan_hashes, 1),
+            (N'@include_sql_handles', @include_sql_handles, 1),
+            (N'@ignore_query_hashes', @ignore_query_hashes, 1),
+            (N'@ignore_plan_hashes', @ignore_plan_hashes, 1),
+            (N'@ignore_sql_handles', @ignore_sql_handles, 1)
+    ) AS l (parameter_name, list_value, is_binary)
+    CROSS APPLY
+    (
+        SELECT
+            x =
+                CASE
+                    WHEN l.list_value NOT LIKE N'%[<&]%'
+                    THEN CONVERT
+                         (
+                             xml,
+                             N'<x>' +
+                             REPLACE
+                             (
+                                 CONVERT(nvarchar(max), l.list_value),
+                                 N',',
+                                 N'</x><x>'
+                             ) +
+                             N'</x>'
+                         )
+                    ELSE CONVERT(xml, N'<x>?</x>')
+                END
+    ) AS a
+    CROSS APPLY a.x.nodes(N'x') AS b (x)
+    CROSS APPLY
+    (
+        SELECT
+            item =
+                LTRIM(RTRIM(ISNULL(b.x.value(N'(./text())[1]', N'nvarchar(4000)'), N'')))
+    ) AS i
+    WHERE l.list_value IS NOT NULL
+    AND   i.item <> N''
+    AND
+    (
+        l.list_value LIKE N'%[<&]%'
+     OR
+        (
+            l.is_binary = 0
+        AND
+            (
+                LEN(i.item) > 19
+             OR i.item = N'-'
+             OR i.item LIKE N'%[^0-9-]%'
+             OR SUBSTRING(i.item, 2, 4000) LIKE N'%[^0-9]%'
+            )
+        )
+     OR
+        (
+            l.is_binary = 1
+        AND
+            (
+                i.item NOT LIKE N'0[xX]%'
+             OR SUBSTRING(i.item, 3, 4000) LIKE N'%[^0-9a-fA-F]%'
+             OR LEN(i.item) % 2 = 1
+            )
+        )
+    )
+    OPTION(RECOMPILE);
+
+    IF @list_parameter IS NOT NULL
+    BEGIN
+        IF @list_is_binary = 0
+        BEGIN
+            RAISERROR('%s must be a comma separated list of whole numbers, like N''123, 456''. This is not one: %s', 10, 1, @list_parameter, @list_item) WITH NOWAIT;
+        END;
+        ELSE
+        BEGIN
+            RAISERROR('%s must be a comma separated list of hex values that start with 0x, like N''0x2D3C7F502BA2AEE9''. This is not one: %s', 10, 1, @list_parameter, @list_item) WITH NOWAIT;
+        END;
+
+        RETURN;
+    END;
+END;
 
 /*Initialize procedure variables*/
 IF @procedure_name IS NOT NULL
@@ -683,6 +875,39 @@ BEGIN
         object_id bigint NOT NULL,
         INDEX object_id CLUSTERED (object_id)
     );
+
+    /*
+    Parameter Sensitive Plan variants are queries of their own with
+    object_id 0, so the procedure filters also take the variants
+    of the procedure's queries, found through their parent query.
+    sys.query_store_query_variant exists on SQL Server 2022+ only.
+    */
+    IF @sql_2022_views = 1
+    BEGIN
+        SELECT
+            @procedure_variants_single = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE qsq_parent.object_id = OBJECT_ID(@procedure_name_quoted)',
+            @procedure_variants_wildcard = N'
+          UNION ALL
+          SELECT
+              qsqv.query_variant_query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+            ON qsq_parent.query_id = qsqv.parent_query_id
+          WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #procedure_object_ids AS poi
+              WHERE poi.object_id = qsq_parent.object_id
+          )';
+    END;
 
     /*Check if procedure exists in Query Store - wildcard procedure name*/
     IF CHARINDEX(N'%', @procedure_name) > 0
@@ -915,6 +1140,15 @@ CREATE TABLE
 );
 
 /*
+Index and statistics maintenance plans to leave out, as sp_QuickieStore does
+*/
+CREATE TABLE
+    #maintenance_plans
+(
+    plan_id bigint NOT NULL PRIMARY KEY CLUSTERED
+);
+
+/*
 Create Query Store temp tables
 */
 CREATE TABLE
@@ -932,7 +1166,7 @@ CREATE TABLE
     executions_per_second AS
         ISNULL
         (
-            count_executions /
+            count_executions * 1. /
                 NULLIF
                 (
                     DATEDIFF
@@ -946,48 +1180,48 @@ CREATE TABLE
             0
         ),
     avg_duration_ms float NULL,
-    last_duration_ms bigint NOT NULL,
-    min_duration_ms bigint NOT NULL,
-    max_duration_ms bigint NOT NULL,
+    last_duration_ms float NOT NULL,
+    min_duration_ms float NOT NULL,
+    max_duration_ms float NOT NULL,
     total_duration_ms AS
         (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
-    last_cpu_time_ms bigint NOT NULL,
-    min_cpu_time_ms bigint NOT NULL,
-    max_cpu_time_ms bigint NOT NULL,
+    last_cpu_time_ms float NOT NULL,
+    min_cpu_time_ms float NOT NULL,
+    max_cpu_time_ms float NOT NULL,
     total_cpu_time_ms AS
         (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
-    last_logical_io_reads_mb bigint NOT NULL,
-    min_logical_io_reads_mb bigint NOT NULL,
-    max_logical_io_reads_mb bigint NOT NULL,
+    last_logical_io_reads_mb float NOT NULL,
+    min_logical_io_reads_mb float NOT NULL,
+    max_logical_io_reads_mb float NOT NULL,
     total_logical_io_reads_mb AS
         (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
-    last_logical_io_writes_mb bigint NOT NULL,
-    min_logical_io_writes_mb bigint NOT NULL,
-    max_logical_io_writes_mb bigint NOT NULL,
+    last_logical_io_writes_mb float NOT NULL,
+    min_logical_io_writes_mb float NOT NULL,
+    max_logical_io_writes_mb float NOT NULL,
     total_logical_io_writes_mb AS
         (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
-    last_physical_io_reads_mb bigint NOT NULL,
-    min_physical_io_reads_mb bigint NOT NULL,
-    max_physical_io_reads_mb bigint NOT NULL,
+    last_physical_io_reads_mb float NOT NULL,
+    min_physical_io_reads_mb float NOT NULL,
+    max_physical_io_reads_mb float NOT NULL,
     total_physical_io_reads_mb AS
         (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
-    last_clr_time_ms bigint NOT NULL,
-    min_clr_time_ms bigint NOT NULL,
-    max_clr_time_ms bigint NOT NULL,
+    last_clr_time_ms float NOT NULL,
+    min_clr_time_ms float NOT NULL,
+    max_clr_time_ms float NOT NULL,
     total_clr_time_ms AS
         (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
     avg_query_max_used_memory_mb float NULL,
-    last_query_max_used_memory_mb bigint NOT NULL,
-    min_query_max_used_memory_mb bigint NOT NULL,
-    max_query_max_used_memory_mb bigint NOT NULL,
+    last_query_max_used_memory_mb float NOT NULL,
+    min_query_max_used_memory_mb float NOT NULL,
+    max_query_max_used_memory_mb float NOT NULL,
     total_query_max_used_memory_mb AS
         (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
@@ -996,22 +1230,22 @@ CREATE TABLE
     max_rowcount bigint NOT NULL,
     total_rowcount AS
         (avg_rowcount * count_executions),
-    avg_num_physical_io_reads_mb float NULL,
-    last_num_physical_io_reads_mb bigint NULL,
-    min_num_physical_io_reads_mb bigint NULL,
-    max_num_physical_io_reads_mb bigint NULL,
-    total_num_physical_io_reads_mb AS
-        (avg_num_physical_io_reads_mb * count_executions),
+    avg_num_physical_io_reads float NULL,
+    last_num_physical_io_reads float NULL,
+    min_num_physical_io_reads float NULL,
+    max_num_physical_io_reads float NULL,
+    total_num_physical_io_reads AS
+        (avg_num_physical_io_reads * count_executions),
     avg_log_bytes_used_mb float NULL,
-    last_log_bytes_used_mb bigint NULL,
-    min_log_bytes_used_mb bigint NULL,
-    max_log_bytes_used_mb bigint NULL,
+    last_log_bytes_used_mb float NULL,
+    min_log_bytes_used_mb float NULL,
+    max_log_bytes_used_mb float NULL,
     total_log_bytes_used_mb AS
         (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
-    last_tempdb_space_used_mb bigint NULL,
-    min_tempdb_space_used_mb bigint NULL,
-    max_tempdb_space_used_mb bigint NULL,
+    last_tempdb_space_used_mb float NULL,
+    min_tempdb_space_used_mb float NULL,
+    max_tempdb_space_used_mb float NULL,
     total_tempdb_space_used_mb AS
         (avg_tempdb_space_used_mb * count_executions),
     context_settings nvarchar(256) NULL
@@ -1136,42 +1370,54 @@ CREATE TABLE
     query_text_id bigint NOT NULL,
     INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
-    query_sql_text_normalized AS
-        REPLACE
-        (
-            REPLACE
-            (
-                REPLACE
-                (
-                    REPLACE
-                    (
-                        REPLACE
-                        (
-                            REPLACE
-                            (
-                                query_sql_text,
-                                NCHAR(13),
-                                N' '
-                            ),
-                            NCHAR(10),
-                            N' '
-                        ),
-                        NCHAR(9),
-                        N' '
-                    ),
-                    N' ',
-                    NCHAR(1) + NCHAR(2)
-                ),
-                NCHAR(2) + NCHAR(1),
-                N''
-            ),
-            NCHAR(1) + NCHAR(2),
-            N' '
-        ) PERSISTED,
     query_sql_text_clickable xml NULL,
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
-    has_restricted_text bit NOT NULL
+    has_restricted_text bit NOT NULL,
+    has_control_characters bit NOT NULL DEFAULT 0
+);
+
+/*
+Query text upper-cased with its white space collapsed, for the temp table and
+table variable checks. It is a table of its own, filled once, with a binary
+collation. As a computed column of #query_store_query_text it was computed
+again for every LIKE that read it, eight times per text in each check, and
+a plain column there was stored off-row and searched under the column
+collation.
+*/
+CREATE TABLE
+    #query_text_normalized
+(
+    query_text_id bigint NOT NULL,
+    query_sql_text_normalized nvarchar(max) COLLATE Latin1_General_100_BIN2 NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
+);
+
+/*
+Where the last PLAN PER VALUE( hint starts in the text of a parameter
+sensitive plan variant query, and the text without that hint; only those
+texts have a row
+*/
+CREATE TABLE
+    #psp_hint_starts
+(
+    query_text_id bigint NOT NULL,
+    hint_start bigint NOT NULL,
+    query_sql_text nvarchar(max) NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
+);
+
+/*
+Where the statement starts in each parameterized query text, after its
+(@...) declaration list, for the repro builder
+*/
+CREATE TABLE
+    #repro_text_starts
+(
+    query_text_id bigint NOT NULL,
+    declaration_end bigint NOT NULL,
+    text_start bigint NULL,
+    INDEX query_text_id CLUSTERED (query_text_id)
 );
 
 CREATE TABLE
@@ -1206,22 +1452,67 @@ CREATE TABLE
     INDEX plan_id_query_id CLUSTERED (plan_id, query_id)
 );
 
+/*
+Every plan of the queries in #query_store_plan, to build all_plan_ids
+*/
+CREATE TABLE
+    #all_plan_ids
+(
+    query_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    INDEX query_id_plan_id UNIQUE CLUSTERED (query_id, plan_id)
+);
+
+/*
+Each plan converted to xml once, by the too-large check. The embedded
+constants and the final SELECT read it here instead of converting again.
+NULL when the plan text can't be converted.
+*/
+CREATE TABLE
+    #query_plan_xml
+(
+    plan_id bigint NOT NULL,
+    query_plan_xml xml NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
+#query_parameters and #reproduction_warnings are keyed in the order the
+repro builder lists them (by parameter name, and by warning type), so its
+FOR XML subqueries read each plan's rows in order. Keyed on plan_id only,
+each subquery sorted its rows for every plan, carrying the nvarchar(max)
+values and messages through the sort.
+*/
 CREATE TABLE
     #query_parameters
 (
     plan_id bigint NOT NULL,
-    INDEX plan_id CLUSTERED (plan_id),
     parameter_name sysname NULL,
+    INDEX plan_id_parameter_name CLUSTERED (plan_id, parameter_name),
     parameter_data_type sysname NULL,
     parameter_compiled_value nvarchar(max) NULL
+);
+
+/*
+Each plan's parameter values in the order the parameter_values column lists
+them, numbered once, so the final SELECT reads them in order instead of
+sorting every plan's nvarchar(max) values
+*/
+CREATE TABLE
+    #parameter_values
+(
+    plan_id bigint NOT NULL,
+    value_order bigint NOT NULL,
+    parameter_compiled_value nvarchar(max) NULL,
+    PRIMARY KEY CLUSTERED (plan_id, value_order)
 );
 
 CREATE TABLE
     #reproduction_warnings
 (
     plan_id bigint NOT NULL,
-    INDEX plan_id CLUSTERED (plan_id),
     warning_type nvarchar(50) NULL,
+    INDEX plan_id_warning_type CLUSTERED (plan_id, warning_type),
     warning_message nvarchar(max) NULL
 );
 
@@ -1255,6 +1546,52 @@ CREATE TABLE
     param_column sysname NULL,
     param_data_type sysname NULL,
     param_compiled_value nvarchar(max) NULL
+);
+
+/*
+Where each plan's last and first ParameterList start and end in the plan text,
+and where the plan of its first statement ends
+*/
+CREATE TABLE
+    #parameter_list_positions
+(
+    plan_id bigint NOT NULL,
+    last_start bigint NULL,
+    first_start bigint NULL,
+    last_end bigint NULL,
+    first_end bigint NULL,
+    plan_end bigint NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
+Each plan's last and first ParameterList as xml, so the parameter
+extraction searches the plan text and converts each list only once.
+*/
+CREATE TABLE
+    #parameter_lists
+(
+    plan_id bigint NOT NULL,
+    last_parameter_list xml NULL,
+    first_parameter_list xml NULL,
+    INDEX plan_id CLUSTERED (plan_id)
+);
+
+/*
+Each plan's parameter declaration list from its query text, with the
+parameter boundaries marked by NCHAR(1), for the missing parameter fill.
+needs_xml is set when the list holds a character that XML would parse
+or reject, so those lists are still split through XML.
+*/
+CREATE TABLE
+    #parameter_declarations
+(
+    plan_id bigint NOT NULL,
+    declaration_end bigint NOT NULL,
+    declaration nvarchar(max) NULL,
+    split_text nvarchar(max) COLLATE Latin1_General_100_BIN2 NULL,
+    needs_xml bit NOT NULL DEFAULT 0,
+    INDEX plan_id CLUSTERED (plan_id)
 );
 
 /*
@@ -1544,6 +1881,13 @@ IF @query_plan_xml IS NULL
 BEGIN
 
 /*
+Each list is split by turning it into XML with REPLACE. The list is
+CONVERTed to nvarchar(max) first: REPLACE on an nvarchar(4000) returns at
+most 4000 characters, every comma grows by six, and a list of about 380
+plan ids was cut off mid-element and failed with Msg 9400.
+*/
+
+/*
 Resolve the include filters into #include_plan_ids.
 
 Multiple include filters combine as an INTERSECTION: OR within a single filter's
@@ -1557,6 +1901,10 @@ exactly what the caller asked for, instead of widening back out to every plan
 set with the literal plan ids requested. @match holds the per-filter predicate
 (correlated to a sys.query_store_plan row aliased qsp) used for both seeding and
 intersecting.
+
+The statements here that read Query Store views use hash joins. With few
+rows on the other side, nested loops read the in-memory part of the view
+again for every row (about 15 ms each on one test database).
 */
 IF @include_plan_ids IS NOT NULL
 BEGIN
@@ -1593,7 +1941,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_plan_ids,
+                            CONVERT(nvarchar(max), @include_plan_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -1655,7 +2003,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_query_ids,
+                            CONVERT(nvarchar(max), @include_query_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -1708,7 +2056,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -1740,7 +2088,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -1802,7 +2150,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_query_hashes,
+                            CONVERT(nvarchar(max), @include_query_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -1859,7 +2207,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -1891,7 +2239,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -1953,7 +2301,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_plan_hashes,
+                            CONVERT(nvarchar(max), @include_plan_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2003,7 +2351,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2035,7 +2383,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2097,7 +2445,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @include_sql_handles,
+                            CONVERT(nvarchar(max), @include_sql_handles),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2161,7 +2509,7 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE ' + @match + N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2193,7 +2541,7 @@ BEGIN
               WHERE qsp.plan_id = ipi.plan_id
               AND   ' + @match + N'
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -2247,7 +2595,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_plan_ids,
+                            CONVERT(nvarchar(max), @ignore_plan_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2310,7 +2658,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_query_ids,
+                            CONVERT(nvarchar(max), @ignore_query_ids),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2356,7 +2704,7 @@ BEGIN
               FROM #ignore_query_ids AS iqi
               WHERE iqi.query_id = qsp.query_id
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2420,7 +2768,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_query_hashes,
+                            CONVERT(nvarchar(max), @ignore_query_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2473,7 +2821,7 @@ BEGIN
                         WHERE iqh.query_hash = qsq.query_hash
                     )
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2531,7 +2879,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_plan_hashes,
+                            CONVERT(nvarchar(max), @ignore_plan_hashes),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2577,7 +2925,7 @@ BEGIN
               FROM #ignore_plan_hashes AS iph
               WHERE iph.plan_hash = qsp.query_plan_hash
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2635,7 +2983,7 @@ BEGIN
                         ''<x>'' +
                         REPLACE
                         (
-                            @ignore_sql_handles,
+                            CONVERT(nvarchar(max), @ignore_sql_handles),
                             '','',
                             ''</x><x>''
                         ) +
@@ -2695,7 +3043,7 @@ BEGIN
                               )
                     )
           )
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2811,7 +3159,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -2836,13 +3184,13 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
     SELECT
         @sql += N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2941,7 +3289,7 @@ BEGIN
               SELECT
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+              WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
           )';
     END;
 
@@ -2966,13 +3314,13 @@ BEGIN
                       1/0
                   FROM #procedure_object_ids AS poi
                   WHERE poi.object_id = qsq.object_id
-              )
+              )' + @procedure_variants_wildcard + N'
           )';
     END;
 
     SELECT
         @sql += N'
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -2989,8 +3337,95 @@ BEGIN
 END;
 
 /*
+Leave out index and statistics maintenance (index builds, statistics
+updates, StatMan, DBCC, WAITFOR and the like), with the same patterns as
+sp_QuickieStore, so the most recent plans are the ones sp_QuickieStore's
+'recent' sort shows. Only when no @include_ list or @procedure_name is
+given and @include_maintenance is 0: plans and queries asked for by id,
+hash, handle or procedure come back as before, and a StatMan query among
+them still gets its warning.
+
+The patterns are matched under a binary collation on upper-cased text. The
+ones that only look at the start of the text test the first 40 characters,
+which is not a max type; only the two that can match past the start look
+at the whole text.
+*/
+IF
+(
+    @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+AND @include_maintenance = 0
+)
+BEGIN
+    SELECT
+        @sql = @isolation_level,
+        @current_table = N'inserting #maintenance_plans';
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.query_id = qsq.query_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text_start =
+            UPPER(CONVERT(nvarchar(40), qsqt.query_sql_text)) COLLATE Latin1_General_100_BIN2
+) AS u
+WHERE u.query_sql_text_start LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_start LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_start LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''DBCC%''
+OR    u.query_sql_text_start LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_start LIKE N''WAITFOR%''
+OR
+(
+      u.query_sql_text_start LIKE N''CREATE%''
+  AND UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''CREATE%INDEX%''
+)
+OR    UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''%SELECT STATMAN%''
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #maintenance_plans
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+END;
+
+/*
 Populate #query_store_runtime_stats from sys.query_store_runtime_stats
 This aggregates runtime stats for all filtered plan IDs
+
+The averages are weighted by executions: the sum of avg x count_executions
+over the intervals, divided by the sum of count_executions. AVG() of the
+interval averages gave a quiet interval the same weight as a busy one, and
+the total_ columns, which are avg x count_executions, came out wrong with
+it. The last_, min_, and max_ columns are float because the values are
+converted from microseconds and pages to ms and MB, and bigint cut them
+to whole numbers (a 0.8 ms query showed 0).
+
+This and the other statements below that read Query Store views use hash
+joins, so each view is read once, not once per row of the other side.
 */
 SELECT
     @sql = @isolation_level;
@@ -3045,10 +3480,10 @@ WITH
     last_rowcount,
     min_rowcount,
     max_rowcount,
-    avg_num_physical_io_reads_mb,
-    last_num_physical_io_reads_mb,
-    min_num_physical_io_reads_mb,
-    max_num_physical_io_reads_mb,
+    avg_num_physical_io_reads,
+    last_num_physical_io_reads,
+    min_num_physical_io_reads,
+    max_num_physical_io_reads,
     avg_log_bytes_used_mb,
     last_log_bytes_used_mb,
     min_log_bytes_used_mb,
@@ -3059,47 +3494,70 @@ WITH
     max_tempdb_space_used_mb,
     context_settings
 )
+SELECT';
+
+/*
+A separate statement, not + inside the literal above: the pieces of one
+expression are each shorter than 4000 characters, so their sum would be
+cut to nvarchar(4000) before it ever reached @sql.
+*/
+IF @top IS NOT NULL
+BEGIN
+    SELECT
+        @sql += N' TOP (@top)';
+END;
+
 SELECT
+    @sql += N'
     @database_id,
     MAX(qsrs_with_lasts.runtime_stats_id),
     qsrs_with_lasts.plan_id,
     MAX(qsrs_with_lasts.runtime_stats_interval_id),
-    MAX(qsrs_with_lasts.execution_type_desc),
+    /* A plan can have regular, aborted, and exception rows, so list each type it has */
+    STUFF
+    (
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 0 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 3 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END) +
+        MAX(CASE WHEN qsrs_with_lasts.execution_type = 4 THEN N'', '' + qsrs_with_lasts.execution_type_desc ELSE N'''' END),
+        1,
+        2,
+        N''''
+    ),
     MIN(qsrs_with_lasts.first_execution_time),
     MAX(qsrs_with_lasts.partitioned_last_execution_time),
     SUM(qsrs_with_lasts.count_executions),
-    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    SUM(qsrs_with_lasts.avg_duration * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
     MIN((qsrs_with_lasts.min_duration / 1000.)),
     MAX((qsrs_with_lasts.max_duration / 1000.)),
-    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    SUM(qsrs_with_lasts.avg_cpu_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
     MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
     MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
-    AVG((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_logical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_logical_io_writes * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.),
-    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    SUM(qsrs_with_lasts.avg_clr_time * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000.,
     MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
     MIN((qsrs_with_lasts.min_clr_time / 1000.)),
     MAX((qsrs_with_lasts.max_clr_time / 1000.)),
     MAX(qsrs_with_lasts.partitioned_last_dop),
     MIN(qsrs_with_lasts.min_dop),
     MAX(qsrs_with_lasts.max_dop),
-    AVG((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_query_max_used_memory * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.),
-    AVG(qsrs_with_lasts.avg_rowcount * 1.),
+    SUM(qsrs_with_lasts.avg_rowcount * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0),
     MAX(qsrs_with_lasts.partitioned_last_rowcount),
     MIN(qsrs_with_lasts.min_rowcount),
     MAX(qsrs_with_lasts.max_rowcount),';
@@ -3108,15 +3566,16 @@ SELECT
 IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
-    AVG((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.),
-    MAX((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.),
-    MIN((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.),
-    MAX((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.),
-    AVG(qsrs_with_lasts.avg_log_bytes_used / 1000000.),
+    /* num_physical_io_reads counts read operations, not pages, so it stays a count */
+    SUM(qsrs_with_lasts.avg_num_physical_io_reads * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0),
+    MAX(qsrs_with_lasts.partitioned_last_num_physical_io_reads),
+    MIN(qsrs_with_lasts.min_num_physical_io_reads),
+    MAX(qsrs_with_lasts.max_num_physical_io_reads),
+    SUM(qsrs_with_lasts.avg_log_bytes_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) / 1000000.,
     MAX(qsrs_with_lasts.partitioned_last_log_bytes_used / 1000000.),
     MIN(qsrs_with_lasts.min_log_bytes_used / 1000000.),
     MAX(qsrs_with_lasts.max_log_bytes_used / 1000000.),
-    AVG((qsrs_with_lasts.avg_tempdb_space_used * 8.) / 1024.),
+    SUM(qsrs_with_lasts.avg_tempdb_space_used * qsrs_with_lasts.count_executions) / NULLIF(SUM(qsrs_with_lasts.count_executions), 0) * 8. / 1024.,
     MAX((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8.) / 1024.),
     MIN((qsrs_with_lasts.min_tempdb_space_used * 8.) / 1024.),
     MAX((qsrs_with_lasts.max_tempdb_space_used * 8.) / 1024.),';
@@ -3308,6 +3767,29 @@ BEGIN
     AND   qsrs.last_execution_time < @end_date';
 END;
 
+/*Leave out maintenance plans, before the TOP, when no @include_ list or @procedure_name is given and @include_maintenance is 0*/
+IF
+(
+    @include_plan_ids IS NULL
+AND @include_query_ids IS NULL
+AND @include_query_hashes IS NULL
+AND @include_plan_hashes IS NULL
+AND @include_sql_handles IS NULL
+AND @procedure_name IS NULL
+AND @include_maintenance = 0
+)
+BEGIN
+    SELECT
+        @sql += N'
+    AND   NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #maintenance_plans AS mp
+              WHERE mp.plan_id = qsrs.plan_id
+          )';
+END;
+
 /*Add include plan IDs filter if specified*/
 IF
 (
@@ -3398,7 +3880,7 @@ BEGIN
                         SELECT
                             qsq.query_id
                         FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
                     )
           )';
 END;
@@ -3429,7 +3911,7 @@ BEGIN
                                 1/0
                             FROM #procedure_object_ids AS poi
                             WHERE poi.object_id = qsq.object_id
-                        )
+                        )' + @procedure_variants_wildcard + N'
                     )
           )';
 END;
@@ -3440,7 +3922,7 @@ GROUP BY
     qsrs_with_lasts.plan_id
 ORDER BY
     MAX(qsrs_with_lasts.partitioned_last_execution_time) DESC
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -3454,11 +3936,13 @@ EXECUTE sys.sp_executesql
   N'@database_id integer,
     @start_date datetimeoffset(7),
     @end_date datetimeoffset(7),
-    @procedure_name_quoted nvarchar(1024)',
+    @procedure_name_quoted nvarchar(1024),
+    @top bigint',
     @database_id,
     @start_date,
     @end_date,
-    @procedure_name_quoted;
+    @procedure_name_quoted,
+    @top;
 
 /*
 Populate #query_store_plan from sys.query_store_plan
@@ -3477,7 +3961,6 @@ WITH
     database_id,
     plan_id,
     query_id,
-    all_plan_ids,
     plan_group_id,
     engine_version,
     compatibility_level,
@@ -3505,24 +3988,6 @@ SELECT
     @database_id,
     qsp.plan_id,
     qsp.query_id,
-    all_plan_ids =
-        STUFF
-        (
-            (
-                SELECT DISTINCT
-                    '', '' +
-                    RTRIM
-                        (qsp_plans.plan_id)
-                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML
-                    PATH(''''),
-                    TYPE
-            ).value(''./text()[1]'', ''varchar(max)''),
-            1,
-            2,
-            ''''
-        ),
     qsp.plan_group_id,
     qsp.engine_version,
     qsp.compatibility_level,
@@ -3574,13 +4039,26 @@ SELECT
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 WHERE qsp.is_online_index_plan = 0';
 
-/*Add date filtering if specified*/
+/*
+Add date filtering if specified.
+
+Keep the plans that have runtime stats in the window. This used to test
+qsp.last_execution_time, which is the last time the plan ran at all, so a
+plan that ran in a past window and again after @end_date was dropped, and
+the window came back empty. #query_store_runtime_stats was filled with the
+same filters and the per-interval window, so its plan ids are the answer.
+*/
 IF @start_date <= @end_date
 BEGIN
     SELECT
         @sql += N'
-AND   qsp.last_execution_time >= @start_date
-AND   qsp.last_execution_time < @end_date';
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_runtime_stats AS qsrs
+          WHERE qsrs.plan_id = qsp.plan_id
+      )';
 END;
 
 /*Add include plan IDs filter if specified*/
@@ -3668,7 +4146,7 @@ AND   qsp.query_id IN
           SELECT
               qsq.query_id
           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)' + @procedure_variants_single + N'
       )';
 END;
 
@@ -3693,16 +4171,22 @@ AND   qsp.query_id IN
                   1/0
               FROM #procedure_object_ids AS poi
               WHERE poi.object_id = qsq.object_id
-          )
+          )' + @procedure_variants_wildcard + N'
       )';
 END;
 
-/*Add final ORDER BY and options*/
+/*
+Add final ORDER BY and options.
+
+The hash joins keep each Query Store view to one read: with few plans in
+#query_store_runtime_stats, nested loops read the in-memory part of
+sys.query_store_plan again for every plan.
+*/
 SELECT
     @sql += N'
 ORDER BY
     qsp.last_execution_time DESC
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -3723,44 +4207,170 @@ EXECUTE sys.sp_executesql
     @procedure_name_quoted;
 
 /*
+all_plan_ids lists every plan of each query. A subquery per plan in the
+insert above read sys.query_store_plan once per plan, and with few plans
+it read the in-memory part of the view again each time (about 15 ms per
+plan on one test database), so read it once here, with a hash join.
+*/
+SELECT
+    @sql = @isolation_level,
+    @current_table = N'inserting #all_plan_ids';
+
+SELECT
+    @sql += N'
+SELECT
+    qsp.query_id,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp2
+          WHERE qsp2.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #all_plan_ids
+WITH
+    (TABLOCK)
+(
+    query_id,
+    plan_id
+)
+EXECUTE sys.sp_executesql
+    @sql;
+
+/*
+The plan ids are listed in numeric order, as sp_QuickieStore lists them
+*/
+SELECT
+    @current_table = N'updating all_plan_ids in #query_store_plan';
+
+UPDATE
+    qsp
+SET
+    qsp.all_plan_ids =
+        STUFF
+        (
+            (
+                SELECT
+                    ', ' +
+                    RTRIM(ap.plan_id)
+                FROM #all_plan_ids AS ap
+                WHERE ap.query_id = qsp.query_id
+                ORDER BY
+                    ap.plan_id
+                FOR XML
+                    PATH(''),
+                    TYPE
+            ).value('./text()[1]', 'varchar(max)'),
+            1,
+            2,
+            ''
+        )
+FROM #query_store_plan AS qsp
+OPTION(RECOMPILE);
+
+/*
 Populate the #query_store_query table with query metadata
 */
 SELECT
     @sql = @isolation_level,
     @current_table = N'inserting #query_store_query';
 
+/*
+Parameter Sensitive Plan variants have object_id 0, so they show
+the object of their parent query instead of Adhoc.
+
+Joins instead of a CROSS APPLY TOP (1) per query, so the hash joins can
+read each Query Store view once: the apply read the in-memory part of
+sys.query_store_query again for every query. The row number keeps the
+latest row of a query, as the TOP (1) did.
+*/
 SELECT
     @sql += N'
 SELECT
     @database_id,
     qsq.query_id,
     qsq.query_text_id,
-    qsq.context_settings_id,
-    qsq.object_id,
+    qsq.context_settings_id,' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+    object_id =
+        ISNULL
+        (
+            psp.parent_object_id,
+            qsq.object_id
+        ),'
+        ELSE N'
+    qsq.object_id,'
+    END + N'
     qsq.query_hash,
     qsq.initial_compile_start_time,
     qsq.last_compile_start_time,
     qsq.last_execution_time
 FROM
 (
-    /*
-    A query with more than one plan would otherwise get a row per plan
-    */
-    SELECT DISTINCT
-        qsp.query_id
-    FROM #query_store_plan AS qsp
-    WHERE qsp.database_id = @database_id
-) AS qsp
-CROSS APPLY
-(
-    SELECT TOP (1)
-        qsq.*
+    SELECT
+        qsq.*,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id
+                ORDER BY
+                    qsq.last_execution_time DESC
+            )
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    WHERE qsq.query_id = qsp.query_id
-    ORDER BY
-        qsq.last_execution_time DESC
-) AS qsq
-OPTION(RECOMPILE);' + @nc10;
+    WHERE EXISTS
+          (
+              /*
+              A query with more than one plan would otherwise get a row per plan
+              */
+              SELECT
+                  1/0
+              FROM #query_store_plan AS qsp
+              WHERE qsp.query_id = qsq.query_id
+              AND   qsp.database_id = @database_id
+          )
+) AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN
+(
+    SELECT
+        qsqv.query_variant_query_id,
+        parent_object_id =
+            MAX(qsq_parent.object_id)
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+      ON qsq_parent.query_id = qsqv.parent_query_id
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_store_plan AS qsp
+              WHERE qsp.query_id = qsqv.query_variant_query_id
+              AND   qsp.database_id = @database_id
+          )
+    GROUP BY
+        qsqv.query_variant_query_id
+) AS psp
+  ON psp.query_variant_query_id = qsq.query_id'
+        ELSE N''
+    END + N'
+WHERE qsq.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -3847,8 +4457,53 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
+XML cannot hold the control characters 0x00 to 0x1F other than tab, line
+feed, and carriage return. One of them in any query text in the window made
+the FOR XML below fail with Msg 6841, and the whole run failed with it.
+Replace them with ? and drop NCHAR(0), the way sp_QuickieCache does, and
+flag the text so its plans get a warning: a string literal that held one
+no longer matches the original.
+*/
+SELECT
+    @current_table = N'replacing control characters in #query_store_query_text';
+
+UPDATE
+    qsqt
+SET
+    qsqt.query_sql_text = x.query_sql_text,
+    qsqt.has_control_characters = 1
+FROM #query_store_query_text AS qsqt
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                qsqt.query_sql_text COLLATE Latin1_General_BIN2,
+            NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'')
+) AS x
+/*
+One pattern search finds the texts that hold one of these characters, so
+the REPLACE chain runs only for them. Comparing the replaced text with
+the original ran all 29 REPLACEs over every text first.
+*/
+WHERE PATINDEX
+      (
+          N'%[' + NCHAR(1) + N'-' + NCHAR(8) + NCHAR(11) + NCHAR(12) + NCHAR(14) + N'-' + NCHAR(31) + N']%',
+          qsqt.query_sql_text COLLATE Latin1_General_BIN2
+      ) > 0
+OR    CHARINDEX(NCHAR(0), qsqt.query_sql_text COLLATE Latin1_General_BIN2) > 0
+OPTION(RECOMPILE);
+
+/*
 Populate the clickable XML column
 */
+SELECT
+    @current_table = N'populating query_sql_text_clickable in #query_store_query_text';
+
 UPDATE qsqt
 SET qsqt.query_sql_text_clickable =
     (
@@ -3893,7 +4548,7 @@ WHERE EXISTS
           FROM #query_store_query AS qsq
           WHERE qsq.context_settings_id = qcs.context_settings_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -3926,7 +4581,14 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
-Update things to get the context settings for each query
+Update things to get the context settings for each query.
+
+Every option is written out as ON or OFF. Writing only the options that
+were ON left the others to whatever the session running the repro had:
+a query captured with ANSI_NULLS OFF ran under ANSI_NULLS ON and returned
+different rows, and a query captured with ARITHABORT OFF (the default for
+most drivers) compiled a plan of its own when run from SSMS, which sets
+ARITHABORT ON.
 */
 SELECT
     @current_table = N'updating context_settings in #query_store_runtime_stats';
@@ -3944,8 +4606,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 1 = 1
-                THEN ', ANSI_PADDING'
-                ELSE ''
+                THEN ', ANSI_PADDING ON'
+                ELSE ', ANSI_PADDING OFF'
             END +
             CASE
                 WHEN
@@ -3954,8 +4616,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 8 = 8
-                THEN ', CONCAT_NULL_YIELDS_NULL'
-                ELSE ''
+                THEN ', CONCAT_NULL_YIELDS_NULL ON'
+                ELSE ', CONCAT_NULL_YIELDS_NULL OFF'
             END +
             CASE
                 WHEN
@@ -3964,8 +4626,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 16 = 16
-                THEN ', ANSI_WARNINGS'
-                ELSE ''
+                THEN ', ANSI_WARNINGS ON'
+                ELSE ', ANSI_WARNINGS OFF'
             END +
             CASE
                 WHEN
@@ -3974,8 +4636,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 32 = 32
-                THEN ', ANSI_NULLS'
-                ELSE ''
+                THEN ', ANSI_NULLS ON'
+                ELSE ', ANSI_NULLS OFF'
             END +
             CASE
                 WHEN
@@ -3984,8 +4646,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 64 = 64
-                THEN ', QUOTED_IDENTIFIER'
-                ELSE ''
+                THEN ', QUOTED_IDENTIFIER ON'
+                ELSE ', QUOTED_IDENTIFIER OFF'
             END +
             CASE
                 WHEN
@@ -3994,8 +4656,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 4096 = 4096
-                THEN ', ARITHABORT'
-                ELSE ''
+                THEN ', ARITHABORT ON'
+                ELSE ', ARITHABORT OFF'
             END +
             CASE
                 WHEN
@@ -4004,8 +4666,8 @@ SET
                         integer,
                         qcs.set_options
                     ) & 8192 = 8192
-                THEN ', NUMERIC_ROUNDABORT'
-                ELSE ''
+                THEN ', NUMERIC_ROUNDABORT ON'
+                ELSE ', NUMERIC_ROUNDABORT OFF'
             END,
             2,
             256
@@ -4020,6 +4682,7 @@ JOIN #query_store_query AS qsq
 JOIN #query_context_settings AS qcs
   ON  qsq.context_settings_id = qcs.context_settings_id
   AND qsq.database_id = qcs.database_id
+WHERE qcs.set_options IS NOT NULL
 OPTION(RECOMPILE);
 
 /*
@@ -4039,8 +4702,24 @@ SELECT
     qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
         SUM(qsws_with_lasts.total_query_wait_time_ms),
+    /*
+    Weighted like the runtime stats averages. Query Store computes
+    avg_query_wait_time_ms as the total of the interval divided by some number
+    of executions, so total / avg recovers the count Query Store itself
+    averaged over in that interval. That is not always all the
+    executions in the interval: it can be 1, or only the
+    executions that had this wait.
+    SUM(total) / SUM(total / avg) combines the averages Query Store computed.
+    An interval without this wait has no row here, so it adds nothing to the
+    divisor.
+    */
     avg_query_wait_time_ms =
-        AVG(qsws_with_lasts.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms) /
+        NULLIF
+        (
+            SUM(qsws_with_lasts.total_query_wait_time_ms / NULLIF(qsws_with_lasts.avg_query_wait_time_ms, 0)),
+            0
+        ),
     last_query_wait_time_ms =
         MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
@@ -4175,7 +4854,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qspf.plan_id = qsp.plan_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -4224,7 +4903,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qsqv.query_variant_query_id = qsp.query_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -4246,6 +4925,121 @@ OPTION(RECOMPILE);' + @nc10;
         @sql,
       N'@database_id integer',
         @database_id;
+
+    /*
+    A parameter sensitive plan (PSP) parent query has one plan, the
+    dispatcher, and the dispatcher never runs: Query Store keeps no runtime
+    stats for it, so asking for the parent query or its dispatcher plan came
+    back empty with no reason given. When an include filter picked up a
+    dispatcher plan, say so and name the variant queries to ask for instead.
+    */
+    IF @include_plans_seeded = 1
+    BEGIN
+        CREATE TABLE
+            #psp_parents
+        (
+            parent_query_id bigint NOT NULL,
+            dispatcher_plan_id bigint NOT NULL,
+            query_variant_query_id bigint NOT NULL
+        );
+
+        SELECT
+            @sql = @isolation_level,
+            @current_table = N'checking for parameter sensitive plan parent queries';
+
+        SELECT
+            @sql += N'
+SELECT
+    qsqv.parent_query_id,
+    qsqv.dispatcher_plan_id,
+    qsqv.query_variant_query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #include_plan_ids AS ipi
+          WHERE ipi.plan_id = qsqv.dispatcher_plan_id
+      )
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #psp_parents
+        WITH
+            (TABLOCK)
+        (
+            parent_query_id,
+            dispatcher_plan_id,
+            query_variant_query_id
+        )
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        IF EXISTS
+        (
+            SELECT
+                1/0
+            FROM #psp_parents AS pp
+        )
+        BEGIN
+            SELECT
+                @psp_message =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                NCHAR(10) +
+                                N'Query ' +
+                                RTRIM(pp.parent_query_id) +
+                                N' is a parameter sensitive plan parent. Its dispatcher plan ' +
+                                RTRIM(pp.dispatcher_plan_id) +
+                                N' does not run, so Query Store has no runtime stats and no repro for it. Use its variant queries: @include_query_ids = N''' +
+                                STUFF
+                                (
+                                    (
+                                        SELECT
+                                            N',' +
+                                            RTRIM(pv.query_variant_query_id)
+                                        FROM #psp_parents AS pv
+                                        WHERE pv.parent_query_id = pp.parent_query_id
+                                        ORDER BY
+                                            pv.query_variant_query_id
+                                        FOR XML
+                                            PATH(N''),
+                                            TYPE
+                                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                                    1,
+                                    1,
+                                    N''
+                                ) +
+                                N''''
+                            FROM
+                            (
+                                SELECT DISTINCT
+                                    p.parent_query_id,
+                                    p.dispatcher_plan_id
+                                FROM #psp_parents AS p
+                            ) AS pp
+                            ORDER BY
+                                pp.parent_query_id
+                            FOR XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        1,
+                        N''
+                    );
+
+            RAISERROR(N'%s', 10, 1, @psp_message) WITH NOWAIT;
+        END;
+    END;
 
     /*
     Populate the #query_store_query_hints table
@@ -4272,7 +5066,7 @@ WHERE EXISTS
           FROM #query_store_plan AS qsp
           WHERE qsqh.query_id = qsp.query_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -4305,9 +5099,209 @@ END; /*end of @query_plan_xml IS NULL Query Store population gate*/
 Extract parameters from query plans
 Uses substring extraction for performance,
 avoids casting the full plan to XML
+
+The statement's own ParameterList is the last one in its QueryPlan, after
+the operator tree. Some operators (table-valued functions, XML readers)
+carry a ParameterList of their own earlier in the plan, and reading the
+first one picked up that decoy: it holds no parameters, so the real ones
+were lost and the repro fell back to ? values. Read the last ParameterList,
+and only for plans where it holds no parameters, the first one.
+
+A document can hold more than one statement, such as a multi-statement plan
+passed in @query_plan_xml. The repro uses the first statement's text, so both
+lists are the ones found before the first closing QueryPlan tag, not the last
+ParameterList of the whole document, which belongs to the last statement.
 */
 SELECT
     @current_table = N'extracting parameters from query plans';
+
+/*
+Find where each plan's last and first ParameterList start and end, then
+convert each list to xml once and shred them from #parameter_lists.
+Shredding straight from the expression ran the search of the plan text
+and the conversion again for the .nodes() call and for each .value()
+call. The positions are stored first because one statement that found
+and used them searched the plan text again for each use.
+
+Each search of the plan text is its own statement, and its result is stored
+before the next one uses it. In one statement the optimizer copied each
+search into every expression that used it, so a plan's text was scanned
+again for each use. The last list is found by reversing only the text from
+the first list to the end of the first statement, not the whole plan.
+*/
+INSERT
+    #parameter_list_positions
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    first_start
+)
+SELECT
+    qsp.plan_id,
+    fs.first_start
+FROM #query_store_plan AS qsp
+CROSS APPLY
+(
+    /*
+    Plan xml tags have one spelling, so a binary search finds the same text, much faster than the column collation.
+    */
+    SELECT
+        first_start =
+            CHARINDEX(N'<ParameterList>', qsp.query_plan COLLATE Latin1_General_100_BIN2)
+) AS fs
+WHERE fs.first_start > 0
+OPTION(RECOMPILE);
+
+/*
+Only the text up to the first closing QueryPlan tag counts: that is the
+first statement's plan, and the statement text is the first statement's too
+*/
+UPDATE
+    plp
+SET
+    plp.plan_end =
+        ISNULL
+        (
+            NULLIF
+            (
+                CHARINDEX(N'</QueryPlan>', qsp.query_plan COLLATE Latin1_General_100_BIN2),
+                0
+            ) + LEN(N'</QueryPlan>') - 1,
+            DATALENGTH(qsp.query_plan) / 2
+        )
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+OPTION(RECOMPILE);
+
+DELETE
+    plp
+FROM #parameter_list_positions AS plp
+WHERE plp.first_start + LEN(N'<ParameterList>') - 1 > plp.plan_end
+OPTION(RECOMPILE);
+
+UPDATE
+    plp
+SET
+    plp.last_start =
+        plp.plan_end -
+        CHARINDEX
+        (
+            REVERSE(N'<ParameterList>'),
+            REVERSE
+            (
+                SUBSTRING
+                (
+                    qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                    plp.first_start,
+                    plp.plan_end - plp.first_start + 1
+                )
+            )
+        ) -
+        LEN(N'<ParameterList>') + 2
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+OPTION(RECOMPILE);
+
+UPDATE
+    plp
+SET
+    plp.last_end =
+        CHARINDEX(N'</ParameterList>', qpb.query_plan, plp.last_start),
+    plp.first_end =
+        CHARINDEX(N'</ParameterList>', qpb.query_plan, plp.first_start)
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+CROSS APPLY
+(
+    SELECT
+        query_plan =
+            qsp.query_plan COLLATE Latin1_General_100_BIN2
+) AS qpb
+OPTION(RECOMPILE);
+
+/*
+The positions above come from a binary collation, so the cut has to use the
+same one: under an _SC or UTF8 collation a supplementary character would
+otherwise shift the cut.
+*/
+INSERT
+    #parameter_lists
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    last_parameter_list,
+    first_parameter_list
+)
+SELECT
+    plp.plan_id,
+    last_parameter_list =
+        CASE
+            WHEN plp.last_end > 0
+            THEN TRY_CAST
+                 (
+                     SUBSTRING
+                     (
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                         plp.last_start,
+                         plp.last_end + LEN(N'</ParameterList>') - plp.last_start
+                     ) AS xml
+                 )
+        END,
+    /*
+    Most plans have one list, so their first list is their last one. It is
+    only read when the last one holds no parameters, and then it holds
+    none either, so it is converted only when it is a different list.
+    */
+    first_parameter_list =
+        CASE
+            WHEN plp.first_start < plp.last_start
+            AND  plp.first_end > 0
+            THEN TRY_CAST
+                 (
+                     SUBSTRING
+                     (
+                         qsp.query_plan COLLATE Latin1_General_100_BIN2,
+                         plp.first_start,
+                         plp.first_end + LEN(N'</ParameterList>') - plp.first_start
+                     ) AS xml
+                 )
+        END
+FROM #parameter_list_positions AS plp
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = plp.plan_id
+OPTION(RECOMPILE);
+
+/*
+Serial on purpose: the XML readers are costed high, so this went parallel,
+and the parallel plan spent up to 2.7 s waiting on latches and exchanges
+to shred lists that take 15 to 160 ms on one thread
+*/
+INSERT
+    #parameter_shred
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    param_column,
+    param_data_type,
+    param_compiled_value
+)
+SELECT
+    pl.plan_id,
+    param_column =
+        cr.c.value(N'@Column', N'sysname'),
+    param_data_type =
+        cr.c.value(N'@ParameterDataType', N'sysname'),
+    param_compiled_value =
+        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
+FROM #parameter_lists AS pl
+CROSS APPLY pl.last_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr (c)
+OPTION(RECOMPILE, MAXDOP 1);
 
 INSERT
     #parameter_shred
@@ -4320,41 +5314,22 @@ WITH
     param_compiled_value
 )
 SELECT
-    qsp.plan_id,
+    pl.plan_id,
     param_column =
         cr.c.value(N'@Column', N'sysname'),
     param_data_type =
         cr.c.value(N'@ParameterDataType', N'sysname'),
     param_compiled_value =
         cr.c.value(N'@ParameterCompiledValue', N'nvarchar(max)')
-FROM #query_store_plan AS qsp
-CROSS APPLY
-(
-    SELECT
-        parameter_list_xml =
-            CASE
-                WHEN CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
-                THEN TRY_CAST
-                     (
-                         SUBSTRING
-                         (
-                             qsp.query_plan,
-                             CHARINDEX(N'<ParameterList>', qsp.query_plan),
-                             CHARINDEX
-                             (
-                                 N'</ParameterList>',
-                                 qsp.query_plan,
-                                 CHARINDEX(N'<ParameterList>', qsp.query_plan)
-                             )
-                             + LEN(N'</ParameterList>')
-                             - CHARINDEX(N'<ParameterList>', qsp.query_plan)
-                         ) AS xml
-                     )
-            END
-) AS x
-CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
-WHERE CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
-AND   x.parameter_list_xml IS NOT NULL
+FROM #parameter_lists AS pl
+CROSS APPLY pl.first_parameter_list.nodes(N'/ParameterList/ColumnReference') AS cr (c)
+WHERE NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #parameter_shred AS ps
+          WHERE ps.plan_id = pl.plan_id
+      )
 OPTION(RECOMPILE);
 
 /*
@@ -4405,6 +5380,19 @@ SELECT
                      LEN(ps.param_compiled_value) - 8
                  ) +
                  N''''
+            /*
+            The plan stores datetime and smalldatetime values as
+            'yyyy-mm-dd hh:mi:ss.mmm'. The repro also sets the original
+            DATEFORMAT and LANGUAGE, and under dmy (British, French, and
+            others) those two types read that string as yyyy-dd-mm:
+            '2026-01-05' binds as May 1, and '2026-01-13' fails with Msg 8114.
+            A T in place of the space makes it ISO 8601, which every
+            DATEFORMAT reads the same way. date, datetime2, and
+            datetimeoffset ignore DATEFORMAT for this form, so they stay as is.
+            */
+            WHEN ps.param_data_type IN (N'datetime', N'smalldatetime')
+            AND  ps.param_compiled_value LIKE N'''[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:%'''
+            THEN STUFF(ps.param_compiled_value, 12, 1, N'T')
             ELSE ps.param_compiled_value
         END
 FROM #parameter_shred AS ps
@@ -4419,6 +5407,258 @@ be accidentally executed with incorrect values.
 SELECT
     @current_table = N'filling in missing parameters from query text';
 
+/*
+The parameter declaration list of each parameterized query text is split
+with string functions, not XML. Turning the list into XML and reading one
+<p> element per parameter ran an XML reader per parameter, and on a busy
+Query Store that was seconds. The split keeps what XML did to the text:
+each line break (CR LF, or CR alone) becomes LF, a parameter that is only
+white space reads as NULL, and the database collation applies to the
+result. A list with a character that XML parses or rejects (< & ]]>,
+control characters, surrogates, U+FFFE or U+FFFF) still goes through XML,
+so it is read the same way it always was.
+
+The end of each declaration list is found once, then the list is cut once,
+then split. In one statement each search ran again for every expression
+that used it.
+*/
+INSERT
+    #parameter_declarations
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    declaration_end
+)
+SELECT
+    qsp.plan_id,
+    de.declaration_end
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        declaration_end =
+            PATINDEX(N'%)[^,]%', qsqt.query_sql_text)
+) AS de
+WHERE qsqt.query_sql_text LIKE N'(@%'
+AND   de.declaration_end > 0
+OPTION(RECOMPILE);
+
+UPDATE
+    pd
+SET
+    pd.declaration =
+        SUBSTRING
+        (
+            qsqt.query_sql_text,
+            2,
+            pd.declaration_end - 2 +
+                CASE
+                    WHEN SUBSTRING
+                         (
+                             qsqt.query_sql_text,
+                             pd.declaration_end,
+                             2
+                         ) = N'))'
+                    THEN 1
+                    ELSE 0
+                END
+        )
+FROM #parameter_declarations AS pd
+JOIN #query_store_plan AS qsp
+  ON qsp.plan_id = pd.plan_id
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+OPTION(RECOMPILE);
+
+/*
+Split on ',@' (the parameter boundary), not every comma.
+A scaled type carries its own comma (numeric(10,2),
+decimal(38,6)), always followed by a digit; the separator
+between parameters is always a comma immediately followed by
+the next parameter's @name. Splitting on every comma tore
+numeric(10,2) in half, and the malformed fragment blew up
+LEFT with error 537, aborting the whole procedure for any
+query with a scaled-type parameter.
+
+The two REPLACEs are the ones the XML split used, with NCHAR(1) where it
+put </p><p>. Query text has no control characters by now (they were
+replaced with ?), and a list that has one anyway goes through XML.
+*/
+UPDATE
+    pd
+SET
+    pd.split_text =
+        REPLACE(REPLACE(pd.declaration, N', @', N',@'), N',@', NCHAR(1) + N'@'),
+    pd.needs_xml =
+        CASE
+            WHEN CHARINDEX(N'<', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(N'&', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(N']]>', pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   CHARINDEX(NCHAR(0), pd.declaration COLLATE Latin1_General_100_BIN2) > 0
+            OR   PATINDEX
+                 (
+                     N'%[' +
+                     NCHAR(1) + N'-' + NCHAR(8) +
+                     NCHAR(11) +
+                     NCHAR(12) +
+                     NCHAR(14) + N'-' + NCHAR(31) +
+                     NCHAR(55296) + N'-' + NCHAR(57343) +
+                     NCHAR(65534) +
+                     NCHAR(65535) +
+                     N']%',
+                     pd.declaration COLLATE Latin1_General_100_BIN2
+                 ) > 0
+            THEN 1
+            ELSE 0
+        END
+FROM #parameter_declarations AS pd
+OPTION(RECOMPILE);
+
+WITH
+    numbers
+(
+    n
+) AS
+(
+    /*
+    1 to 1,000,000, enough for any declaration list (2,100 parameters at
+    most); TOP below takes only as many as each list is long
+    */
+    SELECT
+        n =
+            ROW_NUMBER() OVER
+            (
+                ORDER BY
+                    (SELECT NULL)
+            )
+    FROM
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t1 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t2 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t3 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t4 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t5 (n)
+    CROSS JOIN
+    (
+        VALUES
+            (0), (0), (0), (0), (0), (0), (0), (0), (0), (0)
+    ) AS t6 (n)
+),
+    parameter_items
+(
+    plan_id,
+    item
+) AS
+(
+    /*
+    Each parameter starts at position 1 or right after an NCHAR(1), and
+    runs to the next NCHAR(1) or the end of the list. Most lists fit in
+    nvarchar(4000), where the per-character work is much cheaper than on
+    nvarchar(max).
+    */
+    SELECT
+        pd.plan_id,
+        item =
+            SUBSTRING
+            (
+                ps.split_text,
+                nb.n,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(NCHAR(1), ps.split_text, nb.n),
+                        0
+                    ),
+                    ps.split_length + 1
+                ) - nb.n
+            )
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT
+            split_text =
+                CONVERT(nvarchar(4000), pd.split_text),
+            split_length =
+                DATALENGTH(pd.split_text) / 2
+    ) AS ps
+    CROSS APPLY
+    (
+        SELECT TOP (ps.split_length)
+            n.n
+        FROM numbers AS n
+        ORDER BY
+            n.n
+    ) AS nb
+    WHERE pd.needs_xml = 0
+    AND   ps.split_length <= 4000
+    AND
+    (
+         nb.n = 1
+      OR SUBSTRING(ps.split_text, nb.n - 1, 1) = NCHAR(1)
+    )
+
+    UNION ALL
+
+    SELECT
+        pd.plan_id,
+        item =
+            SUBSTRING
+            (
+                pd.split_text,
+                nb.n,
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CHARINDEX(NCHAR(1), pd.split_text, nb.n),
+                        0
+                    ),
+                    DATALENGTH(pd.split_text) / 2 + 1
+                ) - nb.n
+            )
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT TOP (DATALENGTH(pd.split_text) / 2)
+            n.n
+        FROM numbers AS n
+        ORDER BY
+            n.n
+    ) AS nb
+    WHERE pd.needs_xml = 0
+    AND   DATALENGTH(pd.split_text) / 2 > 4000
+    AND
+    (
+         nb.n = 1
+      OR SUBSTRING(pd.split_text, nb.n - 1, 1) = NCHAR(1)
+    )
+)
 INSERT
     #query_parameters
 WITH
@@ -4430,104 +5670,121 @@ WITH
     parameter_compiled_value
 )
 SELECT DISTINCT
-    qsp.plan_id,
-    parameter_name =
-        LTRIM(RTRIM
-        (
-            LEFT
-            (
-                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                CHARINDEX
-                (
-                    N' ',
-                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                ) - 1
-            )
-        )),
-    parameter_data_type =
-        LTRIM(RTRIM
-        (
-            SUBSTRING
-            (
-                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                CHARINDEX
-                (
-                    N' ',
-                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                ) + 1,
-                LEN(LTRIM(p.param_text.value(N'.', N'nvarchar(max)')))
-            )
-        )),
+    pt.plan_id,
+    pn.parameter_name,
+    pn.parameter_data_type,
     parameter_compiled_value =
         N'?'
-FROM #query_store_plan AS qsp
-JOIN #query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-CROSS APPLY
+FROM
 (
     SELECT
-        param_prefix =
-            SUBSTRING
-            (
-                qsqt.query_sql_text,
-                2,
-                PATINDEX(N'%)[^,]%', qsqt.query_sql_text) - 2 +
-                    CASE
-                        WHEN SUBSTRING
-                             (
-                                 qsqt.query_sql_text,
-                                 PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
-                                 2
-                             ) = N'))'
-                        THEN 1
-                        ELSE 0
-                    END
-            )
-    WHERE qsqt.query_sql_text LIKE N'(@%'
-    AND   PATINDEX(N'%)[^,]%', qsqt.query_sql_text) > 0
-) AS prefix
-CROSS APPLY
-(
-    SELECT
-        param_xml =
-            TRY_CAST
-            (
+        pi.plan_id,
+        param_text =
+            CASE
+                /* XML drops a text node that is only white space */
+                WHEN PATINDEX
+                     (
+                         N'%[^ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N']%',
+                         pi.item
+                     ) = 0
+                THEN NULL
                 /*
-                Split on ',@' (the parameter boundary), not every comma.
-                A scaled type carries its own comma (numeric(10,2),
-                decimal(38,6)), always followed by a digit; the separator
-                between parameters is always a comma immediately followed by
-                the next parameter's @name. Splitting on every comma tore
-                numeric(10,2) in half, and the malformed fragment blew up
-                LEFT with error 537, aborting the whole procedure for any
-                query with a scaled-type parameter.
+                XML reads CR LF and a lone CR as LF. The round trip through
+                varbinary gives the text the database default collation as a
+                coercible default, as the XML value() call did, so the
+                comparisons below resolve their collation the same way.
                 */
-                N'<p>' +
-                REPLACE(REPLACE(prefix.param_prefix, N', @', N',@'), N',@', N'</p><p>@') +
-                N'</p>' AS xml
-            )
-) AS px
-CROSS APPLY px.param_xml.nodes(N'/p') AS p(param_text)
+                ELSE
+                    LTRIM
+                    (
+                        CONVERT
+                        (
+                            nvarchar(max),
+                            CONVERT
+                            (
+                                varbinary(max),
+                                REPLACE
+                                (
+                                    REPLACE
+                                    (
+                                        pi.item,
+                                        NCHAR(13) + NCHAR(10),
+                                        NCHAR(10)
+                                    ),
+                                    NCHAR(13),
+                                    NCHAR(10)
+                                )
+                            )
+                        )
+                    )
+            END
+    FROM parameter_items AS pi
+
+    UNION ALL
+
+    SELECT
+        pd.plan_id,
+        pt.param_text
+    FROM #parameter_declarations AS pd
+    CROSS APPLY
+    (
+        SELECT
+            param_xml =
+                TRY_CAST
+                (
+                    N'<p>' +
+                    REPLACE(REPLACE(pd.declaration, N', @', N',@'), N',@', N'</p><p>@') +
+                    N'</p>' AS xml
+                )
+    ) AS px
+    CROSS APPLY px.param_xml.nodes(N'/p') AS p (param_text)
+    CROSS APPLY
+    (
+        /* Read each parameter's text once; every .value() call is its own XML reader */
+        SELECT
+            param_text =
+                LTRIM(p.param_text.value(N'(./text())[1]', N'nvarchar(max)'))
+    ) AS pt
+    WHERE pd.needs_xml = 1
+) AS pt
+CROSS APPLY
+(
+    SELECT
+        parameter_name =
+            LTRIM(RTRIM
+            (
+                LEFT
+                (
+                    pt.param_text,
+                    CHARINDEX
+                    (
+                        N' ',
+                        pt.param_text
+                    ) - 1
+                )
+            )),
+        parameter_data_type =
+            LTRIM(RTRIM
+            (
+                SUBSTRING
+                (
+                    pt.param_text,
+                    CHARINDEX
+                    (
+                        N' ',
+                        pt.param_text
+                    ) + 1,
+                    LEN(pt.param_text)
+                )
+            ))
+) AS pn
 WHERE NOT EXISTS
 (
     SELECT
         1/0
     FROM #query_parameters AS qp
-    WHERE qp.plan_id = qsp.plan_id
-    AND   qp.parameter_name = LTRIM(RTRIM
-          (
-              LEFT
-              (
-                  LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
-                  CHARINDEX
-                  (
-                      N' ',
-                      LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
-                  ) - 1
-              )
-          ))
+    WHERE qp.plan_id = pt.plan_id
+    AND   qp.parameter_name = pn.parameter_name
 )
 OPTION(RECOMPILE);
 
@@ -4554,10 +5811,15 @@ WHERE qp.parameter_compiled_value = N'?'
 OPTION(RECOMPILE);
 
 /*
-Check for plans too large to cast to XML
+Warn when a compiled value was probably cut off.
+
+Plan XML keeps only the first 256 characters of a string value and the
+first 127 bytes of a binary value. A value of exactly that size, for a
+parameter whose type can hold more, was most likely longer, and the repro
+would run with the shorter value without saying so.
 */
 SELECT
-    @current_table = N'checking for plans too large to cast to XML';
+    @current_table = N'checking for truncated parameter values';
 
 INSERT
     #reproduction_warnings
@@ -4569,14 +5831,115 @@ WITH
     warning_message
 )
 SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'truncated parameter value',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is as long as a plan keeps (256 characters, or 127 bytes for binary types) and its type can hold more, ' +
+        N'so it was probably cut off. The repro runs with the shorter value.'
+FROM #query_parameters AS qp
+CROSS APPLY
+(
+    SELECT
+        type_length =
+            CASE
+                WHEN qp.parameter_data_type LIKE N'%(max)'
+                THEN 2147483647
+                WHEN qp.parameter_data_type LIKE N'%(%)'
+                THEN TRY_CAST
+                     (
+                         SUBSTRING
+                         (
+                             qp.parameter_data_type,
+                             CHARINDEX(N'(', qp.parameter_data_type) + 1,
+                             CHARINDEX(N')', qp.parameter_data_type) - CHARINDEX(N'(', qp.parameter_data_type) - 1
+                         ) AS integer
+                     )
+            END,
+        value_start =
+            CASE
+                WHEN qp.parameter_compiled_value LIKE N'N''%'
+                THEN 3
+                ELSE 2
+            END
+) AS t
+WHERE
+(
+    qp.parameter_data_type LIKE N'%char(%'
+AND qp.parameter_compiled_value LIKE N'%'''
+AND t.type_length > 256
+AND DATALENGTH
+    (
+        REPLACE
+        (
+            SUBSTRING
+            (
+                qp.parameter_compiled_value COLLATE Latin1_General_100_BIN2,
+                t.value_start,
+                CASE
+                    WHEN DATALENGTH(qp.parameter_compiled_value) / 2 > t.value_start
+                    THEN DATALENGTH(qp.parameter_compiled_value) / 2 - t.value_start
+                    ELSE 0
+                END
+            ),
+            N'''''',
+            N''''
+        )
+    ) / 2 = 256
+)
+OR
+(
+    qp.parameter_data_type LIKE N'%binary(%'
+AND qp.parameter_compiled_value LIKE N'0x%'
+AND t.type_length > 127
+AND DATALENGTH(qp.parameter_compiled_value) / 2 = 256
+)
+OPTION(RECOMPILE);
+
+/*
+Check for plans too large to cast to XML.
+
+The conversion is the test, so its result is kept: the embedded constants
+and the final SELECT read the xml from #query_plan_xml. Each of them
+converted every plan again before, which cost as much as this check.
+*/
+SELECT
+    @current_table = N'checking for plans too large to cast to XML';
+
+INSERT
+    #query_plan_xml
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    query_plan_xml
+)
+SELECT
     qsp.plan_id,
+    query_plan_xml =
+        TRY_CAST(qsp.query_plan AS xml)
+FROM #query_store_plan AS qsp
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qpx.plan_id,
     warning_type = N'plan too large for XML parsing',
     warning_message =
         N'Query plan could not be cast to XML (likely too large). ' +
         N'Parameters and embedded constants cannot be extracted using XQuery. ' +
         N'Manual review of plan text required.'
-FROM #query_store_plan AS qsp
-WHERE TRY_CAST(qsp.query_plan AS xml) IS NULL
+FROM #query_plan_xml AS qpx
+WHERE qpx.query_plan_xml IS NULL
 OPTION(RECOMPILE);
 
 /*
@@ -4612,6 +5975,9 @@ OPTION(RECOMPILE);
 /*
 Extract embedded constants from plans with OPTION(RECOMPILE)
 For plans that can be cast to XML, use XQuery
+
+The plans are the ones the warning above just found with the same LIKE,
+so they are read from its rows instead of searching every query text again
 */
 SELECT
     @current_table = N'extracting embedded constants from plans';
@@ -4625,32 +5991,33 @@ WITH
     constant_value
 )
 SELECT DISTINCT
-    qsp.plan_id,
+    rw.plan_id,
     constant_value =
         CASE
-            WHEN c.const.value(N'@ConstValue', N'nvarchar(max)') LIKE N'(%)'
+            WHEN cv.const_value LIKE N'(%)'
             THEN SUBSTRING
                  (
-                     c.const.value(N'@ConstValue', N'nvarchar(max)'),
+                     cv.const_value,
                      2,
-                     LEN(c.const.value(N'@ConstValue', N'nvarchar(max)')) - 2
+                     LEN(cv.const_value) - 2
                  )
-            ELSE LTRIM(RTRIM(c.const.value(N'@ConstValue', N'nvarchar(max)')))
+            ELSE LTRIM(RTRIM(cv.const_value))
         END
-FROM #query_store_plan AS qsp
-JOIN #query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
+FROM #reproduction_warnings AS rw
+JOIN #query_plan_xml AS x
+  ON x.plan_id = rw.plan_id
+CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c (const)
 CROSS APPLY
 (
+    /* Read the attribute once; each .value() call is its own XML reader */
     SELECT
-        query_plan_xml =
-            TRY_CAST(qsp.query_plan AS xml)
-) AS x
-CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c(const)
-WHERE x.query_plan_xml IS NOT NULL
-AND   qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
+        const_value =
+            c.const.value(N'@ConstValue', N'nvarchar(max)')
+) AS cv
+/*
+No IS NOT NULL test on the xml here: .nodes() returns no rows for NULL.
+*/
+WHERE rw.warning_type = N'parameter embedding optimization'
 OPTION(RECOMPILE);
 
 /*
@@ -4695,7 +6062,12 @@ OPTION(RECOMPILE);
 
 /*
 Check for dispatcher plans (parameter sensitive plan optimization)
-If a query is a dispatcher, warn and provide the variant query IDs
+If a plan is a dispatcher, warn and provide the variant query IDs.
+
+The test is on the plan, not on its query. A parent query can have
+regular plans next to its dispatcher, and keying on the parent query
+skipped those runnable plans whenever one of its variants was in the
+results too.
 */
 IF @sql_2022_views = 1
 BEGIN
@@ -4725,7 +6097,7 @@ BEGIN
                         N', ' +
                         RTRIM(qsqv.query_variant_query_id)
                     FROM #query_store_query_variant AS qsqv
-                    WHERE qsqv.parent_query_id = qsq.query_id
+                    WHERE qsqv.dispatcher_plan_id = qsp.plan_id
                     ORDER BY
                         qsqv.query_variant_query_id
                     FOR XML
@@ -4737,23 +6109,260 @@ BEGIN
                 N''
             )
     FROM #query_store_plan AS qsp
-    JOIN #query_store_query AS qsq
-      ON qsp.query_id = qsq.query_id
     WHERE EXISTS
           (
               SELECT
                   1/0
               FROM #query_store_query_variant AS qsqv
-              WHERE qsqv.parent_query_id = qsq.query_id
+              WHERE qsqv.dispatcher_plan_id = qsp.plan_id
           )
     OPTION(RECOMPILE);
 END;
+
+/*
+A parameter sensitive plan variant query carries the hint that ties it to
+its dispatcher in its text, as OPTION (PLAN PER VALUE(...)). That hint can't
+be run (Msg 102), so the repro is built without it; see psp below.
+*/
+SELECT
+    @current_table = N'checking for parameter sensitive plan variants';
+
+/*
+The search runs once per text here. The repro builder below used it in a
+CROSS APPLY, and the optimizer copied it into every expression that used
+the PSP-free text, so each text was searched about six times under the
+column collation.
+
+Only a query that is a parameter sensitive plan variant, with a row in
+#query_store_query_variant, has the hint taken out. A query whose own text
+holds the characters PLAN PER VALUE( inside a string literal is left alone,
+and where sys.query_store_query_variant does not exist (before SQL Server
+2022) the table is empty and no text is changed.
+*/
+INSERT
+    #psp_hint_starts
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    hint_start
+)
+SELECT
+    qsqt.query_text_id,
+    hint_start =
+        DATALENGTH(qsqt.query_sql_text) / 2 -
+        CHARINDEX(REVERSE(N'PLAN PER VALUE('), REVERSE(qsqt.query_sql_text)) -
+        LEN(N'PLAN PER VALUE(') + 2
+FROM #query_store_query_text AS qsqt
+WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_query AS qsq
+          JOIN #query_store_query_variant AS qsqv
+            ON qsqv.query_variant_query_id = qsq.query_id
+          WHERE qsq.query_text_id = qsqt.query_text_id
+      )
+OPTION(RECOMPILE);
+
+/*
+The text without the hint, for the repro. The hint is the last PLAN PER
+VALUE( in the text and ends at the first )) after it, where its last
+predicate_range closes. Query Store writes it either as its own clause,
+" option (PLAN PER VALUE(...))", or first in the query's own OPTION
+clause, "OPTION ( PLAN PER VALUE(...), LOOP JOIN)". This ran in the repro
+builder for every plan, and every expression there that used the text
+ran it again.
+*/
+UPDATE
+    phs
+SET
+    phs.query_sql_text =
+        CASE
+            WHEN psp_hint.hint IS NULL
+            THEN qsqt.query_sql_text
+            ELSE
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            qsqt.query_sql_text,
+                            N' option (' + psp_hint.hint + N')',
+                            N''
+                        ),
+                        psp_hint.hint + N', ',
+                        N''
+                    ),
+                    N', ' + psp_hint.hint,
+                    N''
+                )
+        END
+FROM #psp_hint_starts AS phs
+JOIN #query_store_query_text AS qsqt
+  ON qsqt.query_text_id = phs.query_text_id
+CROSS APPLY
+(
+    SELECT
+        hint =
+            CASE
+                WHEN phs.hint_start > 0
+                AND  CHARINDEX(N'))', qsqt.query_sql_text, phs.hint_start) > 0
+                THEN SUBSTRING
+                     (
+                         qsqt.query_sql_text,
+                         phs.hint_start,
+                         CHARINDEX(N'))', qsqt.query_sql_text, phs.hint_start) + 2 - phs.hint_start
+                     )
+            END
+) AS psp_hint
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'PSP variant',
+    warning_message =
+        N'Query is a parameter sensitive plan variant' +
+        ISNULL(N' of parent query ' + RTRIM(qsqv.parent_query_id), N'') +
+        N'. The PLAN PER VALUE hint Query Store keeps in its text cannot be run, so it was removed from the repro. ' +
+        N'SQL Server picks the variant again when the repro runs.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsq.query_text_id
+LEFT JOIN #query_store_query_variant AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id
+OPTION(RECOMPILE);
+
+/*
+Warn when control characters were replaced in the query text
+*/
+SELECT
+    @current_table = N'checking for control characters in query text';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'control characters',
+    warning_message =
+        N'Query text has control characters that XML cannot show. They were replaced with ? in the repro, ' +
+        N'so a string literal that held one no longer matches the original.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.has_control_characters = 1
+OPTION(RECOMPILE);
+
+/*
+Warn on internal queries that only SQL Server itself can run: the StatMan
+queries of a statistics update fail with Msg 195 ('StatMan' is not a
+recognized built-in function name), and full-text population queries
+fail with Msg 156 near 'fulltextkey'.
+*/
+SELECT
+    @current_table = N'checking for internal queries';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'internal query',
+    warning_message =
+        CASE
+            WHEN qsqt.query_sql_text LIKE N'%StatMan(%[_]MS[_]UPDSTATS[_]TBL%'
+            THEN N'Query is an internal statistics update (StatMan). Only UPDATE STATISTICS or an automatic statistics update can run it, ' +
+                 N'so the repro fails with Msg 195. To reproduce it, update the statistics on the table.'
+            ELSE N'Query is an internal full-text index population query. Only the full-text engine can run it, ' +
+                 N'so the repro fails with Msg 156.'
+        END
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text LIKE N'%StatMan(%[_]MS[_]UPDSTATS[_]TBL%'
+OR    qsqt.query_sql_text LIKE N'%column fulltextkey%'
+OPTION(RECOMPILE);
 
 /*
 Check for temp tables and table variables in query text
 */
 SELECT
     @current_table = N'checking for temp tables and table variables';
+
+INSERT
+    #query_text_normalized
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    query_sql_text_normalized
+)
+SELECT
+    qsqt.query_text_id,
+    query_sql_text_normalized =
+        REPLACE
+        (
+            REPLACE
+            (
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2,
+                                NCHAR(13),
+                                N' '
+                            ),
+                            NCHAR(10),
+                            N' '
+                        ),
+                        NCHAR(9),
+                        N' '
+                    ),
+                    N' ',
+                    NCHAR(1) + NCHAR(2)
+                ),
+                NCHAR(2) + NCHAR(1),
+                N''
+            ),
+            NCHAR(1) + NCHAR(2),
+            N' '
+        )
+FROM #query_store_query_text AS qsqt
+OPTION(RECOMPILE);
 
 INSERT
     #reproduction_warnings
@@ -4771,16 +6380,16 @@ SELECT DISTINCT
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text_normalized LIKE N'% FROM #%'
-OR    qsqt.query_sql_text_normalized LIKE N'% JOIN #%'
-OR    qsqt.query_sql_text_normalized LIKE N'% INTO #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%INSERT #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%DELETE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE #%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO #%'
+JOIN #query_text_normalized AS qtn
+  ON qtn.query_text_id = qsq.query_text_id
+WHERE qtn.query_sql_text_normalized LIKE N'% FROM #%'
+OR    qtn.query_sql_text_normalized LIKE N'% JOIN #%'
+OR    qtn.query_sql_text_normalized LIKE N'% INTO #%'
+OR    qtn.query_sql_text_normalized LIKE N'%INSERT #%'
+OR    qtn.query_sql_text_normalized LIKE N'%UPDATE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%DELETE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE #%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE INTO #%'
 OPTION(RECOMPILE);
 
 INSERT
@@ -4799,16 +6408,16 @@ SELECT DISTINCT
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text_normalized LIKE N'% FROM @%'
-OR    qsqt.query_sql_text_normalized LIKE N'% JOIN @%'
-OR    qsqt.query_sql_text_normalized LIKE N'% INTO @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%INSERT @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%DELETE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE @%'
-OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO @%'
+JOIN #query_text_normalized AS qtn
+  ON qtn.query_text_id = qsq.query_text_id
+WHERE qtn.query_sql_text_normalized LIKE N'% FROM @%'
+OR    qtn.query_sql_text_normalized LIKE N'% JOIN @%'
+OR    qtn.query_sql_text_normalized LIKE N'% INTO @%'
+OR    qtn.query_sql_text_normalized LIKE N'%INSERT @%'
+OR    qtn.query_sql_text_normalized LIKE N'%UPDATE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%DELETE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE @%'
+OR    qtn.query_sql_text_normalized LIKE N'%MERGE INTO @%'
 OPTION(RECOMPILE);
 
 /*
@@ -4849,6 +6458,118 @@ CROSS APPLY
 ) AS ppc
 WHERE qsqt.query_sql_text LIKE N'(@%'
 AND   ppc.plan_param_count = 0
+OPTION(RECOMPILE);
+
+/*
+Note the plans whose declarations come from the plan, not the query text
+(see has_plan_parameters in the repro builder below)
+*/
+SELECT
+    @current_table = N'checking for parameters without declarations in the query text';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'declarations from plan',
+    warning_message =
+        N'Query text has no parameter declarations (a statement from a procedure, function, trigger, or batch). ' +
+        N'The repro declares the parameters in the plan ParameterList. Local variables are not in it and must be declared by hand.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text NOT LIKE N'(@%'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_parameters AS qp
+          WHERE qp.plan_id = qsp.plan_id
+      )
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_parameters AS qp
+          WHERE qp.plan_id = qsp.plan_id
+          AND
+          (
+               qp.parameter_name NOT LIKE N'@%'
+            OR qp.parameter_data_type IS NULL
+            OR qp.parameter_compiled_value IS NULL
+          )
+      )
+OPTION(RECOMPILE);
+
+/*
+Find where the statement starts after the (@...) declaration list in each
+parameterized text (without its PSP hint), once per text. The end of the
+list is stored first, then the start is worked out from it, because one
+expression that used the search twice ran it twice. In the repro builder
+these searches ran for every plan, and again for each use.
+*/
+SELECT
+    @current_table = N'finding where the statement starts in parameterized query text';
+
+INSERT
+    #repro_text_starts
+WITH
+    (TABLOCK)
+(
+    query_text_id,
+    declaration_end
+)
+SELECT
+    qsqt.query_text_id,
+    declaration_end =
+        PATINDEX(N'%)[^,]%', t.query_sql_text)
+FROM #query_store_query_text AS qsqt
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS t
+WHERE t.query_sql_text LIKE N'(@%'
+OPTION(RECOMPILE);
+
+UPDATE
+    rts
+SET
+    rts.text_start =
+        rts.declaration_end +
+        CASE
+            WHEN SUBSTRING
+                 (
+                     t.query_sql_text,
+                     rts.declaration_end,
+                     2
+                 ) = N'))'
+            THEN 2
+            ELSE 1
+        END
+FROM #repro_text_starts AS rts
+JOIN #query_store_query_text AS qsqt
+  ON qsqt.query_text_id = rts.query_text_id
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS t
 OPTION(RECOMPILE);
 
 /*
@@ -4920,14 +6641,18 @@ SELECT
                     THEN N''
                     ELSE
                         N'SET' +
-                        REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
-                        N' ON;' +
+                        REPLACE(qsrs.context_settings, N', ', N';' + NCHAR(10) + N'SET ') +
+                        N';' +
                         NCHAR(10)
                 END +
+                /*
+                Quoted, because some language names have spaces and
+                parentheses in them: Português (Brasil), norsk (bokmål).
+                */
                 ISNULL
                 (
                     N'SET LANGUAGE ' +
-                    lang.name +
+                    QUOTENAME(lang.name) +
                     N';' +
                     NCHAR(10),
                     N''
@@ -4957,15 +6682,32 @@ SELECT
                     N''
                 ) +
                 NCHAR(10) +
+                /*
+                A statement from a procedure, function, trigger, or batch has
+                no (@...) declaration list in its text, but its plan still
+                lists the parameters it compiled for. Run it raw and it fails
+                with Msg 137, so it goes through sp_executesql with the
+                declarations rebuilt from the plan, when every entry there
+                is a typed @parameter.
+                */
                 CASE
                     WHEN qsqt.query_sql_text LIKE N'(@%'
+                    OR   pd.has_plan_parameters = 1
                     THEN
                         N'EXECUTE sys.sp_executesql' +
                         NCHAR(10) +
                         N'    N''' +
+                        /*
+                        Under a binary collation only the quote character
+                        itself is doubled. A width insensitive column
+                        collation (the tempdb default can be one) also
+                        doubled a full-width apostrophe (NCHAR(65287)) into
+                        two plain quotes, which changed the string literal
+                        in the repro.
+                        */
                         REPLACE
                         (
-                            clean_query.query_text_cleaned,
+                            clean_query.query_text_cleaned COLLATE Latin1_General_100_BIN2,
                             N'''',
                             N''''''
                         ) +
@@ -5032,7 +6774,7 @@ SELECT
                                 NCHAR(10)
                         END
                     ELSE
-                        qsqt.query_sql_text +
+                        psp.query_sql_text +
                         NCHAR(10)
                 END
         )
@@ -5041,35 +6783,68 @@ JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
+/*
+The text without its PSP hint, and where its statement starts, were found
+once per text above
+*/
+LEFT JOIN #psp_hint_starts AS phs
+  ON phs.query_text_id = qsqt.query_text_id
+LEFT JOIN #repro_text_starts AS rts
+  ON rts.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_sql_text =
+            ISNULL(phs.query_sql_text, qsqt.query_sql_text)
+) AS psp
 CROSS APPLY
 (
     SELECT
         query_text_cleaned =
             CASE
-                WHEN qsqt.query_sql_text LIKE N'(@%'
+                WHEN rts.query_text_id IS NOT NULL
                 THEN
                     LTRIM
                     (
                         SUBSTRING
                         (
-                            qsqt.query_sql_text,
-                            PATINDEX(N'%)[^,]%', qsqt.query_sql_text) +
-                                CASE
-                                    WHEN SUBSTRING
-                                         (
-                                             qsqt.query_sql_text,
-                                             PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
-                                             2
-                                         ) = N'))'
-                                    THEN 2
-                                    ELSE 1
-                                END,
-                            LEN(qsqt.query_sql_text)
+                            psp.query_sql_text,
+                            rts.text_start,
+                            LEN(psp.query_sql_text)
                         )
                     )
-                ELSE qsqt.query_sql_text
+                ELSE psp.query_sql_text
             END
 ) AS clean_query
+CROSS APPLY
+(
+    SELECT
+        has_plan_parameters =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_parameters AS qp
+                         WHERE qp.plan_id = qsp.plan_id
+                     )
+                AND  NOT EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_parameters AS qp
+                         WHERE qp.plan_id = qsp.plan_id
+                         AND
+                         (
+                              qp.parameter_name NOT LIKE N'@%'
+                           OR qp.parameter_data_type IS NULL
+                           OR qp.parameter_compiled_value IS NULL
+                         )
+                     )
+                THEN 1
+                ELSE 0
+            END
+) AS pd
 JOIN #query_store_runtime_stats AS qsrs
   ON qsp.plan_id = qsrs.plan_id
 JOIN #query_context_settings AS qcs
@@ -5081,10 +6856,42 @@ WHERE NOT EXISTS
           SELECT
               1/0
           FROM #query_store_query_variant AS qsqv
-          WHERE qsqv.parent_query_id = qsq.query_id
+          WHERE qsqv.dispatcher_plan_id = qsp.plan_id
       )
 OPTION(RECOMPILE);
 
+
+/*
+Number each plan's parameter values in value order for the parameter_values
+column. The parameter name breaks ties, so values that sort the same come
+out in one order every run.
+*/
+SELECT
+    @current_table = N'numbering parameter values';
+
+INSERT
+    #parameter_values
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    value_order,
+    parameter_compiled_value
+)
+SELECT
+    qp.plan_id,
+    value_order =
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                qp.plan_id
+            ORDER BY
+                qp.parameter_compiled_value,
+                qp.parameter_name
+        ),
+    qp.parameter_compiled_value
+FROM #query_parameters AS qp
+OPTION(RECOMPILE);
 
 /*
 Match sp_QuickieStore: when nothing landed in the search window there is no
@@ -5120,11 +6927,11 @@ SELECT
                 (
                     SELECT
                         N', ' +
-                        qp.parameter_compiled_value
-                    FROM #query_parameters AS qp
-                    WHERE qp.plan_id = rq.plan_id
+                        pv.parameter_compiled_value
+                    FROM #parameter_values AS pv
+                    WHERE pv.plan_id = rq.plan_id
                     ORDER BY
-                        qp.parameter_compiled_value
+                        pv.value_order
                     FOR XML
                         PATH(N''),
                         TYPE
@@ -5164,12 +6971,15 @@ SELECT
     qsp.compatibility_level,
     qsq.object_name,
     qsqt.query_sql_text_clickable,
+    /*
+    The too-large check above converted every plan and kept the xml, so the
+    plan is not converted again here. NULL means it could not be converted.
+    */
     query_plan =
          CASE
-             WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-             THEN TRY_CAST(qsp.query_plan AS xml)
-             WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
-             THEN
+             WHEN qpx.query_plan_xml IS NOT NULL
+             THEN qpx.query_plan_xml
+             ELSE
                  (
                      SELECT
                          [processing-instruction(query_plan)] =
@@ -5213,18 +7023,33 @@ SELECT
     qsrs.max_rowcount,
     qsrs.total_rowcount,
     qsrs.last_rowcount,
-    qsrs.avg_num_physical_io_reads_mb,
-    qsrs.min_num_physical_io_reads_mb,
-    qsrs.max_num_physical_io_reads_mb,
-    qsrs.total_num_physical_io_reads_mb,
-    qsrs.last_num_physical_io_reads_mb
+    qsrs.avg_num_physical_io_reads,
+    qsrs.min_num_physical_io_reads,
+    qsrs.max_num_physical_io_reads,
+    qsrs.total_num_physical_io_reads,
+    qsrs.last_num_physical_io_reads
 FROM
 (
-   SELECT DISTINCT
-       rq.plan_id,
-       rq.query_id,
-       rq.executable_query
-   FROM #repro_queries AS rq
+    /*
+    #repro_queries has one row per plan and query: each table it is built
+    from has one row per key. A DISTINCT here sorted the nvarchar(max)
+    repro text along with the keys; the row number works on the keys only.
+    With one row per key there is no tie for the ORDER BY to break.
+    */
+    SELECT
+        rq.plan_id,
+        rq.query_id,
+        rq.executable_query,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    rq.plan_id,
+                    rq.query_id
+                ORDER BY
+                    rq.plan_id
+            )
+    FROM #repro_queries AS rq
 ) AS rq
 CROSS APPLY
 (
@@ -5266,6 +7091,13 @@ CROSS APPLY
 ) AS qsqt
 OUTER APPLY
 (
+    SELECT TOP (1)
+        qpx.query_plan_xml
+    FROM #query_plan_xml AS qpx
+    WHERE qpx.plan_id = rq.plan_id
+) AS qpx
+OUTER APPLY
+(
     SELECT
         qsws.plan_id,
         qsws.wait_category_desc,
@@ -5284,7 +7116,8 @@ OUTER APPLY
         XML
         PATH('waits'),
         TYPE
-) AS qsws(waits)
+) AS qsws (waits)
+WHERE rq.n = 1
 ORDER BY
     qsrs.last_execution_time DESC
 OPTION(RECOMPILE);
@@ -5455,6 +7288,80 @@ BEGIN
     ORDER BY
         ec.plan_id,
         ec.constant_value
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#all_plan_ids',
+        ap.*
+    FROM #all_plan_ids AS ap
+    ORDER BY
+        ap.query_id,
+        ap.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_plan_xml',
+        qpx.*
+    FROM #query_plan_xml AS qpx
+    ORDER BY
+        qpx.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_text_normalized',
+        qtn.*
+    FROM #query_text_normalized AS qtn
+    ORDER BY
+        qtn.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#psp_hint_starts',
+        phs.*
+    FROM #psp_hint_starts AS phs
+    ORDER BY
+        phs.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#parameter_declarations',
+        pd.*
+    FROM #parameter_declarations AS pd
+    ORDER BY
+        pd.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#maintenance_plans',
+        mp.*
+    FROM #maintenance_plans AS mp
+    ORDER BY
+        mp.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#repro_text_starts',
+        rts.*
+    FROM #repro_text_starts AS rts
+    ORDER BY
+        rts.query_text_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#parameter_values',
+        pv.*
+    FROM #parameter_values AS pv
+    ORDER BY
+        pv.plan_id,
+        pv.value_order
     OPTION(RECOMPILE);
 END;
 

@@ -78,6 +78,35 @@ def parse_output(stdout):
     return rows
 
 
+def parse_findings(stdout):
+    """Parse the findings result sets into rows, kept apart from the main rows.
+
+    The advisory findings (FILTERED INDEXES NEEDING INCLUDED COLUMNS and the
+    others) come back as result sets of their own, headed by finding_type. They
+    have no script_type, so parse_output never starts a header for them, and
+    their rows are narrower than the main result set's so they fall through its
+    column-count check. They are parsed here instead, one header per result
+    set: each header runs until the blank line sqlcmd prints after the set.
+    """
+    rows = []
+    headers = None
+
+    for line in stdout.split("\n"):
+        if not line.strip():
+            headers = None
+            continue
+        cols = [c.strip() for c in line.split("\t")]
+        if cols[0] == "finding_type" and "index_name" in cols:
+            headers = cols
+            continue
+        if headers is None or line.startswith("---"):
+            continue
+        if len(cols) >= len(headers):
+            rows.append(dict(zip(headers, cols)))
+
+    return rows
+
+
 def find_rows(rows, **filters):
     """Find rows matching all filter criteria."""
     matches = []
@@ -103,8 +132,12 @@ def find_rows(rows, **filters):
     return matches
 
 
-def run_tests(rows):
-    """Run all assertions and return results."""
+def run_tests(rows, findings=()):
+    """Run all assertions and return results.
+
+    rows is the main result set, findings the advisory result sets (see
+    parse_findings).
+    """
     results = []
 
     def assert_test(group, name, condition, detail=""):
@@ -165,10 +198,13 @@ def run_tests(rows):
     assert_test("1-UC", "1d: NC subset of unique index flagged DISABLE",
                 len(matches) == 1, f"found {len(matches)}")
 
-    # 1d: Unique index merge → CREATE UNIQUE
+    # 1d: Unique index merge → CREATE UNIQUE. ix_uc_ac carries col_e, which
+    # uix_uc_acd lacks, so the merge really changes the index. A merge that
+    # changes nothing gets no MERGE SCRIPT at all (#906).
     matches = find_rows(rows, table_name="test_ic_uc", index_name="uix_uc_acd",
                         script_type="MERGE SCRIPT")
-    has_unique = any("CREATE UNIQUE" in m.get("script", "") for m in matches)
+    has_unique = any("CREATE UNIQUE" in m.get("script", "")
+                     and "[col_e]" in m.get("script", "") for m in matches)
     assert_test("1-UC", "1d: Unique index merge has CREATE UNIQUE",
                 has_unique, f"found {len(matches)} merge rows, unique={has_unique}")
 
@@ -386,6 +422,296 @@ def run_tests(rows):
                 kept_subset_col and kept_own_col,
                 f"INCLUDE={include or '(none)'} col_b={kept_subset_col} col_e={kept_own_col}")
 
+    # ---- Group 13: An index a foreign key is backed by (issue #902) ----
+
+    # 13a: THE one that matters. ALTER INDEX ... DISABLE against the index named
+    # by sys.foreign_keys.key_index_id disables the foreign key too, and SQL
+    # Server only warns, so the script looks like it worked while the key stops
+    # being enforced -- measured on 2022 CU27, is_disabled = 1, is_not_trusted =
+    # 1, and an INSERT with no parent row then succeeds. ux_fkp_z_code backs
+    # fk_ic_child_code and ux_fkp_a_code sorts earlier, so the name tiebreak used
+    # to pick exactly the wrong one of the pair.
+    #
+    # Since #917 it is not the tiebreak that saves it: index_priority carries a
+    # term for "a foreign key is backed by this index", so it wins the pair
+    # outright and the alphabet never gets a vote. #913's guard still stands
+    # behind that for the rules that do not read priority at all.
+    matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_z_code",
+                        script_type="DISABLE SCRIPT")
+    assert_test("13-FK-Backed", "13a: FK-backed unique index NOT disabled (#902)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    # 13b: and now the duplicate is cleaned up, which is the half #917 added. The
+    # outcome used to depend on which name sorted first: with the backing index
+    # sorting LAST, #913's guard stopped the DISABLE and both indexes stayed. With
+    # the priority term the backing index wins either way, so there is a loser to
+    # pick and the redundant index goes.
+    matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_a_code",
+                        script_type="DISABLE SCRIPT")
+    target = matches[0].get("target_index_name", "") if matches else ""
+    assert_test("13-FK-Backed", "13b: its duplicate IS disabled, naming the backing index (#917)",
+                len(matches) == 1 and target == "ux_fkp_z_code",
+                f"found {len(matches)}, target={target or '(none)'}")
+
+    # 13c: and no KEPT - FOREIGN KEY row for this pair, because the guard had
+    # nothing to do. That row means "a rule picked this index and the guard took
+    # it back", so drawing it where the index won on its own merits would claim
+    # the guard did something it never did -- the distinction #913's review asked
+    # for, and the reason the row is driven by the rows the guard changed rather
+    # than by is_foreign_key_backing.
+    matches = find_rows(rows, table_name="test_ic_fk_parent", index_name="ux_fkp_z_code",
+                        script_type="KEPT - FOREIGN KEY")
+    assert_test("13-FK-Backed", "13c: no guard row where the backing index won on merit (#917)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    # ---- Group 17: IGNORE_DUP_KEY (issue #916) ----
+
+    # 17a: the skipper wins its own pair now. Two unique indexes on one key with
+    # IGNORE_DUP_KEY on only one: measured on 2022 CU27, SQL Server skips a
+    # duplicate row while EITHER structure skips it, and raises 2601 once the last
+    # one is gone. The pair used to be settled by index_priority and then by name,
+    # and neither saw the option, so ux_idkp_z_skip -- sorting last -- was the loser
+    # and the generated script turned a skipped insert into a failing one.
+    matches = find_rows(rows, table_name="test_ic_idk_pair", index_name="ux_idkp_z_skip",
+                        script_type="DISABLE SCRIPT")
+    assert_test("17-IgnoreDupKey", "17a: the IGNORE_DUP_KEY index is NOT disabled (#916)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    matches = find_rows(rows, table_name="test_ic_idk_pair", index_name="ux_idkp_a_strict",
+                        script_type="DISABLE SCRIPT")
+    target = matches[0].get("target_index_name", "") if matches else ""
+    assert_test("17-IgnoreDupKey", "17a: the strict duplicate is the loser instead (#916)",
+                len(matches) == 1 and target == "ux_idkp_z_skip",
+                f"found {len(matches)}, target={target or '(none)'}")
+
+    # 17b: the interaction the two terms have to settle together. The strict index
+    # backs the foreign key and the skipper backs nothing, so removing either one
+    # changes something: the key gets disabled, or duplicate inserts start failing.
+    # The one outcome that changes nothing is to keep the key's index and give it
+    # IGNORE_DUP_KEY -- measured in both directions, the key stays enabled and
+    # trusted, a duplicate parent key is still skipped, and an orphan child still
+    # fails with 547, while keeping the skipper alone makes that insert fail 2601.
+    matches = find_rows(rows, table_name="test_ic_idk_fk", index_name="ux_idkf_strict",
+                        script_type="DISABLE SCRIPT")
+    assert_test("17-IgnoreDupKey", "17b: the FK-backing index outranks the skipper (#916, #917)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    matches = find_rows(rows, table_name="test_ic_idk_fk", index_name="ux_idkf_skip",
+                        script_type="DISABLE SCRIPT")
+    assert_test("17-IgnoreDupKey", "17b: so the skipper is the loser here (#916)",
+                len(matches) == 1, f"found {len(matches)} (expected 1)")
+
+    matches = find_rows(rows, table_name="test_ic_idk_fk", index_name="ux_idkf_strict",
+                        script_type="IGNORE_DUP_KEY SCRIPT")
+    script = matches[0].get("script", "") if matches else ""
+    info = matches[0].get("additional_info", "") if matches else ""
+    assert_test("17-IgnoreDupKey", "17b: the keeper is given IGNORE_DUP_KEY, naming the loser (#916)",
+                len(matches) == 1 and "IGNORE_DUP_KEY = ON" in script and "ux_idkf_skip" in info,
+                f"found {len(matches)}, script={script or '(none)'}")
+
+    # 17b: and it has to run BEFORE the disable. While either structure skips, SQL
+    # Server skips; run the other way round, an insert between the two statements
+    # fails with 2601. sort_order 6 against the disables' 20 is what orders them,
+    # and the result set is returned in that order, so position is the assertion.
+    order = [r.get("script_type") for r in rows
+             if r.get("table_name") == "test_ic_idk_fk"
+             and r.get("script_type") in ("IGNORE_DUP_KEY SCRIPT", "DISABLE SCRIPT")]
+    assert_test("17-IgnoreDupKey", "17b: the SET is ordered before the DISABLE (#916)",
+                order == ["IGNORE_DUP_KEY SCRIPT", "DISABLE SCRIPT"],
+                f"order={order}")
+
+    # 17c: Rule 7 reads no priority at all -- it keeps the nonclustered index and
+    # drops the constraint whichever of them skips. #914 carries IGNORE_DUP_KEY in
+    # the replacement's WITH list, but only where the replacement is being rebuilt,
+    # and it writes no script for one that is already unique: the rebuild would add
+    # neither a column nor uniqueness. So this is the case with no rebuild to ride
+    # along in, and it needs the ALTER of its own.
+    matches = find_rows(rows, table_name="test_ic_idk_rule7", index_name="ux_idk7_strict",
+                        script_type="IGNORE_DUP_KEY SCRIPT")
+    info = matches[0].get("additional_info", "") if matches else ""
+    assert_test("17-IgnoreDupKey", "17c: an already-unique Rule 7 replacement gets the ALTER (#916)",
+                len(matches) == 1 and "uq_idk7_skip" in info,
+                f"found {len(matches)} rows, names loser={'uq_idk7_skip' in info}")
+
+    # 17d: no script may ever target a unique constraint. ALTER INDEX ... SET
+    # (IGNORE_DUP_KEY = ON) is REFUSED against the index backing one -- measured on
+    # 2022 CU27, error 1979, "Cannot use index option ignore_dup_key to alter index
+    # '...' as it enforces a primary or unique constraint" -- so a script written
+    # for one would fail when the reader ran it.
+    #
+    # Nothing reaches that today, and the term ordering is why: a constraint keeper
+    # only comes out of Rule 7.5b, which pairs two constraints, and there the
+    # skipping one outranks the strict one. The only term that could lift a strict
+    # constraint past it is the foreign key one, and the rules exclude a column a
+    # foreign key references from that pairing: this fixture is exactly that pair,
+    # and it reaches no dedupe rule at all, just a compression row each. So the
+    # assertion is the invariant rather than a repro -- the filter is one predicate,
+    # and what it protects against is a script that errors.
+    constraint_names = ("uq_idkc_a_key", "uq_idkc_z_skip", "uq_idk7_skip")
+    matches = [r for r in find_rows(rows, script_type="IGNORE_DUP_KEY SCRIPT")
+               if r.get("index_name") in constraint_names]
+    assert_test("17-IgnoreDupKey", "17d: no IGNORE_DUP_KEY script targets a unique constraint (#916)",
+                len(matches) == 0,
+                f"found {len(matches)} for {[r.get('index_name') for r in matches]} (expected 0)")
+
+    # 17d: and the pair on the referenced column is left entirely alone, which is
+    # what makes the case above unreachable. Asserted so that a later change to the
+    # rules' foreign key exclusion shows up here rather than as a failing script.
+    matches = find_rows(rows, table_name="test_ic_idk_con", script_type="DISABLE SCRIPT")
+    drops = find_rows(rows, table_name="test_ic_idk_con", script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("17-IgnoreDupKey", "17d: two constraints on a referenced column reach no rule (#916)",
+                len(matches) == 0 and len(drops) == 0,
+                f"found {len(matches)} disables and {len(drops)} constraint drops (expected 0 and 0)")
+
+    # ---- Group 14: A unique constraint with nothing to replace it (issue #903) ----
+
+    # 14a: THE one that matters. Rule 7 looks for a unique constraint with exactly
+    # the same keys, and nothing in that lookup excluded the index being tested,
+    # so every unique constraint matched ITSELF. Each one came back as a KEPT row
+    # labelled 'Unique Constraint Replacement' that says "This index is being
+    # kept", whether or not another index shared its keys: about 105 of them per
+    # database on the databases the report was written from, none a finding.
+    # uq_ucs_code is the only index on its key. The table is compressed already
+    # because an index that still needs compression gets a COMPRESSION SCRIPT row
+    # and no KEPT row, which would hide the label and let this pass for nothing.
+    labelled = find_rows(rows, table_name="test_ic_uc_solo", index_name="uq_ucs_code",
+                         consolidation_rule="Unique Constraint Replacement")
+    assert_test("14-UC-Self", "14a: lone unique constraint NOT labelled a replacement (#903)",
+                len(labelled) == 0,
+                f"found {len(labelled)} rows labelled Unique Constraint Replacement (expected 0)")
+
+    # 14b: the constraint is still reported. Without this, 14a would also pass if
+    # the fixture had failed to build or the constraint had dropped out of the
+    # results altogether.
+    reported = find_rows(rows, table_name="test_ic_uc_solo", index_name="uq_ucs_code")
+    assert_test("14-UC-Self", "14b: the lone unique constraint is still reported (#903)",
+                len(reported) >= 1, f"found {len(reported)} rows for uq_ucs_code")
+
+    # 14c: the KEPT label that IS right still arrives. Two constraints with the
+    # same keys match EACH OTHER, which is what Rule 7.5b needs both of them to
+    # carry before it can drop the loser, so the label on the keeper cannot have
+    # depended on a constraint matching itself. Compressed for the reason in 14a.
+    keeper = find_rows(rows, table_name="test_ic_uc_pair", index_name="uq_ucp_keeper",
+                       consolidation_rule="Unique Constraint Replacement")
+    assert_test("14-UC-Self", "14c: duplicate unique constraint keeper is still KEPT, labelled (#903)",
+                len(keeper) == 1, f"found {len(keeper)} (expected 1)")
+
+    # 14d: and its twin is still dropped, pointing at the keeper
+    matches = find_rows(rows, table_name="test_ic_uc_pair", index_name="uq_ucp_zloser",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    target_ok = len(matches) == 1 and matches[0].get("target_index_name") == "uq_ucp_keeper"
+    assert_test("14-UC-Self", "14d: duplicate unique constraint loser still dropped (#903)",
+                target_ok, f"found {len(matches)} drops, target={matches[0].get('target_index_name') if matches else None}")
+
+    # ---- Group 15: Filtered-index finder, column names that overlap (issue #904) ----
+
+    finder = "FILTERED INDEXES NEEDING INCLUDED COLUMNS"
+
+    # 15a: THE one that matters. The filter on ix_fs_site names site_id, which is
+    # the key, so nothing is missing. The finder tested each column with a LIKE
+    # of the bare name between two wildcards, and id is a substring of [site_id],
+    # so it reported [id] as a column the index needed and then wrote it into the
+    # CREATE ... DROP_EXISTING script. Not a column the filter references at all.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_sub",
+                        index_name="ix_fs_site")
+    detail = ", ".join(m.get("missing_included_columns", "") for m in matches)
+    assert_test("15-Filter-Cols", "15a: filter naming only a key column reports nothing missing (#904)",
+                len(matches) == 0, f"found {len(matches)} findings, missing_included_columns={detail or '(none)'} (expected 0)")
+
+    # 15b: positive control. ix_fs_qty filters on qty, which the index does not
+    # carry, so this one IS a finding and must survive the fix.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_sub",
+                        index_name="ix_fs_qty")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    assert_test("15-Filter-Cols", "15b: filter column really missing from the index is still found (#904)",
+                len(matches) == 1 and missing == "[qty]",
+                f"found {len(matches)} findings, missing_included_columns={missing}")
+
+    # 15c: both at once. ix_fs_site_qty filters on site_id (the key) AND qty (not
+    # in the index): only qty may be reported, and only qty may reach the script.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_sub",
+                        index_name="ix_fs_site_qty")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    script = matches[0].get("create_index_script", "") if matches else ""
+    assert_test("15-Filter-Cols", "15c: only the genuinely missing column is reported and scripted (#904)",
+                len(matches) == 1 and missing == "[qty]" and "INCLUDE ([qty])" in script,
+                f"found {len(matches)} findings, missing_included_columns={missing}, "
+                f"INCLUDE ([qty]) in script={'INCLUDE ([qty])' in script}")
+
+    # 15d: the findings group 3's filtered indexes always produced are unchanged.
+    # status_code is genuinely absent from each of them and its name overlaps
+    # nothing, so matching on the bracketed name has to keep finding it.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filtered",
+                        index_name="ix_filt_a_s1")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    assert_test("15-Filter-Cols", "15d: group 3's filtered index still reports [status_code] (#904)",
+                len(matches) == 1 and missing == "[status_code]",
+                f"found {len(matches)} findings, missing_included_columns={missing}")
+
+    # 15e: a filtered key duplicate pair. The finder ran before the rules, so it
+    # saw fx_fm_a without the status column fx_fm_b's merge gives it, reported
+    # [flag], [status] missing, and scripted INCLUDE (..., [status], [flag],
+    # [status]) -- Msg 1909 when run. It reads the index the scripts leave now.
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_merge",
+                        index_name="fx_fm_a")
+    missing = matches[0].get("missing_included_columns") if matches else None
+    script = matches[0].get("create_index_script", "") if matches else ""
+    include = script.split(" INCLUDE (", 1)[1].split(") WHERE ", 1)[0] if " INCLUDE (" in script else ""
+    assert_test("15-Filter-Cols", "15e: a merged winner reports only what the merge does not add",
+                len(matches) == 1 and missing == "[flag]" and include == "[status], [wide_col], [flag]",
+                f"found {len(matches)} findings, missing_included_columns={missing}, INCLUDE ({include})")
+
+    # 15f: and the index the same run disables gets no finding at all. Its
+    # DROP_EXISTING script rebuilt it, and a rebuild re-enables a disabled index.
+    disabled = find_rows(rows, table_name="test_ic_filt_merge", index_name="fx_fm_b",
+                         script_type="DISABLE SCRIPT")
+    matches = find_rows(findings, finding_type=finder, table_name="test_ic_filt_merge",
+                        index_name="fx_fm_b")
+    assert_test("15-Filter-Cols", "15f: an index the run disables gets no filtered-index finding",
+                len(disabled) == 1 and len(matches) == 0,
+                f"DISABLE rows {len(disabled)} (expected 1), findings {len(matches)} (expected 0)")
+
+    # ---- Group 16: Same Keys Different Order, Rule 8 (issue #908) ----
+
+    label = "Same Keys Different Order"
+
+    # 16a: THE one that matters. Rule 8 only checked that every key of the FIRST
+    # index is a key of the second, and each pair is visited once with the lower
+    # index name first. ix_ksn_a_abc (a,b,c) sorts ahead of ix_ksn_b_acbd
+    # (a,c,b,d), so it passed that test and the pair was labelled "same keys"
+    # although the second index has a key column (d) the first does not.
+    matches = find_rows(rows, table_name="test_ic_ks_narrow_first", consolidation_rule=label)
+    assert_test("16-Same-Keys", "16a: narrower index sorting first NOT labelled same keys (#908)",
+                len(matches) == 0, f"found {len(matches)} rows (expected 0)")
+
+    # 16b: the same two indexes with the names swapped, so the wide one sorts
+    # first. It already came back unlabelled, because its extra column failed the
+    # one-way test, so this passes on the old code: it is the other half of "the
+    # answer no longer depends on which index name sorts first".
+    matches = find_rows(rows, table_name="test_ic_ks_wide_first", consolidation_rule=label)
+    assert_test("16-Same-Keys", "16b: wider index sorting first NOT labelled same keys (#908)",
+                len(matches) == 0, f"found {len(matches)} rows (expected 0)")
+
+    # 16c: positive control, one name order. The same key SET, a different order
+    # after the first column: still flagged, one row, naming its partner.
+    matches = find_rows(rows, table_name="test_ic_ks_same_1", script_type="NEEDS REVIEW",
+                        consolidation_rule=label)
+    ok = (len(matches) == 1 and matches[0].get("index_name") == "ix_kss1_a_abc"
+          and matches[0].get("target_index_name") == "ix_kss1_b_acb")
+    assert_test("16-Same-Keys", "16c: same key set, different order is still flagged (#908)",
+                ok, f"found {len(matches)} rows, index={matches[0].get('index_name') if matches else None}, "
+                    f"target={matches[0].get('target_index_name') if matches else None}")
+
+    # 16d: positive control, the other name order. The result must not depend on
+    # which index of the pair has the name that sorts first.
+    matches = find_rows(rows, table_name="test_ic_ks_same_2", script_type="NEEDS REVIEW",
+                        consolidation_rule=label)
+    ok = (len(matches) == 1 and matches[0].get("index_name") == "ix_kss2_a_acb"
+          and matches[0].get("target_index_name") == "ix_kss2_b_abc")
+    assert_test("16-Same-Keys", "16d: same key set, different order is still flagged, names swapped (#908)",
+                ok, f"found {len(matches)} rows, index={matches[0].get('index_name') if matches else None}, "
+                    f"target={matches[0].get('target_index_name') if matches else None}")
+
     return results
 
 
@@ -423,7 +749,8 @@ def main():
         sys.exit(1)
 
     rows = parse_output(stdout)
-    print(f"Captured {len(rows)} output rows from sp_IndexCleanup")
+    findings = parse_findings(stdout)
+    print(f"Captured {len(rows)} output rows and {len(findings)} findings from sp_IndexCleanup")
     print()
 
     if len(rows) == 0:
@@ -431,7 +758,7 @@ def main():
         print("stderr:", stderr[:500] if stderr else "(empty)")
         sys.exit(1)
 
-    results = run_tests(rows)
+    results = run_tests(rows, findings)
 
     # Report
     passed = sum(1 for r in results if r["passed"])

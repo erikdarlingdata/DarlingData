@@ -31,17 +31,18 @@ is valid and is accepted by SQL Server**, plus strict **session hygiene**.
 Two levers in the proc make that deterministic and fast, with no slow captures:
 
 - **`@keep_alive = 1`** creates a *permanent* session and `RETURN`s immediately
-  -- no `WAITFOR` sample, no drop (the `@keep_alive = 1` branch near line 1777).
+  -- no `WAITFOR` sample, no drop (the `@keep_alive = 1` branch that `RETURN`s after
+  "Session ... created, exiting").
   A session that CREATEs successfully is proof the generated DDL is valid on this
   server version. This is the high-value core.
-- **`@debug = 1`** prints the generated `@session_sql` via `RAISERROR` (near line
-  1768), so the exact DDL can be captured from stdout and inspected.
+- **`@debug = 1`** prints the generated `@session_sql` with `PRINT`, in tiles of at
+  most 4,000 characters, so the exact DDL can be captured from stdout and inspected.
 
 ## Automated
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Drives `dbo.sp_HumanEvents` over `sqlcmd`, exercising every accepted `@event_type` and a representative filter matrix with `@keep_alive = 1`, and asserts **203** expectations across seven groups. Self-cleaning and idempotent. |
+| `run_tests.py` | Drives `dbo.sp_HumanEvents` over `sqlcmd`, exercising every accepted `@event_type` and a representative filter matrix with `@keep_alive = 1`, and checks every expectation across eight groups. Self-cleaning and idempotent. |
 
 ```
 cd sp_HumanEvents/tests
@@ -49,7 +50,7 @@ python run_tests.py --server SQL2022
 ```
 
 `--server` and `--password` default to `SQL2022` / the standard local `sa`
-password. Expect `203 passed, 0 failed`. The proc must be installed in `master`
+password. Expect `0 failed`. The run ends with a `Results: N passed, 0 failed, N total` line. The proc must be installed in `master`
 on the target instance (there is a preflight that fails fast if it is not, and a
 guard that refuses Azure SQL DB, whose sessions are database-scoped).
 
@@ -90,8 +91,7 @@ name gains the custom suffix), `@wait_type` as a CSV and as `ALL`,
 
 **4. Debug-DDL capture (21).** For each of the five categories, `@debug = 1` is
 captured and the generated `@session_sql` is asserted to contain
-`CREATE EVENT SESSION` plus each event the category adds. (`RAISERROR` truncates
-a long message near 2044 characters, so the untruncated
+`CREATE EVENT SESSION` plus each event the category adds. (The untruncated
 `sys.server_event_session_events` check in groups 2 and 3 is the authoritative
 one; this group is a secondary guard, plus a check that `@debug` emits its
 diagnostic markers.)
@@ -127,13 +127,18 @@ scratch database (`sp_HumanEvents_test_scratch`).
 diffed and the suite asserts **zero net new sessions**, then confirms nothing
 remains after the final sweep. The before/after lists and the diff are printed.
 
+**8. Orphan cleanup (3).** The harness creates two fake running one-shot sessions
+and then runs `sp_HumanEvents`. A running one-shot session whose spid is not
+running `sp_HumanEvents` is dropped at startup; a running session with no spid in
+its name is kept for 10 minutes; and the run raises no severe SQL error.
+
 ### Session hygiene -- non-negotiable
 
 Extended Events sessions are server-global; a leaked running session is a real
 problem. The harness treats that as a first-class requirement:
 
 - `sp_HumanEvents` names its sessions predictably --
-  `HumanEvents_<event_type>_<guid>` (one-shot) and
+  `HumanEvents_<event_type>_<guid>_<spid>` (one-shot) and
   `keeper_HumanEvents_<event_type>[_<custom_name>]` (`@keep_alive = 1`). The
   harness **sweeps both patterns at start** (idempotency: reap anything a prior
   aborted run left) and **in a `finally` block at the end** (so leaks are cleaned

@@ -14,6 +14,8 @@ The mutations mirror the three failure modes the task calls out plus one more:
   M1 - value list re-sorted independently of the declaration list
        (silent parameter/value misbinding)
   M2 - every parameter's declared type forced to int
+  M3 - the fill-in path splits parameters on every comma, so a scaled type
+       such as numeric(10,2) is cut in two
   M4 - statement-apostrophe doubling removed (broken outer N'...' literal)
   M6 - the '?' fill-in placeholder emitted as NULL (would silently run with a
        wrong value instead of failing loud)
@@ -72,18 +74,19 @@ MUTATIONS = [
      "every parameter declared int -> wrong type for numeric/nvarchar/etc."),
 
     ("M4_no_stmt_apostrophe_doubling",
-     r"REPLACE\s*\(\s*clean_query\.query_text_cleaned,\s*N'''',\s*N''''''\s*\)",
-     r"clean_query.query_text_cleaned",
+     r"REPLACE\s*\(\s*(clean_query\.query_text_cleaned COLLATE Latin1_General_100_BIN2),"
+     r"\s*N'''',\s*N''''''\s*\)",
+     r"\1",
      "statement apostrophes not doubled -> broken outer N'...' literal"),
 
     ("M6_qmark_becomes_null",
-     r"(parameter_compiled_value =\s*)N'\?'(\s*FROM #query_store_plan)",
+     r"(parameter_compiled_value =\s*)N'\?'(\s*FROM\s*\(\s*SELECT\s*pi\.plan_id)",
      r"\1N'NULL'\2",
      "missing params default to NULL and silently execute instead of ?"),
 
     ("M3_scaled_type_split",
-     r"(REPLACE\(REPLACE\(prefix\.param_prefix, N', @', N',@'\)), N',@', N'</p><p>@'\)",
-     r"\1, N',', N'</p><p>')",
+     r"(REPLACE\(REPLACE\(pd\.declaration, N', @', N',@'\)), N',@', NCHAR\(1\) \+ N'@'\)",
+     r"\1, N',', NCHAR(1))",
      "fill-in path splits scaled types like numeric(10,2) on the internal comma"),
 ]
 

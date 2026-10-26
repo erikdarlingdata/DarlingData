@@ -39,6 +39,7 @@ Built for the scripts in this repo — sp_QuickieStore, sp_QuickieCache, sp_Pres
 | @InlineMaxChars | int | 8000 | Values longer than this spill to their own file; artifact XML (plans, deadlock graphs, blocked process reports) always spills |
 | @CommandTimeout | int | 600 | Command timeout in seconds |
 | @Credential | pscredential | | SQL auth; omit for Windows auth |
+| @ReadOnlyIntent | switch | off | Connect with ApplicationIntent=ReadOnly, for AG secondaries set to ALLOW_CONNECTIONS = READ_ONLY |
 | @FlattenNewlines | switch | off | Collapse newlines in CSV cells to spaces (quoted CSV carries newlines fine without it) |
 | @ExcelSafe | switch | off | Prefix cells starting with = + - @ so Excel does not evaluate them as formulas |
 

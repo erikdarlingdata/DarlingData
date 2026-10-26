@@ -75,8 +75,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.10',
-        @version_date = '20261001';
+        @version = '2.11',
+        @version_date = '20261101';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -382,6 +382,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* sys.stats.is_incremental (SQL 2014+, Azure SQL DB, and Managed Instance) */
+        @supports_incremental_statistics bit =
+            CASE
+                /* Azure SQL DB or Managed Instance */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
+                THEN 1
+                /* SQL Server 2014+ */
+                WHEN CONVERT
+                     (
+                         integer,
+                         SUBSTRING
+                         (
+                             CONVERT
+                             (
+                                 varchar(20),
+                                 SERVERPROPERTY('ProductVersion')
+                             ),
+                             1,
+                             2
+                         )
+                     ) >= 12
+                THEN 1
+                ELSE 0
+            END,
         @is_azure_sql_db bit =
             CASE
                 WHEN CONVERT
@@ -392,6 +416,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* Availability group metadata is only worth asking for where an AG can exist, and never on Azure SQL DB */
+        @is_hadr_enabled bit =
+            CASE
+                WHEN CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('IsHadrEnabled')
+                     ) = 1
+                AND  CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('EngineEdition')
+                     ) <> 5
+                THEN 1
+                ELSE 0
+            END,
+        /* Why an availability group secondary was skipped, and what to do about it */
+        @read_intent_reason nvarchar(100) = N'Read-intent-only secondary, reconnect with ApplicationIntent=ReadOnly',
+        @non_readable_reason nvarchar(100) = N'Non-readable secondary, use the primary or a readable secondary',
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -404,6 +447,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM sys.dm_os_sys_info AS osi
         ),
         @database_cursor CURSOR,
+        @usage_window_days integer = 0, /* This database's usage window, set per database before Rule 1 */
+        @usage_since_server_start bit = 0,
+        @skip_unused_rule bit = 0,
         @current_database_name sysname,
         @current_database_id integer,
         @error_msg nvarchar(2048),
@@ -513,6 +559,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
+        /* sys.indexes.type, so a script can tell a table whose base is a clustered columnstore index (5) */
+        index_type tinyint NOT NULL,
         can_compress bit NOT NULL
     );
 
@@ -636,6 +684,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_indexed_view integer NOT NULL,
         is_foreign_key bit NULL,
         is_foreign_key_reference bit NULL,
+        /*
+        Whether a foreign key is BACKED BY this index, which is
+        sys.foreign_keys.key_index_id and not a property of any column.
+        is_foreign_key_reference above says only that some foreign key points at
+        this column, so it cannot tell which of two indexes on that column the
+        key actually depends on. ALTER INDEX ... DISABLE against the backing
+        index disables the foreign key too, and only prints a warning, so every
+        rule that picks a loser has to leave this index alone.
+        */
+        is_foreign_key_backing bit NULL,
         key_ordinal tinyint NOT NULL,
         index_column_id integer NOT NULL,
         is_descending_key bit NOT NULL,
@@ -643,6 +701,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition nvarchar(max) NULL,
         is_max_length integer NOT NULL,
         optimize_for_sequential_key bit NOT NULL,
+        /*
+        Index options that CREATE INDEX ... WITH (DROP_EXISTING = ON) resets to
+        OFF unless the WITH list names them again: sys.indexes.ignore_dup_key and
+        the no_recompute flag of the statistics sys.stats keeps for the index
+        (stats_id = index_id). Every script that rebuilds through DROP_EXISTING has
+        to carry them, or a duplicate insert that used to be skipped with a warning
+        starts failing with error 2601, and statistics someone froze on purpose
+        start updating on their own again.
+        */
+        ignore_dup_key bit NOT NULL,
+        no_recompute bit NOT NULL,
+        /*
+        Three more that DROP_EXISTING resets: ALLOW_PAGE_LOCKS and ALLOW_ROW_LOCKS
+        go back to ON, and STATISTICS_INCREMENTAL (sys.stats.is_incremental) goes
+        back to OFF.
+        */
+        allow_page_locks bit NOT NULL,
+        allow_row_locks bit NOT NULL,
+        is_incremental bit NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
         user_lookups bigint NOT NULL,
@@ -857,6 +934,71 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (database_id, schema_id, object_id, index_id, can_compress)
     );
 
+    /*
+    The indexes the foreign key guard took a DISABLE away from.
+
+    Written by the guard and read by its reporting insert, so the report can
+    tell the two kinds of kept index apart. An index a foreign key is backed by
+    can also be the legitimate WINNER of a dedupe pair, with its duplicate
+    disabled as normal; saying "kept because of a foreign key" there would claim
+    the guard did something it never did. Only the rows the guard changed are in
+    here.
+
+    Accumulates across databases like #index_analysis does, which needs no
+    per-database filter of its own: index_hash is built from database_id,
+    object_id and index_id, so a row cannot match an index in another database.
+    */
+    CREATE TABLE
+        #foreign_key_kept
+    (
+        index_hash varbinary(32) NOT NULL PRIMARY KEY CLUSTERED
+    );
+
+    /*
+    The keepers that have to take over IGNORE_DUP_KEY from a structure the scripts
+    remove, and the loser each one takes it from (#916).
+
+    A pair is only ever in here because the keeper won for a reason that outranks
+    IGNORE_DUP_KEY, which today means a foreign key is backed by it, or because the
+    rule that settled the pair does not read index_priority at all - Rule 7 always
+    keeps the nonclustered index and drops the constraint. Where the IGNORE_DUP_KEY
+    structure wins its own pair on the term above, nothing needs carrying: the one
+    that stays is already the one that skips.
+
+    Separate from #index_analysis because two later blocks read it - the WITH list
+    of a rebuilt keeper and the script for one that is not rebuilt - and an EXISTS
+    written twice is two places to get it wrong. index_hash is built from
+    database_id, object_id and index_id, so this accumulates across databases
+    without a filter of its own.
+    */
+    CREATE TABLE
+        #ignore_dup_key_carried
+    (
+        index_hash varbinary(32) NOT NULL PRIMARY KEY CLUSTERED,
+        loser_index_name sysname NOT NULL,
+        /*
+        ALTER INDEX ... SET (IGNORE_DUP_KEY = ON) is REFUSED against the index that
+        backs a unique constraint: measured on SQL Server 2022 CU27, error 1979,
+        "Cannot use index option ignore_dup_key to alter index '...' as it enforces
+        a primary or unique constraint". So a constraint keeper cannot be given the
+        option after the fact, and no script may be written for one.
+
+        No shape reaches that today, and the term above is why: a constraint keeper
+        only arises in Rule 7.5b, which pairs two constraints, and there the one
+        with IGNORE_DUP_KEY outranks the strict one (450 against 50 plus whatever
+        usage it has, which caps at 400). The only term that could lift a strict
+        constraint over it is the foreign key one, and the rules exclude a column a
+        foreign key references from that pairing anyway - tested, a pair of unique
+        constraints on a referenced column reaches no dedupe rule and gets only a
+        compression row.
+
+        Carried as a column rather than trusted to stay unreachable, because it is
+        the ordering of two magic numbers that makes it so, and the cost of being
+        wrong is a generated script that fails. The filter is one predicate.
+        */
+        keeper_is_unique_constraint bit NOT NULL
+    );
+
     CREATE TABLE
         #index_cleanup_results
     (
@@ -876,6 +1018,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_rows bigint NULL, /* Number of rows in the index */
         index_reads bigint NULL, /* Total reads (seeks + scans + lookups) */
         index_writes bigint NULL, /* Total writes */
+        partition_number integer NULL, /* Set only on per-partition compression rows, which share everything else */
         script nvarchar(max) NULL /* Script to execute the action */
     );
 
@@ -890,7 +1033,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         base_key_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
         winning_index_name sysname NULL,
-        index_list nvarchar(max) NULL,
         /* Hash columns for optimized matching */
         scope_hash AS
             CONVERT
@@ -950,6 +1092,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         server_uptime_days integer NULL,
         uptime_warning bit NULL,
+        usage_since datetime2(0) NULL, /* DATABASE rows only */
+        usage_since_reason nvarchar(500) NULL, /* DATABASE rows only */
         tables_analyzed integer NULL,
         index_count integer NULL,
         total_size_gb decimal(38, 4) NULL,
@@ -1011,7 +1155,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #databases
     (
         database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
-        database_id integer NOT NULL
+        database_id integer NOT NULL,
+        /* Each database's own usage window, filled in once #databases is populated */
+        usage_since datetime2(0) NULL,
+        usage_since_reason nvarchar(500) NULL,
+        usage_window_days integer NULL,
+        skip_unused_rule bit NULL
+    );
+
+    /*
+    Last restore of each database being analyzed, from msdb.dbo.restorehistory.
+    Empty where that table is unavailable (Azure SQL DB, no permission).
+    */
+    CREATE TABLE
+        #database_restores
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
+        last_restore_date datetime NOT NULL
+    );
+
+    /*
+    Databases analyzed here that are availability group primaries with at least
+    one readable secondary. Reads on a secondary are not counted in this
+    replica's index usage stats.
+    */
+    CREATE TABLE
+        #ag_primary_readable_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
@@ -1019,6 +1190,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         reason nvarchar(100) NOT NULL
+    );
+
+    /*
+    Databases on this replica that are availability group secondaries the current
+    session cannot open, with how the local replica treats connections to its
+    secondary role (READ_ONLY or NO). Empty unless the lookup below finds some.
+    */
+    CREATE TABLE
+        #ag_secondary_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
+        secondary_role_allow_connections nvarchar(60) NOT NULL
     );
 
     CREATE TABLE
@@ -1070,7 +1253,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
-        should_include_filter_columns bit NOT NULL
+        should_include_filter_columns bit NOT NULL,
+        /* Built inside the database loop, while that database's #index_details and the rest are loaded */
+        create_index_script nvarchar(max) NULL
     );
 
     CREATE CLUSTERED INDEX
@@ -1285,6 +1470,56 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RETURN;
     END;
 
+    /*
+    A database on an availability group secondary reads as "no access" to
+    HAS_DBACCESS when the session has not asked for read intent, which is not a
+    permissions problem and must not be reported as one. Find the databases on
+    this replica that are secondaries this session cannot open, and whether the
+    local replica takes read-intent connections to its secondary role (READ_ONLY)
+    or no direct connections at all (NO), so the messages below can say which.
+
+    Dynamic SQL, so the procedure still compiles where these views and
+    functions do not exist. TRY/CATCH, so a permission error or anything else
+    that goes wrong learns nothing and leaves the generic no-access message.
+    */
+    IF @is_hadr_enabled = 1
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                d.name,
+                ar.secondary_role_allow_connections_desc
+            FROM sys.databases AS d
+            JOIN sys.availability_replicas AS ar
+              ON ar.replica_id = d.replica_id
+            WHERE d.replica_id IS NOT NULL
+            AND   ISNULL(HAS_DBACCESS(d.name), 0) = 0
+            AND   sys.fn_hadr_is_primary_replica(d.name) = 0
+            AND   ar.secondary_role_allow_connections_desc IN (N''READ_ONLY'', N''NO'')
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #ag_secondary_databases
+            WITH
+                (TABLOCK)
+            (
+                database_name,
+                secondary_role_allow_connections
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Availability group lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
     /* Build the #databases table */
     IF @get_all_databases = 0
     BEGIN
@@ -1352,9 +1587,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND ISNULL(HAS_DBACCESS(@database_name), 0) = 0
             BEGIN
                 SET @error_msg =
-                    N'The current login has no access to database ' +
-                    QUOTENAME(@database_name) +
-                    N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;';
+                    CASE
+                        /* An availability group secondary taking read-intent connections only: the login is fine, the session is not */
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #ag_secondary_databases AS ag
+                                 WHERE ag.database_name = @database_name
+                                 AND   ag.secondary_role_allow_connections = N'READ_ONLY'
+                             )
+                        THEN N'Database ' +
+                             QUOTENAME(@database_name) +
+                             N' is on an availability group secondary that only accepts read-intent connections, and this session did not ask for read intent. Reconnect with ApplicationIntent=ReadOnly (sqlcmd -K ReadOnly, or Export-SqlResults -ReadOnlyIntent) and run this again.'
+                        /* An availability group secondary that does not accept connections at all */
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #ag_secondary_databases AS ag
+                                 WHERE ag.database_name = @database_name
+                                 AND   ag.secondary_role_allow_connections = N'NO'
+                             )
+                        THEN N'Database ' +
+                             QUOTENAME(@database_name) +
+                             N' is on an availability group secondary that does not allow connections to its databases. Run this against the primary replica or a readable secondary.'
+                        ELSE N'The current login has no access to database ' +
+                             QUOTENAME(@database_name) +
+                             N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;'
+                    END;
 
                 RAISERROR(@error_msg, 16, 1);
                 RETURN;
@@ -1458,8 +1719,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             d.name,
-            reason = N'No database access for current login'
+            reason =
+                CASE
+                    /* Availability group secondaries say what the session needs, not what the login lacks */
+                    WHEN ag.secondary_role_allow_connections = N'READ_ONLY'
+                    THEN @read_intent_reason
+                    WHEN ag.secondary_role_allow_connections = N'NO'
+                    THEN @non_readable_reason
+                    ELSE N'No database access for current login'
+                END
         FROM sys.databases AS d
+        LEFT JOIN #ag_secondary_databases AS ag
+          ON ag.database_name = d.name
         WHERE d.database_id > 4
         AND   d.state = 0
         AND   d.is_in_standby = 0
@@ -1517,6 +1788,50 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET @error_msg = N'';
             END;
         END;
+
+        /*
+        The same warning for availability group secondaries this session cannot
+        read. They carry their own skip reasons, so the warning above, which
+        tells the reader to grant permissions, no longer names them.
+        */
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #requested_but_skipped_databases AS rbs
+               WHERE rbs.reason IN (@read_intent_reason, @non_readable_reason)
+           )
+        BEGIN
+            SET @error_msg = N'';
+
+            SELECT
+                @error_msg =
+                    @error_msg +
+                    rbs.database_name +
+                    N' (' +
+                    rbs.reason +
+                    N'), '
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.reason IN (@read_intent_reason, @non_readable_reason)
+            ORDER BY
+                rbs.database_name
+            OPTION(RECOMPILE);
+
+            IF DATALENGTH(@error_msg) > 0
+            BEGIN
+                SET @error_msg = LEFT(@error_msg, DATALENGTH(@error_msg) / 2 - 2);
+
+                SET @error_msg =
+                    N'Skipping these availability group secondaries - this session cannot read them: ' +
+                    @error_msg +
+                    N'.';
+
+                RAISERROR(@error_msg, 10, 1) WITH NOWAIT;
+
+                /* Reset for subsequent uses below. */
+                SET @error_msg = N'';
+            END;
+        END;
     END;
 
     /* Check for empty database list */
@@ -1525,6 +1840,211 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('No valid databases found to process.', 16, 1);
         RETURN;
     END;
+
+    /*
+    Each database's own usage window. Index usage stats start over when the
+    server starts, and also when a database is restored or created, so the
+    window is the latest of those three moments. The server start alone is
+    the right answer only for a database that is older than the server uptime.
+
+    The restore lookup is dynamic SQL in a TRY/CATCH: msdb.dbo.restorehistory
+    does not exist on Azure SQL DB, and a login that cannot read it falls back
+    to create_date instead of failing the run.
+    */
+    IF @is_azure_sql_db = 0
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                rh.destination_database_name,
+                MAX(rh.restore_date)
+            FROM msdb.dbo.restorehistory AS rh
+            WHERE EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #databases AS db
+                WHERE db.database_name COLLATE DATABASE_DEFAULT = rh.destination_database_name COLLATE DATABASE_DEFAULT
+            )
+            GROUP BY
+                rh.destination_database_name
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #database_restores
+            WITH
+                (TABLOCK)
+            (
+                database_name,
+                last_restore_date
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Restore history lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
+    /*
+    On an availability group primary, reads on a readable secondary are not
+    counted in this replica's usage stats. Find the databases here that are
+    primaries with at least one readable secondary (READ_ONLY or ALL), so the
+    DATABASE row can say so. Same dynamic SQL and TRY/CATCH reasoning as the
+    lookup above: a failure learns nothing and adds no note.
+    */
+    IF @is_hadr_enabled = 1
+    BEGIN
+        BEGIN TRY
+            SELECT
+                @sql = N'
+            SELECT
+                d.name
+            FROM sys.databases AS d
+            JOIN sys.availability_replicas AS lr
+              ON lr.replica_id = d.replica_id
+            WHERE d.replica_id IS NOT NULL
+            AND   sys.fn_hadr_is_primary_replica(d.name) = 1
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #databases AS db
+                      WHERE db.database_name = d.name
+                  )
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM sys.availability_replicas AS ar
+                      WHERE ar.group_id = lr.group_id
+                      AND   ar.replica_id <> lr.replica_id
+                      AND   ar.secondary_role_allow_connections_desc IN (N''READ_ONLY'', N''ALL'')
+                  )
+            OPTION(RECOMPILE);';
+
+            INSERT INTO
+                #ag_primary_readable_databases
+            WITH
+                (TABLOCK)
+            (
+                database_name
+            )
+            EXECUTE sys.sp_executesql
+                @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_msg = ERROR_MESSAGE();
+
+                RAISERROR('Availability group readable secondary lookup failed: %s', 0, 0, @error_msg) WITH NOWAIT;
+            END;
+        END CATCH;
+    END;
+
+    /*
+    The reason names the moment that set the window. A restore under a new
+    name also creates the database a moment after the restore is logged, so
+    a create_date within 60 seconds of the winning time is credited to the
+    restore when there is one. A restore over an existing database keeps the
+    old create_date, and only the restore history shows it.
+    */
+    UPDATE
+        db
+    SET
+        db.usage_since = CONVERT(datetime2(0), w.usage_since),
+        db.usage_window_days =
+            DATEDIFF
+            (
+                DAY,
+                w.usage_since,
+                SYSDATETIME()
+            ),
+        db.usage_since_reason =
+            CASE
+                WHEN c.restore_date >= DATEADD(SECOND, -60, w.usage_since)
+                THEN N'Database restore'
+                WHEN c.create_date >= DATEADD(SECOND, -60, w.usage_since)
+                THEN N'Database create'
+                ELSE N'Server start'
+            END
+    FROM #databases AS db
+    CROSS JOIN sys.dm_os_sys_info AS osi
+    LEFT JOIN sys.databases AS sd
+      ON sd.name = db.database_name
+    LEFT JOIN #database_restores AS dr
+      ON dr.database_name = db.database_name
+    CROSS APPLY
+    (
+        SELECT
+            restore_date = dr.last_restore_date,
+            create_date = sd.create_date,
+            server_start = osi.sqlserver_start_time
+    ) AS c
+    CROSS APPLY
+    (
+        SELECT
+            usage_since =
+                (
+                    SELECT
+                        MAX(v.usage_since)
+                    FROM
+                    (
+                        VALUES
+                            (c.restore_date),
+                            (c.create_date),
+                            (c.server_start)
+                    ) AS v (usage_since)
+                )
+    ) AS w
+    OPTION(RECOMPILE);
+
+    /*
+    Per database, the unused index rule needs more than 7 days of usage data.
+    @dedupe_only is already 1 here when the server itself was started 7 days
+    ago or less, or when the caller asked for it: those cases skip the rule for
+    every database and are not repeated per database.
+    */
+    UPDATE
+        db
+    SET
+        db.skip_unused_rule =
+            CASE
+                WHEN @dedupe_only = 0
+                AND  db.usage_window_days <= 7
+                THEN 1
+                ELSE 0
+            END,
+        db.usage_since_reason =
+            db.usage_since_reason +
+            CASE
+                WHEN @dedupe_only = 0
+                AND  db.usage_window_days <= 7
+                THEN N'. Unused Index rule skipped for this database: only ' +
+                     CONVERT(nvarchar(10), db.usage_window_days) +
+                     N' days of usage data (7 days or less)'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #ag_primary_readable_databases AS ag
+                         WHERE ag.database_name = db.database_name
+                     )
+                THEN N'. Availability group primary with readable secondaries: reads on the secondaries are not counted'
+                ELSE N''
+            END
+    FROM #databases AS db
+    OPTION(RECOMPILE);
 
     /* Show database list in debug mode */
     IF @debug = 1
@@ -1566,12 +2086,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN d.database_id <= 4
                     THEN 'System database'
                     WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    AND  ag.secondary_role_allow_connections = N'READ_ONLY'
+                    THEN @read_intent_reason
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    AND  ag.secondary_role_allow_connections = N'NO'
+                    THEN @non_readable_reason
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
                     THEN 'No database access for current login'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
         LEFT JOIN sys.databases AS d
           ON id.database_name = d.name
+        LEFT JOIN #ag_secondary_databases AS ag
+          ON ag.database_name = d.name
         WHERE NOT EXISTS
               (
                   SELECT
@@ -1681,13 +2209,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         TRUNCATE TABLE
             #include_subset_dedupe;
         TRUNCATE TABLE
-            #computed_columns_analysis;
-        TRUNCATE TABLE
-            #check_constraints_analysis;
-        TRUNCATE TABLE
-            #filtered_index_columns_analysis;
-        TRUNCATE TABLE
             #merged_includes;
+
+        /*
+        #computed_columns_analysis, #check_constraints_analysis and
+        #filtered_index_columns_analysis are NOT reset here. They are the advisory
+        findings, returned after the loop like #index_analysis, and keyed by
+        database_id. Resetting them each pass left only the last database's
+        findings when @get_all_databases = 1, and none at all once a later
+        database without the @table_name object was reached.
+        */
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
@@ -1750,6 +2281,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = o.name,
             index_id = i.index_id,
             index_name = ISNULL(i.name, o.name + N''.Heap''),
+            index_type = i.type,
             can_compress =
                 CASE
                     WHEN p.index_id > 0
@@ -1910,6 +2442,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_id,
         index_name,
+        index_type,
         can_compress
     )
     EXECUTE sys.sp_executesql
@@ -2568,12 +3101,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     definition as ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY
     NONCLUSTERED. That code was unreachable until this CASE was fixed.
 
-    Keep prose out of the string literal below. Everything up to the first
-    CONVERT(nvarchar(max), ...) concatenates as nvarchar(4000), so padding
-    it silently truncates the batch mid-statement instead of failing loudly.
+    Keep prose out of the string literal below. Without a max type on the
+    left, everything up to the first CONVERT(nvarchar(max), ...) concatenates as
+    nvarchar(4000), so padding it silently truncates the batch mid-statement
+    instead of failing loudly. The empty nvarchar(max) the assignment starts from
+    makes the whole concatenation nvarchar(max), which is what let the
+    ignore_dup_key and no_recompute columns fit.
     */
     SELECT
-        @sql = N'
+        @sql = CONVERT(nvarchar(max), N'') + N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
@@ -2622,6 +3158,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        is_foreign_key_backing =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.foreign_keys AS fk
+                         WHERE fk.referenced_object_id = i.object_id
+                         AND   fk.key_index_id = i.index_id
+                     )
+                THEN 1
+                ELSE 0
+            END,
         ic.key_ordinal,
         ic.index_column_id,
         ic.is_descending_key,
@@ -2648,6 +3197,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         optimize_for_sequential_key = ISNULL(i.optimize_for_sequential_key, 0),'
             ELSE N'
         optimize_for_sequential_key = 0,'
+        END + N'
+        ignore_dup_key = ISNULL(i.ignore_dup_key, 0),
+        no_recompute =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.stats AS st
+                         WHERE st.object_id = i.object_id
+                         AND   st.stats_id = i.index_id
+                         AND   st.no_recompute = 1
+                     )
+                THEN 1
+                ELSE 0
+            END,
+        allow_page_locks = ISNULL(i.allow_page_locks, 1),
+        allow_row_locks = ISNULL(i.allow_row_locks, 1),' +
+        CASE
+            WHEN @supports_incremental_statistics = 1
+            THEN N'
+        is_incremental =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.stats AS st
+                         WHERE st.object_id = i.object_id
+                         AND   st.stats_id = i.index_id
+                         AND   st.is_incremental = 1
+                     )
+                THEN 1
+                ELSE 0
+            END,'
+            ELSE N'
+        is_incremental = 0,'
         END + N'
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
@@ -2774,6 +3360,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_indexed_view,
         is_foreign_key,
         is_foreign_key_reference,
+        is_foreign_key_backing,
         key_ordinal,
         index_column_id,
         is_descending_key,
@@ -2781,6 +3368,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition,
         is_max_length,
         optimize_for_sequential_key,
+        ignore_dup_key,
+        no_recompute,
+        allow_page_locks,
+        allow_row_locks,
+        is_incremental,
         user_seeks,
         user_scans,
         user_lookups,
@@ -3303,122 +3895,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
 
-        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
-    END;
-
-    /* Analyze filtered indexes to identify columns used in filters that should be included */
-    SELECT
-        @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.filter_definition,
-        missing_included_columns =
-            (
-                SELECT
-                    STUFF
-                    (
-                        (
-                            /* Find column names mentioned in filter_definition that aren''t already key or included columns */
-                            SELECT
-                                N'', '' +
-                                QUOTENAME(c.name)
-                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                            WHERE c.object_id = ia.object_id
-                            AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
-                            AND   NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM #index_details AS id
-                                WHERE id.object_id = ia.object_id
-                                AND   id.index_id = ia.index_id
-                                AND   id.column_id = c.column_id
-                            )
-                            GROUP BY
-                                c.name
-                            FOR
-                                XML
-                                PATH(''''),
-                                TYPE
-                        ).value(''text()[1]'',''nvarchar(max)''),
-                        1,
-                        2,
-                        N''''
-                    )
-            ),
-        should_include_filter_columns =
-            CASE
-                WHEN EXISTS
-                (
-                    /* Check if any columns mentioned in filter_definition aren''t already in the index */
-                    SELECT
-                        1/0
-                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-                    WHERE c.object_id = ia.object_id
-                    AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
-                    AND   NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id
-                        WHERE id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
-                        AND   id.column_id = c.column_id
-                    )
-                )
-                THEN 1
-                ELSE 0
-            END
-    FROM #index_analysis AS ia
-    WHERE ia.filter_definition IS NOT NULL
-    AND   ia.database_id = @current_database_id
-    OPTION(RECOMPILE);';
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
-        PRINT @sql;
-    END;
-
-    INSERT INTO
-        #filtered_index_columns_analysis
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        object_id,
-        table_name,
-        index_id,
-        index_name,
-        filter_definition,
-        missing_included_columns,
-        should_include_filter_columns
-    )
-    EXECUTE sys.sp_executesql
-        @sql,
-      N'@current_database_id integer',
-        @current_database_id;
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#filtered_index_columns_analysis',
-            fica.*
-        FROM #filtered_index_columns_analysis AS fica
-        OPTION(RECOMPILE);
-
         RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
     END;
 
@@ -3484,6 +3960,58 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 50  /* Indexes with includes get priority over those without */
                 ELSE 0
             END /* Prefer indexes with included columns */
+            +
+            /*
+            Two properties the score could not see, so a pair holding one of them was
+            settled on index_name - by the alphabet (#917, #916). A foreign key is backed
+            by this index, and IGNORE_DUP_KEY decides what an insert of a duplicate key
+            does. Removing either structure changes something a caller did not ask to
+            change: the key gets disabled with its backing index, or inserts that used to
+            skip a duplicate start failing.
+
+            Where the two terms sit, and why:
+
+            Each has to outrank every term that can DIFFER between the two structures of
+            a pair, which is the seek (200), the scan (100) and the include (50) terms,
+            350 together. 400 clears that.
+
+            The foreign key term then has to outrank the IGNORE_DUP_KEY one plus those
+            three, 750, because the ORDER of the two decides the case where one structure
+            backs a key and the other skips duplicates. Measured on SQL Server 2022 CU27:
+            keeping the index the key is backed by and giving it IGNORE_DUP_KEY leaves the
+            key enabled and trusted, still skips a duplicate parent key, and still refuses
+            an orphan child with 547 - while keeping the other one and disabling this one
+            makes that same insert fail with 2601. So 800.
+
+            Neither term reaches the clustered index's 1000 on its own. Their SUM can pass
+            it, and that is not reachable: a clustered index and a primary key carry
+            is_eligible_for_dedupe = 0 and never enter a pair. Keeping the sums under 1000
+            is not possible anyway - the ordering above forces the foreign key term past
+            700, and a unique index already carries 500.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_fkb
+                    WHERE id_fkb.index_hash = #index_analysis.index_hash
+                    AND   id_fkb.is_foreign_key_backing = 1
+                ) THEN 800
+                ELSE 0
+            END /* A foreign key is backed by this index */
+            +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = #index_analysis.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                ) THEN 400
+                ELSE 0
+            END /* This structure is the one that skips a duplicate key */
     WHERE #index_analysis.database_id = @current_database_id
     OPTION(RECOMPILE);
 
@@ -3496,16 +4024,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
-    /* Rule 1: Identify unused indexes */
-    IF @dedupe_only = 0
+    /*
+    Rule 1: Identify unused indexes
+
+    The skip is per database: a database restored or created 7 days ago or
+    less has too little usage data to call anything unused, even on a server
+    that has been up for months. The warning label follows the same window.
+    When the window is the server start, the label is the same as ever.
+    */
+    SELECT
+        @usage_window_days = ISNULL(d.usage_window_days, CONVERT(integer, @uptime_days)),
+        @usage_since_server_start =
+            CASE
+                WHEN d.usage_since_reason LIKE N'Server start%'
+                THEN 1
+                ELSE 0
+            END,
+        @skip_unused_rule = ISNULL(d.skip_unused_rule, 0)
+    FROM #databases AS d
+    WHERE d.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    IF  @dedupe_only = 0
+    AND @skip_unused_rule = 0
     BEGIN
         UPDATE
             #index_analysis
         SET
             #index_analysis.consolidation_rule =
                 CASE
-                    WHEN @uptime_warning = 1
+                    WHEN @usage_window_days < 14
+                    AND  @usage_since_server_start = 1
                     THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
+                    WHEN @usage_window_days < 14
+                    THEN 'Unused Index (WARNING: Database usage window < 14 days - usage data may be incomplete)'
                     ELSE 'Unused Index'
                 END,
             #index_analysis.action = N'DISABLE'
@@ -4054,6 +4606,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         them, emitting a broken INCLUDE list while the paired DISABLE still ran.
         Reading the columns directly also removes the need to escape entities for
         the XML round-trip.
+
+        The no-op check before the MERGE SCRIPT compares this list with one it
+        builds the same way: QUOTENAME(column_name), joined with ', ', in
+        column_name order. Change the format here and it has to change there.
         */
         merged_includes =
             STUFF
@@ -4248,6 +4804,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_details AS id2
         WHERE id2.scope_hash = ia1.scope_hash
         AND   id2.is_unique_constraint = 1
+        /*
+        The constraint has to be a different index from ia1. ia1 can itself be
+        a unique constraint, and without this it matched its own index: the
+        two key sets are identical by definition, so every unique constraint in
+        the database qualified, and was reported KEPT as a replacement when no
+        other index shared its keys. Two constraints with the same keys still
+        match each other, which is what Rule 7.5b needs.
+        */
+        AND   id2.index_hash <> ia1.index_hash
         AND NOT EXISTS
         (
             /* Verify key columns match between index and unique constraint.
@@ -4830,10 +5395,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id2.index_hash = ia2.index_hash
             AND   id1.key_ordinal = 1
         )
-        /* Same set of key columns but in different order */
+        /*
+        Same set of key columns but in different order.
+
+        Both directions of EXCEPT have to come back empty for the two sets to be
+        identical. One direction only proves that the first index's keys are
+        all in the second, so an index with a subset of the other's keys passed
+        whenever its name happened to sort first (pairs are visited once, lower
+        name first) and was skipped whenever it sorted second: the label
+        depended on the index names, and went to pairs whose key columns differ.
+        */
         AND NOT EXISTS
         (
-            /* Make sure the sets of key columns are exactly the same */
+            /* Every key column of the first index is a key column of the second */
             SELECT
                 id1.column_name
             FROM #index_details AS id1
@@ -4849,6 +5423,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE id2.index_hash = ia2.index_hash
             AND   id2.is_included_column = 0
             AND   id2.key_ordinal > 0
+        )
+        AND NOT EXISTS
+        (
+            /* And every key column of the second index is a key column of the first */
+            SELECT
+                id2.column_name
+            FROM #index_details AS id2
+            WHERE id2.index_hash = ia2.index_hash
+            AND   id2.is_included_column = 0
+            AND   id2.key_ordinal > 0
+
+            EXCEPT
+
+            SELECT
+                id1.column_name
+            FROM #index_details AS id1
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id1.is_included_column = 0
+            AND   id1.key_ordinal > 0
         )
         /* But the order is different (excluding the first column) */
         AND EXISTS
@@ -5012,8 +5605,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         base_key_columns,
         filter_definition,
-        winning_index_name,
-        index_list
+        winning_index_name
     )
     SELECT
         ia.database_id,
@@ -5023,7 +5615,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name = MAX(ia.table_name),
         base_key_columns = ia.key_columns,
         filter_definition = ISNULL(ia.filter_definition, N''),
-        /* Choose the index with most included columns as the winner (or first alphabetically if tied) */
+        /* Choose a unique index first, then one a foreign key or IGNORE_DUP_KEY depends on, then the most included columns, then the first alphabetically */
         winning_index_name =
             (
                 SELECT TOP (1)
@@ -5034,38 +5626,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   candidate.action = N'MERGE INCLUDES'
                 AND   candidate.consolidation_rule = N'Key Duplicate'
                 ORDER BY
+                    /*
+                    A unique index first. Rule 5 leaves more than one candidate
+                    when an index's arbitrary partner was not the unique one, and
+                    disabling the unique index for a non-unique duplicate drops
+                    the uniqueness with nothing in the output to say so (#918)
+                    */
+                    candidate.is_unique DESC,
+                    /*
+                    Then the index a foreign key is backed by, then the one that
+                    skips duplicate keys: the two terms index_priority gained in
+                    #917 and #916, in the same order. Rule 5 leaves this step more
+                    than one candidate when three or more indexes share a key, and
+                    without them a plain unique index with more includes won here.
+                    The guard then kept the foreign key's index and the keeper took
+                    over IGNORE_DUP_KEY, so nothing broke, but the wrong index was
+                    rebuilt and the right one was reported as a duplicate.
+                    */
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_fkb
+                            WHERE id_fkb.index_hash = candidate.index_hash
+                            AND   id_fkb.is_foreign_key_backing = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
+                    CASE
+                        WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_idk
+                            WHERE id_idk.index_hash = candidate.index_hash
+                            AND   id_idk.ignore_dup_key = 1
+                        )
+                        THEN 1
+                        ELSE 0
+                    END DESC,
                     /* Then prefer indexes with more included columns (by length as a proxy) */
                     LEN(ISNULL(candidate.included_columns, '')) DESC,
                     /* Then alphabetically for stability */
                     candidate.index_name
-            ),
-        /* Build a list of other indexes in this group */
-        index_list =
-            STUFF
-            (
-              (
-                SELECT
-                    N', ' +
-                    inner_ia.index_name
-                FROM #index_analysis AS inner_ia
-                WHERE inner_ia.scope_hash = ia.scope_hash
-                  AND inner_ia.key_filter_hash = ia.key_filter_hash
-                  AND inner_ia.action = N'MERGE INCLUDES'
-                  AND inner_ia.consolidation_rule = N'Key Duplicate'
-                GROUP BY
-                    inner_ia.index_name,
-                    inner_ia.scope_hash,
-                    inner_ia.key_filter_hash
-                ORDER BY
-                    inner_ia.index_name
-                FOR
-                    XML
-                    PATH(''),
-                    TYPE
-              ).value('.', 'nvarchar(max)'),
-              1,
-              2,
-              ''
             )
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
@@ -5104,22 +5709,92 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
-    /* Update the winning index's superseded_by to list all other indexes */
+    /*
+    Point every key duplicate loser at its group's winner.
+
+    Rule 5 updates each index through a join to all of its duplicates, so each
+    index takes its action and its target from one partner, whichever row the
+    join applied. A loser can therefore point at an index that is itself being
+    disabled: a partner Rule 5 disabled in favor of a third index, or a
+    candidate the statement above just disabled. The single-winner merge below
+    and the unwind after the foreign key guard both find a winner's losers by
+    target_index_name, so a loser pointing at another loser could have its
+    includes merged into no index, and the report named an index that is going
+    away as its replacement.
+
+    After the statement above, each group holds one MERGE INCLUDES row, its
+    winner. Only a loser whose target is another key duplicate loser moves, so
+    a Rule 7.6 duplicate that points at its MAKE UNIQUE winner stays put.
+    */
     UPDATE
         ia
     SET
-        ia.superseded_by = N'Supersedes ' +
-        REPLACE
-        (
-            kdd.index_list,
-            ia.index_name + N', ',
-            N''
-        ) /* Remove self from list if present */
+        ia.target_index_name = winner.index_name
     FROM #index_analysis AS ia
-    JOIN #key_duplicate_dedupe AS kdd
-      ON  ia.scope_hash = kdd.scope_hash
-      AND ia.key_filter_hash = kdd.key_filter_hash
-    WHERE ia.index_name = kdd.winning_index_name
+    JOIN #index_analysis AS target_loser
+      ON  target_loser.scope_hash = ia.scope_hash
+      AND target_loser.index_name = ia.target_index_name
+    JOIN #index_analysis AS winner
+      ON  winner.scope_hash = ia.scope_hash
+      AND winner.key_filter_hash = ia.key_filter_hash
+    WHERE ia.action = N'DISABLE'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   target_loser.action = N'DISABLE'
+    AND   target_loser.consolidation_rule = N'Key Duplicate'
+    AND   winner.action = N'MERGE INCLUDES'
+    AND   winner.consolidation_rule = N'Key Duplicate'
+    AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    /*
+    Write each winner's "Supersedes <index>" text from the losers that now
+    point at it, so it names every index the winner replaces and never the
+    winner itself. Editing a list of the group's candidates with REPLACE left
+    the winner in its own list when its name sorted last, and Rule 5's text
+    names only the one partner each index was paired with.
+
+    Built from #index_analysis rows rather than by editing text, like the
+    unwind after the foreign key guard, so a name that contains another
+    index's name cannot be cut in the wrong place.
+    */
+    UPDATE
+        ia
+    SET
+        ia.superseded_by =
+            N'Supersedes ' +
+            sp.loser_part
+    FROM #index_analysis AS ia
+    CROSS APPLY
+    (
+        SELECT
+            loser_part =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_loser.index_name
+                        FROM #index_analysis AS ia_loser
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.key_filter_hash = ia.key_filter_hash
+                        AND   ia_loser.action = N'DISABLE'
+                        AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                        AND   ia_loser.target_index_name = ia.index_name
+                        ORDER BY
+                            ia_loser.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS sp
+    WHERE ia.action = N'MERGE INCLUDES'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   sp.loser_part IS NOT NULL
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
@@ -5475,25 +6150,371 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
-    /* Update winning indexes that don't actually need changes to have action = N'KEEP' */
+    /*
+    Record the keepers that have to take over IGNORE_DUP_KEY from a loser (#916).
+
+    Two unique structures on the same keys can differ in IGNORE_DUP_KEY, and
+    removing the one that has it changes what an insert of a duplicate key does:
+    measured on 2022 CU27, SQL Server skips the row while either structure skips
+    it, and raises 2601 once the last one is gone. The term above makes the
+    skipper win its own pair, so the common case needs nothing carried. Two
+    things still reach here:
+
+      - A pair the skipper LOSES, which today means a foreign key is backed by
+        the other structure. That term outranks this one on purpose - keeping the
+        index the key depends on and giving it IGNORE_DUP_KEY is the one outcome
+        where nothing changes, measured in both directions.
+      - Rule 7, which does not read index_priority at all: it keeps the
+        nonclustered index and drops the constraint whichever of them skips.
+
+    Collected here, before the rules' losers are read by anything else, and
+    consumed in two places: the WITH list of a keeper that is being rebuilt
+    anyway, and an ALTER INDEX ... SET for one that is not.
+    */
+    INSERT INTO
+        #ignore_dup_key_carried
+    WITH
+        (TABLOCK)
+    (
+        index_hash,
+        loser_index_name,
+        keeper_is_unique_constraint
+    )
+    SELECT
+        ia_keep.index_hash,
+        loser_index_name =
+            MIN(ia_loser.index_name),
+        keeper_is_unique_constraint =
+            MAX(CONVERT(integer, id_keep.is_unique_constraint))
+    FROM #index_analysis AS ia_keep
+    JOIN #index_details AS id_keep
+      ON id_keep.index_hash = ia_keep.index_hash
+    JOIN #index_analysis AS ia_loser
+      ON  ia_loser.scope_hash = ia_keep.scope_hash
+      AND ia_loser.target_index_name = ia_keep.index_name
+      AND ia_loser.index_name <> ia_keep.index_name
+    JOIN #index_details AS id_loser
+      ON id_loser.index_hash = ia_loser.index_hash
+    WHERE ia_keep.database_id = @current_database_id
+    AND   ia_loser.action = N'DISABLE'
+    /* The loser skips duplicates and the keeper does not, so the behaviour would change */
+    AND   id_loser.ignore_dup_key = 1
+    AND   id_keep.ignore_dup_key = 0
+    GROUP BY
+        ia_keep.index_hash
+    OPTION(RECOMPILE);
+
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('%I64d keeper(s) have to take over IGNORE_DUP_KEY', 0, 0, @rc) WITH NOWAIT;
+    END;
+
+    /*
+    Never disable an index that a foreign key is backed by.
+
+    A foreign key names its backing index in sys.foreign_keys.key_index_id, and
+    ALTER INDEX ... DISABLE against that index disables the foreign key too. SQL
+    Server only prints a warning, so the cleanup script looks like it worked
+    while the key stops being enforced: measured on 2022 CU27, the key is left
+    is_disabled = 1 and is_not_trusted = 1, and an INSERT naming a parent row
+    that does not exist succeeds from then on.
+
+    The per-column is_foreign_key_reference flag the dedupe rules already check
+    cannot answer this. It says a key points at the COLUMN, so with two unique
+    indexes on the same column it is 1 for both and tells us nothing about which
+    one the key depends on. That is the pair in the repro: the key is backed by
+    the index the rules disabled.
+
+    This sits after every rule rather than inside each one. The rules pick a
+    loser in nine places, by priority, by width and by name, and a guard in each
+    is a guard the tenth rule can be written without.
+
+    Clearing superseded_by on the LOSER row below changes nothing, because a
+    loser's superseded_by is already NULL: the claim "Supersedes <index>" and the
+    merged include list both live on the WINNER's row, which still carries them
+    after this statement. The statement after it unwinds the winners, so no
+    keeper is left claiming it supersedes an index that is staying, or getting a
+    MERGE SCRIPT that adds the includes of an index that is staying.
+
+    consolidation_rule and target_index_name are deliberately LEFT ALONE. The
+    rule still matched, and the reporting insert below reads both to say which
+    index this one duplicates, so a reader learns the pair exists instead of
+    seeing the index pass silently. The action is what decides what happens to
+    it, and that is now KEEP.
+
+    Both indexes are kept when the loser backs a key. Promoting the other one
+    instead is not safe to do blindly: when both back keys there is no loser to
+    pick at all, and that is the case this would get wrong.
+
+    Only DISABLE is reverted. MERGE INCLUDES rebuilds its index through
+    DROP_EXISTING with the key columns intact, so the key keeps its backing
+    index and the foreign key is never touched.
+    */
+    UPDATE
+        ia
+    SET
+        ia.action = N'KEEP',
+        ia.superseded_by = NULL
+    OUTPUT
+        inserted.index_hash
+    INTO #foreign_key_kept
+        (index_hash)
+    FROM #index_analysis AS ia
+    WHERE ia.action = N'DISABLE'
+    AND   ia.database_id = @current_database_id
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_fkb
+        WHERE id_fkb.index_hash = ia.index_hash
+        AND   id_fkb.is_foreign_key_backing = 1
+    )
+    OPTION(RECOMPILE);
+
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Kept %I64d index(es) a foreign key is backed by', 0, 0, @rc) WITH NOWAIT;
+    END;
+
+    /*
+    Unwind the winners of the indexes the guard just kept.
+
+    A winner's include list and its "Supersedes <index>" text were built while
+    the loser was still going to be disabled. With the loser staying, a winner
+    left alone would be rebuilt with includes it has no reason to absorb, and its
+    report would claim it supersedes an index that is staying.
+
+    Each affected winner gets its include list rebuilt from its own includes plus
+    those of the losers still being disabled, and its superseded_by rebuilt from
+    the same losers. A MERGE INCLUDES winner left with no loser goes back to KEEP.
+    A MAKE UNIQUE winner is not reverted: it still replaces its constraint.
+
+    Both strings come from #index_details and #index_analysis rows rather than
+    from editing the old text, so a name that contains another index's name, or a
+    comma, cannot be cut in the wrong place.
+    */
+    UPDATE
+        ia
+    SET
+        ia.included_columns =
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        QUOTENAME(idc.column_name)
+                    FROM #index_details AS idc
+                    WHERE idc.is_included_column = 1
+                    AND
+                    (
+                        /* The winner's own includes */
+                        idc.index_hash = ia.index_hash
+                        /* Plus those of the losers still being disabled */
+                        OR EXISTS
+                           (
+                               SELECT
+                                   1/0
+                               FROM #index_analysis AS ia_loser
+                               WHERE ia_loser.scope_hash = ia.scope_hash
+                               AND   ia_loser.action = N'DISABLE'
+                               AND   ia_loser.target_index_name = ia.index_name
+                               AND   ia_loser.consolidation_rule IN
+                                     (
+                                         N'Key Subset',
+                                         N'Key Duplicate'
+                                     )
+                               AND   ia_loser.index_hash = idc.index_hash
+                           )
+                    )
+                    /* A column already in the winner's key doesn't need including */
+                    AND NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS idk
+                        WHERE idk.index_hash = ia.index_hash
+                        AND   idk.is_included_column = 0
+                        AND   idk.column_name = idc.column_name
+                    )
+                    GROUP BY
+                        idc.column_name
+                    ORDER BY
+                        idc.column_name
+                    FOR
+                        XML
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]', 'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        ia.superseded_by =
+            NULLIF
+            (
+                ISNULL(sp.constraint_part, N'') +
+                CASE
+                    WHEN sp.constraint_part IS NOT NULL
+                    AND  sp.loser_part IS NOT NULL
+                    THEN N', '
+                    ELSE N''
+                END +
+                ISNULL(N'Supersedes ' + sp.loser_part, N''),
+                N''
+            ),
+        ia.action =
+            CASE
+                WHEN ia.action = N'MERGE INCLUDES'
+                AND  sp.loser_part IS NULL
+                THEN N'KEEP'
+                ELSE ia.action
+            END
+    FROM #index_analysis AS ia
+    CROSS APPLY
+    (
+        SELECT
+            loser_part =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_loser.index_name
+                        FROM #index_analysis AS ia_loser
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.action = N'DISABLE'
+                        AND   ia_loser.target_index_name = ia.index_name
+                        AND   ia_loser.consolidation_rule IN
+                              (
+                                  N'Key Subset',
+                                  N'Key Duplicate'
+                              )
+                        ORDER BY
+                            ia_loser.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                ),
+            constraint_part =
+                N'Will replace constraint ' +
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ia_uc.index_name
+                        FROM #index_analysis AS ia_uc
+                        WHERE ia_uc.scope_hash = ia.scope_hash
+                        AND   ia_uc.action = N'DISABLE'
+                        AND   ia_uc.consolidation_rule = N'Unique Constraint Replacement'
+                        AND   ia_uc.target_index_name = ia.index_name
+                        ORDER BY
+                            ia_uc.index_name
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS sp
+    WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    AND   ia.database_id = @current_database_id
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_kept
+        JOIN #foreign_key_kept AS fkk
+          ON fkk.index_hash = ia_kept.index_hash
+        WHERE ia_kept.scope_hash = ia.scope_hash
+        AND   ia_kept.target_index_name = ia.index_name
+        AND   ia_kept.consolidation_rule IN
+              (
+                  N'Key Subset',
+                  N'Key Duplicate'
+              )
+    )
+    OPTION(RECOMPILE);
+
+    /*
+    Update winning indexes that don't actually need changes to have action = N'KEEP'.
+
+    A MERGE SCRIPT rebuilds the whole index through DROP_EXISTING, which is a lot
+    of work on a large table, so it is only worth emitting when it changes the
+    index: the merged include list differs from the index's current one, or a
+    MAKE UNIQUE row turns a non-unique index into a unique one. Options such as
+    compression are covered by the compression row below, which an index reaches
+    once it is KEEP, so no compression advice is lost.
+
+    The merged list is compared with the index's own includes, rebuilt from
+    #index_details in the same order the list was built in. The check this
+    replaces asked whether Rule 6 had recorded merged includes for the index, but
+    Rule 6 records a row for every Key Superset winner whether or not the list
+    changed, and the check only ever looked at MERGE INCLUDES rows, so it missed
+    both a superset that already covers its subset and a unique index that
+    already replaces its constraint.
+
+    Every statement that writes included_columns builds the list the same way:
+    QUOTENAME(column_name), joined with ', ', in column_name order. That covers
+    Rule 6, the other merges, and the winner unwind above. If one of them ever
+    orders the list differently, an unchanged list stops matching here, and the
+    index gets a MERGE SCRIPT that changes nothing again. Keep them in step.
+    */
     UPDATE
         ia
     SET
         /* Change action to 'KEEP' for indexes that don't need to be modified */
         ia.action = N'KEEP'
     FROM #index_analysis AS ia
-    WHERE ia.action = N'MERGE INCLUDES'
-    AND   ia.superseded_by IS NOT NULL
-    /* Only change to KEEP if Rule 6 didn't compute merged includes for this index */
-    AND NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #merged_includes AS mi
-        WHERE mi.scope_hash = ia.scope_hash
-        AND   mi.index_name = ia.index_name
-    )
+    WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     AND   ia.database_id = @current_database_id
+    /* A MAKE UNIQUE row only changes the index when it is not unique yet */
+    AND
+    (
+         ia.action = N'MERGE INCLUDES'
+      OR ia.is_unique = 1
+    )
+    /* The merged include list is the index's own include list */
+    AND   ISNULL(ia.included_columns, N'') =
+          ISNULL
+          (
+              STUFF
+              (
+                  (
+                      SELECT
+                          N', ' +
+                          QUOTENAME(idc.column_name)
+                      FROM #index_details AS idc
+                      WHERE idc.index_hash = ia.index_hash
+                      AND   idc.is_included_column = 1
+                      GROUP BY
+                          idc.column_name
+                      ORDER BY
+                          idc.column_name
+                      FOR
+                          XML
+                          PATH(''),
+                          TYPE
+                  ).value('text()[1]', 'nvarchar(max)'),
+                  1,
+                  2,
+                  N''
+              ),
+              N''
+          )
     OPTION(RECOMPILE);
 
     /* Insert merge scripts for indexes */
@@ -5583,14 +6604,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N''
             END +
             N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            SQL Server refuses CREATE INDEX ... WITH (DROP_EXISTING = ON, ONLINE = ON)
+            on a table whose base is a clustered columnstore index: measured on 2022
+            CU27, Msg 35352. The paired DISABLE still runs, so the loser's columns
+            would be covered by nothing. ALTER INDEX ... REBUILD WITH (ONLINE = ON) is
+            accepted on the same table, and a nonclustered columnstore index does not
+            cause the error, so only this case is written offline.
+            */
             CASE
                 WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
                 THEN N'ON'
                 ELSE N'OFF'
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
                 END +
             CASE
@@ -5604,6 +6642,93 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id_ofsk.optimize_for_sequential_key = 1
                 )
                 THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
+            /*
+            DROP_EXISTING resets both options below to OFF, so carry them. The index
+            also carries IGNORE_DUP_KEY from any structure of its pair the scripts
+            remove, not only from a unique constraint a MAKE UNIQUE row replaces
+            (#914, generalised by #916): whatever is going away, the structure that
+            takes over enforcing uniqueness has to keep skipping the duplicates it
+            used to skip, or those inserts start failing with error 2601.
+
+            #ignore_dup_key_carried is the whole population - a keeper that does not
+            skip with a loser that does - so this arm and the ALTER INDEX ... SET row
+            below read one definition rather than two that can drift apart. The
+            keeper's own flag still stands on its own: an index that already skips
+            keeps doing so through the rebuild whether or not it won a pair.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = ia.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                )
+                OR EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #ignore_dup_key_carried AS idkc
+                    WHERE idkc.index_hash = ia.index_hash
+                    AND   idkc.keeper_is_unique_constraint = 0
+                )
+                THEN N', IGNORE_DUP_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_nrc
+                    WHERE id_nrc.index_hash = ia.index_hash
+                    AND   id_nrc.no_recompute = 1
+                )
+                THEN N', STATISTICS_NORECOMPUTE = ON'
+                ELSE N''
+            END +
+            /*
+            DROP_EXISTING resets these three as well: row and page locks back to
+            allowed, and incremental statistics back to OFF. Only a value that
+            differs from the default needs naming.
+            */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
                 ELSE N''
             END +
             N')' +
@@ -5648,7 +6773,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
@@ -5728,6 +6853,91 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia.index_name
         OPTION(RECOMPILE);
     END;
+
+    /*
+    Hand IGNORE_DUP_KEY to a keeper that is not being rebuilt (#916).
+
+    A keeper that gets a MERGE SCRIPT already carries the option in its WITH list
+    above, so this row is for the rest: a plain KEEP, and the Rule 7 index that
+    replaces a constraint and was already unique, which #914 writes no script for
+    because the rebuild would add neither a column nor uniqueness.
+
+    sort_order 6, between the merge scripts (5) and the disables (20), and that
+    ordering is the point rather than cosmetics: while either structure skips a
+    duplicate, SQL Server skips it, so the keeper has to be skipping BEFORE the
+    loser is disabled. Run the other way round, an insert between the two
+    statements fails with 2601.
+
+    Measured on 2022 CU27: ALTER INDEX ... SET (IGNORE_DUP_KEY = ON) against a
+    plain unique index is accepted, leaves sys.indexes.ignore_dup_key = 1, and the
+    index then skips a duplicate for a single-row and a 500-row insert alike. The
+    constraint keeper that cannot take it never reaches here - it is filtered out
+    below, and its pair was left alone by the guard above.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, IGNORE_DUP_KEY', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        script,
+        additional_info
+    )
+    SELECT
+        result_type = 'IGNORE_DUP_KEY',
+        sort_order = 6,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = N'IGNORE_DUP_KEY SCRIPT',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        script =
+            N'ALTER INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' SET (IGNORE_DUP_KEY = ON);',
+        additional_info =
+            N'Takes over IGNORE_DUP_KEY from ' +
+            idkc.loser_index_name +
+            N', which the scripts remove. Without it, an insert of a duplicate key starts failing with error 2601 instead of skipping the row. Run this before the DISABLE script.'
+    FROM #index_analysis AS ia
+    JOIN #ignore_dup_key_carried AS idkc
+      ON idkc.index_hash = ia.index_hash
+    WHERE ia.database_id = @current_database_id
+    AND   idkc.keeper_is_unique_constraint = 0
+    /* A rebuilt keeper carries the option in its own WITH list instead */
+    AND   ia.action NOT IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    /* The loser has to actually be going away: either guard may have kept it */
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_loser
+        WHERE ia_loser.scope_hash = ia.scope_hash
+        AND   ia_loser.target_index_name = ia.index_name
+        AND   ia_loser.action = N'DISABLE'
+    )
+    OPTION(RECOMPILE);
 
     /* Insert disable scripts for unneeded indexes */
     IF @debug = 1
@@ -6179,6 +7389,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       OR id.is_primary_key = 1
     )
     AND   ce.can_compress = 1 /* Only those eligible for compression */
+    AND   fo.can_compress = 1 /* One #filtered_objects row per index, not one per partition compression mix */
     AND   fo.database_id = @current_database_id
     /* Only add if not already in #index_analysis */
     AND   NOT EXISTS
@@ -6278,7 +7489,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END +
             CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
             CASE
@@ -6317,7 +7528,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
@@ -6446,7 +7657,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_size_gb,
         index_rows,
         index_reads,
-        index_writes
+        index_writes,
+        partition_number
     )
     SELECT DISTINCT
         result_type = 'COMPRESS_PARTITION',
@@ -6471,30 +7683,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 nvarchar(20),
                 ps.partition_number
             ) +
-            N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /*
+            A single-partition rebuild accepts only SORT_IN_TEMPDB, MAXDOP, ONLINE,
+            the compression options, RESUMABLE and WAIT_AT_LOW_PRIORITY. FILLFACTOR
+            and OPTIMIZE_FOR_SEQUENTIAL_KEY are refused with Msg 155 (measured on
+            2022 CU27), and the rebuild keeps the index's own values for both.
+            */
+            N' WITH (SORT_IN_TEMPDB = ON, ONLINE = ' +
             CASE
                 WHEN @online = 1
                 THEN N'ON'
                 ELSE N'OFF'
             END +
-                        CASE
+            CASE
                 WHEN ce.can_compress = 1
-                THEN ', DATA_COMPRESSION = PAGE'
+                THEN N', DATA_COMPRESSION = PAGE'
                 ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
+            END +
             N');',
             N'Compression type: Per Partition | Partition: ' +
             CONVERT
@@ -6526,7 +7731,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.total_rows,
         index_reads =
             (id.user_seeks + id.user_scans + id.user_lookups),
-        id.user_updates
+        id.user_updates,
+        ps.partition_number
     FROM #index_analysis AS ia
     JOIN #partition_stats AS ps
       ON ia.index_hash = ps.index_hash
@@ -6539,6 +7745,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE
         /* Only partitioned indexes */
         ps.partition_function_name IS NOT NULL
+        /* Only partitions still uncompressed, the same test #filtered_objects makes for a whole index */
+    AND  ps.data_compression_desc = N'NONE'
         /* Indexes that are not being disabled or merged */
     AND  (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
@@ -6674,6 +7882,95 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
+    /*
+    Indexes a foreign key is backed by, which a dedupe rule had picked as the
+    loser before the guard above kept them.
+
+    Reported rather than passed over in silence: without this the index reaches
+    the results only through its compression row, where consolidation_rule is
+    N/A, so a reader is never told that a duplicate pair exists on the table or
+    that something stopped it from being cleaned up. Both of those are decisions
+    only the reader can make, and they need the pair named to make them.
+
+    A row of its own, after the compression insert and before the KEPT one, so
+    neither is changed: the compression recommendation still reaches the results
+    exactly as it did, and the generic "This index is being kept" row the KEPT
+    insert would otherwise emit is replaced by this one, which says why.
+
+    Driven by #foreign_key_kept, the rows the guard actually changed, and not by
+    is_foreign_key_backing. An index a foreign key is backed by can also win its
+    pair on merit, with the duplicate disabled as normal, and this row would then
+    credit the guard with a decision the rules had already made correctly.
+
+    The foreign key is not named here. Its name lives in the target database's
+    sys.foreign_keys, which only the collection's dynamic SQL can read, and
+    #index_details carries the fact and not the name.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, FOREIGN KEY BACKED', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        additional_info,
+        original_index_definition,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT DISTINCT
+        result_type = 'KEPT',
+        sort_order = 94, /* Between NEEDS REVIEW and the other kept indexes */
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'KEPT - FOREIGN KEY',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        additional_info =
+            N'A foreign key is backed by this index, so disabling it would disable the key too. Kept for that reason, although it matched ' +
+            ISNULL(ia.consolidation_rule, N'(unknown)') +
+            N' with ' +
+            ISNULL(ia.target_index_name, N'(unknown)') +
+            N'. Review the pair by hand if you want the duplicate gone.',
+        /* Original index definition for validation */
+        ia.original_index_definition,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps
+      ON ia.index_hash = ps.index_hash
+    LEFT JOIN #index_details AS id
+      ON  id.index_hash = ia.index_hash
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE ia.database_id = @current_database_id
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #foreign_key_kept AS fkk
+        WHERE fkk.index_hash = ia.index_hash
+    )
+    OPTION(RECOMPILE);
 
     /* Insert kept indexes into results - Consolidated all kept indexes logic in one place */
     IF @debug = 1
@@ -6787,7 +8084,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.object_id,
             ps.index_id,
             ps.partition_function_name
-        FROM #partition_stats ps
+        FROM #partition_stats AS ps
         GROUP BY
             ps.database_id,
             ps.object_id,
@@ -6829,6 +8126,370 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     )
     AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
+    END;
+
+    /*
+    Analyze filtered indexes to identify columns used in filters that should be included.
+
+    A column is referenced by the filter when its bracketed name is in the
+    filter text, because filter_definition always stores column names in
+    brackets: ([SiteID]=(1)). Matching the bare name as a substring found [ID]
+    inside [SiteID] and recommended a column the filter never mentions. CHARINDEX
+    and not LIKE, since in a LIKE pattern the brackets are a character class.
+
+    This runs after every rule and every script, because the finding has to
+    describe the index the scripts leave behind. Run ahead of the rules, it
+    named a filter column that a merge was about to add, so its script listed
+    the column twice (Msg 1909), and it scripted indexes the same run disables:
+    CREATE INDEX ... WITH (DROP_EXISTING = ON) rebuilds a disabled index, so the
+    script undid the DISABLE. Now a column counts as present when the index
+    has it or takes it over from a loser it absorbs - the same losers the
+    include merges read - and an index the run disables gets no finding.
+
+    CONVERT to nvarchar(max) first, so the concatenation below cannot be cut
+    off at 4,000 characters.
+    */
+    SELECT
+        @sql = CONVERT(nvarchar(max), N'') + N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    SELECT DISTINCT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Column names in filter_definition that the index will not carry */
+                            SELECT
+                                N'', '' +
+                                QUOTENAME(c.name)
+                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_analysis AS ia_loser
+                                JOIN #index_details AS id_loser
+                                  ON id_loser.index_hash = ia_loser.index_hash
+                                WHERE ia_loser.scope_hash = ia.scope_hash
+                                AND   ia_loser.target_index_name = ia.index_name
+                                AND   ia_loser.action = N''DISABLE''
+                                AND   ia_loser.consolidation_rule IN
+                                      (
+                                          N''Key Subset'',
+                                          N''Key Duplicate''
+                                      )
+                                AND   id_loser.is_included_column = 1
+                                AND   id_loser.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR
+                                XML
+                                PATH(''''),
+                                TYPE
+                        ).value(''text()[1]'',''nvarchar(max)''),
+                        1,
+                        2,
+                        N''''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* The same test: a filter column the index will not carry */
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   CHARINDEX(QUOTENAME(c.name) COLLATE DATABASE_DEFAULT, ia.filter_definition) > 0
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_analysis AS ia_loser
+                        JOIN #index_details AS id_loser
+                          ON id_loser.index_hash = ia_loser.index_hash
+                        WHERE ia_loser.scope_hash = ia.scope_hash
+                        AND   ia_loser.target_index_name = ia.index_name
+                        AND   ia_loser.action = N''DISABLE''
+                        AND   ia_loser.consolidation_rule IN
+                              (
+                                  N''Key Subset'',
+                                  N''Key Duplicate''
+                              )
+                        AND   id_loser.is_included_column = 1
+                        AND   id_loser.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    AND   ia.database_id = @current_database_id
+    /* An index this run disables gets no finding */
+    AND   ISNULL(ia.action, N'''') <> N''DISABLE''
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
+        PRINT SUBSTRING(@sql,    1, 4000);
+        PRINT SUBSTRING(@sql, 4001, 4000);
+    END;
+
+    INSERT INTO
+        #filtered_index_columns_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        index_id,
+        index_name,
+        filter_definition,
+        missing_included_columns,
+        should_include_filter_columns
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@current_database_id integer',
+        @current_database_id;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#filtered_index_columns_analysis',
+            fica.*
+        FROM #filtered_index_columns_analysis AS fica
+        OPTION(RECOMPILE);
+    END;
+
+    /*
+    Script the filtered-index findings for this database, now, while its
+    #index_details, #partition_stats, #compression_eligibility and #filtered_objects
+    are loaded. The findings are returned after the loop, and a script built there
+    read those tables when they held only the last database's rows, so with
+    @get_all_databases = 1 every other database's script lost its compression, its
+    index options and its filegroup or partition scheme.
+    */
+    UPDATE
+        fica
+    SET
+        /*
+        Rebuild the index with the filter columns appended to the INCLUDE
+        list, using DROP_EXISTING so the existing index is replaced in a
+        single statement. Pieces are reused from #index_analysis, so the
+        key columns, existing includes, and filter all match the original.
+        The WITH options and partition ON clause mirror the merge/create
+        scripts so this advice stays consistent with the rest of the tool.
+        */
+        fica.create_index_script =
+            N'CREATE ' +
+            CASE
+                WHEN ia.is_unique = 1
+                THEN N'UNIQUE '
+                ELSE N''
+            END +
+            N'NONCLUSTERED INDEX ' +
+            QUOTENAME(fica.index_name) +
+            N' ON ' +
+            QUOTENAME(fica.database_name) +
+            N'.' +
+            QUOTENAME(fica.schema_name) +
+            N'.' +
+            QUOTENAME(fica.table_name) +
+            N' (' +
+            ia.key_columns +
+            N') INCLUDE (' +
+            CASE
+                WHEN ia.included_columns IS NOT NULL
+                AND  LEN(ia.included_columns) > 0
+                THEN ia.included_columns + N', ' + fica.missing_included_columns
+                ELSE fica.missing_included_columns
+            END +
+            N')' +
+            CASE
+                WHEN fica.filter_definition IS NOT NULL
+                THEN N' WHERE ' + fica.filter_definition
+                ELSE N''
+            END +
+            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            /* Offline on a clustered columnstore table, for the reason given at the MERGE SCRIPT (Msg 35352) */
+            CASE
+                WHEN @online = 1
+                AND  NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #filtered_objects AS fo_cci
+                    WHERE fo_cci.database_id = ia.database_id
+                    AND   fo_cci.object_id = ia.object_id
+                    AND   fo_cci.index_type = 5
+                )
+                THEN N'ON'
+                ELSE N'OFF'
+            END +
+            CASE
+                WHEN ce.can_compress = 1
+                THEN N', DATA_COMPRESSION = PAGE'
+                ELSE N''
+            END +
+            CASE
+                WHEN @supports_optimize_for_sequential_key = 1
+                AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_ofsk
+                    WHERE id_ofsk.index_hash = ia.index_hash
+                    AND   id_ofsk.optimize_for_sequential_key = 1
+                )
+                THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_idk
+                    WHERE id_idk.index_hash = ia.index_hash
+                    AND   id_idk.ignore_dup_key = 1
+                )
+                THEN N', IGNORE_DUP_KEY = ON'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_nrc
+                    WHERE id_nrc.index_hash = ia.index_hash
+                    AND   id_nrc.no_recompute = 1
+                )
+                THEN N', STATISTICS_NORECOMPUTE = ON'
+                ELSE N''
+            END +
+            /* The other three DROP_EXISTING resets, as in the MERGE SCRIPT */
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_apl
+                    WHERE id_apl.index_hash = ia.index_hash
+                    AND   id_apl.allow_page_locks = 0
+                )
+                THEN N', ALLOW_PAGE_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_arl
+                    WHERE id_arl.index_hash = ia.index_hash
+                    AND   id_arl.allow_row_locks = 0
+                )
+                THEN N', ALLOW_ROW_LOCKS = OFF'
+                ELSE N''
+            END +
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_inc
+                    WHERE id_inc.index_hash = ia.index_hash
+                    AND   id_inc.is_incremental = 1
+                )
+                THEN N', STATISTICS_INCREMENTAL = ON'
+                ELSE N''
+            END +
+            N')' +
+            CASE
+                WHEN ps.partition_function_name IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on) +
+                     N'(' +
+                     ISNULL(ps.partition_columns, N'') +
+                     N')'
+                WHEN ps.built_on IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on)
+                ELSE N''
+            END +
+            N';'
+    FROM #filtered_index_columns_analysis AS fica
+    JOIN #index_analysis AS ia
+      ON  ia.database_id = fica.database_id
+      AND ia.schema_id = fica.schema_id
+      AND ia.object_id = fica.object_id
+      AND ia.index_id = fica.index_id
+    LEFT JOIN
+    (
+        /* One row per index carrying its storage/partition layout */
+        SELECT
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats AS ps
+        GROUP BY
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) AS ps
+      ON ps.index_hash = ia.index_hash
+    LEFT JOIN #compression_eligibility AS ce
+      ON ce.index_hash = ia.index_hash
+    WHERE fica.should_include_filter_columns = 1
+    AND   fica.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /*
@@ -7191,6 +8852,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.database_name
     OPTION(RECOMPILE);
 
+    /* This database's own usage window goes on its DATABASE row, and nowhere else */
+    UPDATE
+        irs
+    SET
+        irs.usage_since = d.usage_since,
+        irs.usage_since_reason = d.usage_since_reason
+    FROM #index_reporting_stats AS irs
+    JOIN #databases AS d
+      ON d.database_name = irs.database_name
+    WHERE irs.summary_level = 'DATABASE'
+    AND   irs.database_name = @current_database_name
+    OPTION(RECOMPILE);
+
     /*
     The server-wide SUMMARY row is generated after the database cursor
     completes (see below), rolling up every DATABASE row so the top line
@@ -7369,7 +9043,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     irs.schema_name,
                     irs.table_name,
                     irs.index_name,
-                    irs.script_type
+                    irs.script_type,
+                    /* NULL on every row but the per-partition ones, which would otherwise collapse to one partition */
+                    irs.partition_number
                 ORDER BY
                     irs.result_type DESC
             ) AS rn
@@ -7461,7 +9137,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Then by database, schema, table, index name for consistent ordering */
         ir.schema_name,
         ir.table_name,
-        ir.index_name
+        ir.index_name,
+        ir.partition_number
     OPTION(RECOMPILE);
 
     /*
@@ -7520,7 +9197,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         x.avg_lock_wait_ms,
         x.latch_wait_count,
         x.daily_latch_waits_saved,
-        x.avg_latch_wait_ms
+        x.avg_latch_wait_ms,
+        x.usage_since,
+        x.usage_since_reason
     FROM
     (
         /* ===== SUMMARY LEVEL ===== */
@@ -7615,6 +9294,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             latch_wait_count = 'N/A',
             daily_latch_waits_saved = 'N/A',
             avg_latch_wait_ms = 'N/A',
+            usage_since = CONVERT(datetime2(0), NULL),
+            usage_since_reason = CONVERT(nvarchar(500), NULL),
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 0,
@@ -7737,6 +9418,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
                     ELSE '0'
                 END,
+            usage_since = irs.usage_since,
+            usage_since_reason = irs.usage_since_reason,
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 1,
@@ -7838,6 +9521,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 FORMAT(ISNULL(irs.user_lookups, 0), 'N0') +
                 ' lookups)',
             writes = FORMAT(ISNULL(irs.total_writes, 0), 'N0'),
+            /*
+            The per-day columns divide by the table's own database usage
+            window, the same window the Unused Index rule used, because the
+            usage and operational counters restart when a database is
+            restored or created. Server uptime is the fallback.
+            */
             daily_write_ops_saved =
                 CASE
                     WHEN ISNULL(irs.unused_indexes, 0) > 0
@@ -7854,7 +9543,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -7904,7 +9597,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -7959,7 +9656,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                          CONVERT
                                          (
                                              decimal(38,2),
-                                             @server_uptime_days
+                                             ISNULL
+                                             (
+                                                 d.usage_window_days,
+                                                 @server_uptime_days
+                                             )
                                          ),
                                          0
                                      ) *
@@ -7995,12 +9696,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
                     ELSE '0'
                 END,
+            usage_since = CONVERT(datetime2(0), NULL),
+            usage_since_reason = CONVERT(nvarchar(500), NULL),
             /* Hidden sort columns */
             sort_database = irs.database_name,
             sort_level = 2,
             sort_unused_size = ISNULL(irs.unused_size_gb, 0),
             sort_total_size = ISNULL(irs.total_size_gb, 0)
         FROM #index_reporting_stats AS irs
+        LEFT JOIN #databases AS d
+          ON d.database_name = irs.database_name
         WHERE irs.summary_level = 'TABLE'
     ) AS x
     ORDER BY
@@ -8091,82 +9796,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.filter_definition,
             ia.original_index_definition,
             fica.missing_included_columns,
-            /*
-            Rebuild the index with the filter columns appended to the INCLUDE
-            list, using DROP_EXISTING so the existing index is replaced in a
-            single statement. Pieces are reused from #index_analysis, so the
-            key columns, existing includes, and filter all match the original.
-            The WITH options and partition ON clause mirror the merge/create
-            scripts so this advice stays consistent with the rest of the tool.
-            */
-            create_index_script =
-                N'CREATE ' +
-                CASE
-                    WHEN ia.is_unique = 1
-                    THEN N'UNIQUE '
-                    ELSE N''
-                END +
-                N'NONCLUSTERED INDEX ' +
-                QUOTENAME(fica.index_name) +
-                N' ON ' +
-                QUOTENAME(fica.database_name) +
-                N'.' +
-                QUOTENAME(fica.schema_name) +
-                N'.' +
-                QUOTENAME(fica.table_name) +
-                N' (' +
-                ia.key_columns +
-                N') INCLUDE (' +
-                CASE
-                    WHEN ia.included_columns IS NOT NULL
-                    AND  LEN(ia.included_columns) > 0
-                    THEN ia.included_columns + N', ' + fica.missing_included_columns
-                    ELSE fica.missing_included_columns
-                END +
-                N')' +
-                CASE
-                    WHEN fica.filter_definition IS NOT NULL
-                    THEN N' WHERE ' + fica.filter_definition
-                    ELSE N''
-                END +
-                N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-                CASE
-                    WHEN @online = 1
-                    THEN N'ON'
-                    ELSE N'OFF'
-                END +
-                CASE
-                    WHEN ce.can_compress = 1
-                    THEN N', DATA_COMPRESSION = PAGE'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN @supports_optimize_for_sequential_key = 1
-                    AND EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.index_hash = ia.index_hash
-                        AND   id_ofsk.optimize_for_sequential_key = 1
-                    )
-                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
-                    ELSE N''
-                END +
-                N')' +
-                CASE
-                    WHEN ps.partition_function_name IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on) +
-                         N'(' +
-                         ISNULL(ps.partition_columns, N'') +
-                         N')'
-                    WHEN ps.built_on IS NOT NULL
-                    THEN N' ON ' +
-                         QUOTENAME(ps.built_on)
-                    ELSE N''
-                END +
-                N';',
+            /* Built inside the database loop, for the reason given there */
+            fica.create_index_script,
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
         JOIN #index_analysis AS ia
@@ -8174,24 +9805,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.schema_id = fica.schema_id
           AND ia.object_id = fica.object_id
           AND ia.index_id = fica.index_id
-        LEFT JOIN
-        (
-            /* One row per index carrying its storage/partition layout */
-            SELECT
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-            FROM #partition_stats AS ps
-            GROUP BY
-                ps.index_hash,
-                ps.built_on,
-                ps.partition_function_name,
-                ps.partition_columns
-        ) AS ps
-          ON ps.index_hash = ia.index_hash
-        LEFT JOIN #compression_eligibility AS ce
-          ON ce.index_hash = ia.index_hash
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,

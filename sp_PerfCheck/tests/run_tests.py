@@ -53,6 +53,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 
 
 # The Cost Threshold for Parallelism check (check_id 1004) fires when CTFP is
@@ -590,6 +591,72 @@ def DB_marker(server, password, db):
     return "YES" in out
 
 
+def wait_floor_tests(server, password, R):
+    """Wait finding 6001: a long average wait qualifies (and can rate High) only
+    when the wait type also has at least 60,000 ms of total wait time.
+
+    Real wait stats cannot be forced on a shared instance, so this builds a
+    scratch copy of the proc from the source file with sys.dm_os_wait_stats
+    (the #wait_stats feed) swapped for two fixed rows, both with an average
+    wait over 1 second: LCK_M_IS at 4 waits / 6,900 ms total (under the floor,
+    must not surface) and LCK_M_X at 40 waits / 80,000 ms (over it, High).
+    The uptime the proc divides by is pinned to 30 days in the scratch copy, so
+    only the long-average path decides. Unpinned, a container with minutes of
+    uptime lets the 6,900 ms row qualify through the share-of-uptime path (6.9 s
+    is over 10 percent of a minute), which is that path working as intended."""
+    grp = "WaitFloor[6001]"
+    name = "sp_PerfCheck_zz_waitfloor"
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sp_PerfCheck.sql")
+    with open(src, encoding="utf-8") as f:
+        text = f.read()
+    start = text.index("ALTER PROCEDURE")
+    body = text[start:].rstrip()
+    if body.endswith("GO"):
+        body = body[:-2]
+    feed = "FROM sys.dm_os_wait_stats AS dows"
+    fake = (
+        "FROM (VALUES (N'LCK_M_IS', 4, 6900, 6900, 0), (N'LCK_M_X', 40, 80000, 80000, 0))"
+        " AS dows (wait_type, waiting_tasks_count, wait_time_ms, max_wait_time_ms, signal_wait_time_ms)"
+    )
+    R.check(grp, "setup: wait feed found in source", body.count(feed) == 1, "feed not found once")
+    body = re.sub(r"ALTER PROCEDURE\s+dbo\.sp_PerfCheck(?![A-Za-z_])",
+                  "CREATE OR ALTER PROCEDURE dbo.%s" % name, body, count=1)
+    body = body.replace(feed, fake)
+    uptime = re.compile(r"@uptime_ms\s*=.*?FROM\s+sys\.dm_os_sys_info\s+AS\s+osi;", re.S)
+    R.check(grp, "setup: uptime source found in source", len(uptime.findall(body)) == 1,
+            "uptime select not found once")
+    body = uptime.sub(lambda _m: "@uptime_ms = CONVERT(bigint, 30) * 86400000;", body, count=1)
+    tmp = os.path.join(tempfile.mkdtemp(prefix="pc_waitfloor_"), "scratch.sql")
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("SET QUOTED_IDENTIFIER ON;\nGO\n" + body + "\nGO\n")
+    try:
+        cmd = _sqlcmd_prefix() + ["-S", server, "-U", "sa", "-P", password, "-d", "master", "-b", "-i", tmp]
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+        R.check(grp, "setup: scratch proc created", r.returncode == 0,
+                (r.stdout or b"").decode("utf-8", errors="replace")[:200])
+        out, err = _sqlcmd(server, password, "EXECUTE dbo.%s;" % name)
+        rows = parse_result_rows(out)
+        waits = [x for x in rows if x[0] == "6001"]
+        names = " ".join(x[6] for x in waits if len(x) > 6)
+        errors = find_sql_errors(out + chr(10) + err)
+        R.check(grp, "run: no severe SQL error", not errors, str(errors))
+        R.check(grp, "LCK_M_X (avg 2 s, 80 s total) surfaces as High",
+                any("LCK_M_X" in x[6] and x[1] == "20" for x in waits), names)
+        R.check(grp, "LCK_M_IS (avg 1.7 s, 6.9 s total) does not surface",
+                "LCK_M_IS" not in names, names)
+    finally:
+        _sqlcmd(server, password, "DROP PROCEDURE IF EXISTS dbo.%s;" % name, headers=False)
+        out, _ = _sqlcmd(server, password,
+                         "SELECT COUNT_BIG(*) FROM sys.objects AS o WHERE o.name = N'%s';" % name,
+                         headers=False)
+        R.check(grp, "cleanup: scratch proc dropped", out.strip().startswith("0"), out.strip()[:100])
+        try:
+            os.remove(tmp)
+            os.rmdir(os.path.dirname(tmp))
+        except OSError:
+            pass
+
+
 def preflight(server, password):
     """Confirm sp_PerfCheck is installed before running anything."""
     out, err = _sqlcmd(
@@ -625,6 +692,7 @@ def main():
     forced_condition_tests(args.server, args.password, R)
     database_scoped_tests(args.server, args.password, R)
     inaccessible_database_tests(args.server, args.password, R)
+    wait_floor_tests(args.server, args.password, R)
 
     for r in R.items:
         status = "PASS" if r["passed"] else "FAIL"

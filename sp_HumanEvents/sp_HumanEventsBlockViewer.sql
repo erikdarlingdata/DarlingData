@@ -63,7 +63,7 @@ ALTER PROCEDURE
     dbo.sp_HumanEventsBlockViewer
 (
     @session_name sysname = N'keeper_HumanEvents_blocking', /*Event session name*/
-    @target_type sysname = NULL, /*ring buffer, file, or table*/
+    @target_type sysname = NULL, /*ring_buffer, event_file, or table*/
     @start_date datetime2 = NULL, /*when to start looking for blocking*/
     @end_date datetime2 = NULL, /*when to stop looking for blocking*/
     @database_name sysname = NULL, /*target a specific database*/
@@ -94,8 +94,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.10',
-    @version_date = '20261001';
+    @version = '5.11',
+    @version_date = '20261101';
 
 IF @help = 1
 BEGIN
@@ -118,7 +118,7 @@ BEGIN
         description =
             CASE ap.name
                  WHEN N'@session_name' THEN 'name of the extended event session to pull from'
-                 WHEN N'@target_type' THEN 'target type of the extended event session (ring buffer, file) or ''table'' to read from a table'
+                 WHEN N'@target_type' THEN 'target type of the extended event session (ring_buffer, event_file) or ''table'' to read from a table; NULL detects it from the session'
                  WHEN N'@start_date' THEN 'filter by date'
                  WHEN N'@end_date' THEN 'filter by date'
                  WHEN N'@database_name' THEN 'filter by database name'
@@ -157,7 +157,7 @@ BEGIN
                  WHEN N'@log_database_name' THEN N'any valid database name'
                  WHEN N'@log_schema_name' THEN N'any valid schema name'
                  WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
-                 WHEN N'@log_retention_days' THEN N'a positive integer'
+                 WHEN N'@log_retention_days' THEN N'a positive integer, or 0 to keep logs indefinitely'
                  WHEN N'@max_blocking_events' THEN N'0 to 2147483647 (0 = unlimited)'
                  WHEN N'@skip_execution_plans' THEN N'0 or 1'
                  WHEN N'@help' THEN '0 or 1'
@@ -288,11 +288,13 @@ AND @session_name NOT LIKE N'system%health'
 /*
 Table-source mode reads blocked process report XML somebody already
 captured into a table, so the server's CURRENT threshold setting has
-no bearing on it. The exemption checks @target_table AND @target_column
-because table-mode routing guarantees both by the time any work
-happens: supplying either one auto-promotes @target_type to table mode
-further down, and a call with only one of the two routes to table mode
-and fails its parameter validation before any reading starts.
+no bearing on it. The exemption needs both @target_table and
+@target_column, because both are required to pass the table validation
+further down. It is only a threshold exemption: a call that supplies
+only one of the two is not exempt, so it meets this check first. When
+the threshold is set, it then reaches the promotion to table mode
+below (either parameter promotes unless the session is system_health)
+and fails that validation before any reading starts.
 */
 AND (@target_table IS NULL OR @target_column IS NULL)
 BEGIN
@@ -396,7 +398,8 @@ DECLARE
     @mdsql nvarchar(max) = N'',
     @actual_start_date datetime2(7),
     @actual_end_date datetime2(7),
-    @actual_event_count bigint;
+    @actual_event_count bigint,
+    @reports_read bigint;
 
 /*Use some sane defaults for input parameters*/
 IF @debug = 1
@@ -500,6 +503,46 @@ BEGIN
     FROM {table_check};
 END;';
 
+/*
+Normalize @target_type: trim first, so trailing spaces are not turned
+into underscores, then convert inner spaces. The parameter comment and
+help used to spell these "ring buffer" and "file", and those values
+matched no branch below, so the run read nothing and reported 0 total events without an
+error. Accept those spellings and reject anything else. NULL stays NULL
+and is auto-detected further down.
+*/
+SELECT
+    @target_type =
+        CASE LOWER(REPLACE(LTRIM(RTRIM(@target_type)), N' ', N'_'))
+            WHEN N'file'
+            THEN N'event_file'
+            WHEN N'ringbuffer'
+            THEN N'ring_buffer'
+            ELSE LOWER(REPLACE(LTRIM(RTRIM(@target_type)), N' ', N'_'))
+        END;
+
+IF @target_type NOT IN
+   (
+       N'event_file',
+       N'ring_buffer',
+       N'table'
+   )
+BEGIN
+    RAISERROR(N'@target_type must be event_file, ring_buffer, or table (or NULL to detect it from the session). You passed: %s', 11, 1, @target_type) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+A misspelled @database_name used to return an empty report with no hint
+why. It is a warning, not an error: reports keep the name of a database
+that has since been dropped, and filtering on that name is legitimate.
+*/
+IF  @database_name IS NOT NULL
+AND DB_ID(@database_name) IS NULL
+BEGIN
+    RAISERROR(N'Warning: there is no database named %s on this server. Only blocked process reports recorded under that name (for example, from a database that was dropped) will match.', 10, 1, @database_name) WITH NOWAIT;
+END;
+
 IF @debug = 1
 AND @is_system_health = 0
 BEGIN
@@ -547,11 +590,20 @@ SELECT
     @is_system_health_msg =
         CONVERT(nchar(1), @is_system_health);
 
-/*Change this here in case someone leave it NULL*/
+/*
+Change this here in case someone leave it NULL.
+Either table parameter promotes to table mode, so a call that names only
+one of them fails the table validation below. Requiring both here meant
+a lone @target_table or @target_column was ignored without a word and
+the XE session was read instead.
+*/
 IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL
 AND ISNULL(@target_schema, N'dbo') IS NOT NULL
-AND @target_table IS NOT NULL
-AND @target_column IS NOT NULL
+AND
+(
+     @target_table IS NOT NULL
+  OR @target_column IS NOT NULL
+)
 AND @is_system_health = 0
 BEGIN
     SET @target_type = N'table';
@@ -760,6 +812,8 @@ BEGIN
         @log_database_name = ISNULL(@log_database_name, DB_NAME()),
         /* Default schema name to dbo if not specified */
         @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+        /* An explicit NULL prefix walks past the length guard and QUOTENAME(NULL) silently no-ops every logging statement */
+        @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'HumanEventsBlockViewer'),
         @log_retention_days =
             CASE
                 WHEN @log_retention_days < 0
@@ -1689,7 +1743,9 @@ BEGIN
             WHEN b.activity = 'blocking'
             THEN -1
             ELSE +1
-        END
+        END,
+        b.spid,
+        b.ecid
     OPTION(RECOMPILE);
 
     /*
@@ -1777,21 +1833,26 @@ BEGIN
             deqs.total_elapsed_time / 1000.,
         avg_elapsed_time_ms =
             CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+        /* * 1.0 forces decimal division; bigint / integer truncates */
         executions_per_second =
             ISNULL
             (
-                deqs.execution_count /
-                    NULLIF
-                    (
-                        DATEDIFF
+                CONVERT
+                (
+                    decimal(38,2),
+                    deqs.execution_count * 1.0 /
+                        NULLIF
                         (
-                            SECOND,
-                            deqs.creation_time,
-                            NULLIF(deqs.last_execution_time, '19000101')
-                        ),
-                        0
-                    ),
-                    0
+                            DATEDIFF
+                            (
+                                SECOND,
+                                deqs.creation_time,
+                                NULLIF(deqs.last_execution_time, '19000101')
+                            ),
+                            0
+                        )
+                ),
+                0
             ),
         total_physical_reads_mb =
             deqs.total_physical_reads * 8. / 1024.,
@@ -2041,7 +2102,20 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    /*
+    The name the event recorded comes first: reports can be days old,
+    and by then the database may be dropped (DB_NAME returned NULL) or
+    its id reused by another database (DB_NAME returned the wrong
+    name). DB_NAME(0) returns the current database, so reports with
+    database_id 0 (parallel workers waiting on each other) were
+    attributed to the calling database; NULLIF leaves those NULL.
+    */
+    database_name =
+        COALESCE
+        (
+            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+        ),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -2174,7 +2248,20 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    /*
+    The name the event recorded comes first: reports can be days old,
+    and by then the database may be dropped (DB_NAME returned NULL) or
+    its id reused by another database (DB_NAME returned the wrong
+    name). DB_NAME(0) returns the current database, so reports with
+    database_id 0 (parallel workers waiting on each other) were
+    attributed to the calling database; NULLIF leaves those NULL.
+    */
+    database_name =
+        COALESCE
+        (
+            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
+            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+        ),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
@@ -3027,7 +3114,9 @@ ORDER BY
         WHEN b.activity = ''blocking''
         THEN -1
         ELSE +1
-    END
+    END,
+    b.spid,
+    b.ecid
 OPTION(RECOMPILE);';
 
 /* Handle table logging */
@@ -3134,8 +3223,15 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process[@spid = sql:column("b.spid") and @ecid = sql:column("b.ecid")]/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        /*
+        Every #blocks row holds the whole report, so each branch reads
+        only the frames of the process the row describes. Without this,
+        the blocked row's text was paired with the blocker's frames and
+        the blocking row's text with the victim's frames.
+        */
+        WHERE b.activity = 'blocking'
+        AND
         (
             (b.database_name = @database_name
                 OR @database_name IS NULL)
@@ -3165,7 +3261,8 @@ BEGIN
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE
+        WHERE b.activity = 'blocked'
+        AND
         (
             (b.database_name = @database_name
                 OR @database_name IS NULL)
@@ -3204,21 +3301,26 @@ BEGIN
             deqs.total_elapsed_time / 1000.,
         avg_elapsed_time_ms =
             CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
+        /* * 1.0 forces decimal division; bigint / integer truncates */
         executions_per_second =
             ISNULL
             (
-                deqs.execution_count /
-                    NULLIF
-                    (
-                        DATEDIFF
+                CONVERT
+                (
+                    decimal(38,2),
+                    deqs.execution_count * 1.0 /
+                        NULLIF
                         (
-                            SECOND,
-                            deqs.creation_time,
-                            NULLIF(deqs.last_execution_time, '19000101')
-                        ),
-                        0
-                    ),
-                    0
+                            DATEDIFF
+                            (
+                                SECOND,
+                                deqs.creation_time,
+                                NULLIF(deqs.last_execution_time, '19000101')
+                            ),
+                            0
+                        )
+                ),
+                0
             ),
         total_physical_reads_mb =
             deqs.total_physical_reads * 8. / 1024.,
@@ -3357,23 +3459,73 @@ BEGIN
 
     BlockingRollup:
 
-    /* Capture actual date range and event count from the data */
+    /*
+    Capture the actual date range and report count from what is shown.
+    #blocks has one 'blocked' row per blocked process report and per
+    blocking process, so a report with two simultaneous blockers has two
+    rows. Counting the rows overstated the header (2 reports printed as
+    3 total events) and could print "limited to most recent 2" next to
+    a count of 3. Count the distinct reports instead: a report is one
+    blocked process in one monitor pass at one event time. The old
+    count, COUNT_BIG(DISTINCT monitor_loop) over #blocked, counted
+    monitor passes (one pass can raise several reports) and was taken
+    before the @database_name and @object_name filters, so the header
+    counted reports the output did not show. The "limited to most
+    recent" note compares @max_blocking_events with the events read,
+    before any filter, because that is what the limit applies to.
+    #blocking_xml holds one row per event read, which is what the TOP
+    limits.
+    */
     SELECT
-        @actual_start_date = MIN(event_time),
-        @actual_end_date = MAX(event_time),
-        @actual_event_count = COUNT_BIG(DISTINCT monitor_loop)
-    FROM #blocked
-    WHERE event_time IS NOT NULL;
+        @actual_start_date = MIN(x.event_time),
+        @actual_end_date = MAX(x.event_time),
+        @actual_event_count = COUNT_BIG(*)
+    FROM
+    (
+        SELECT DISTINCT
+            b.event_time,
+            b.monitor_loop,
+            b.blocked_desc
+        FROM #blocks AS b
+        WHERE b.activity = 'blocked'
+        AND   b.event_time IS NOT NULL
+        AND  (b.contentious_object = @object_name
+              OR @object_name IS NULL)
+    ) AS x;
+
+    SELECT
+        @reports_read = COUNT_BIG(*)
+    FROM #blocking_xml AS bx;
 
     /*
     Use original dates if no data found. The originals are NULL when
     the caller relied on the default window, and a NULL here
     concatenated the entire header finding away on an empty capture —
-    so fall through to the always-populated defaulted dates.
+    so fall through to the always-populated defaulted dates. Those are
+    shifted to UTC for the XML filter, so shift them back to local time
+    to match the event times and the caller's own dates.
     */
     SELECT
-        @actual_start_date = ISNULL(@actual_start_date, ISNULL(@start_date_original, @start_date)),
-        @actual_end_date = ISNULL(@actual_end_date, ISNULL(@end_date_original, @end_date)),
+        @actual_start_date =
+            ISNULL
+            (
+                @actual_start_date,
+                ISNULL
+                (
+                    @start_date_original,
+                    DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), @start_date)
+                )
+            ),
+        @actual_end_date =
+            ISNULL
+            (
+                @actual_end_date,
+                ISNULL
+                (
+                    @end_date_original,
+                    DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), @end_date)
+                )
+            ),
         @actual_event_count = ISNULL(@actual_event_count, 0);
 
     IF @debug = 1
@@ -3408,7 +3560,7 @@ BEGIN
             N' total events' +
             CASE
                 WHEN @max_blocking_events > 0
-                AND  @actual_event_count >= @max_blocking_events
+                AND  @reports_read >= @max_blocking_events
                 THEN N', limited to most recent ' +
                      CONVERT(nvarchar(30), @max_blocking_events) +
                      N')'
@@ -4782,7 +4934,7 @@ BEGIN
                   14
               ) +
             N' [dd hh:mm:ss] of lock wait time in database ' +
-            b.database_name,
+            ISNULL(b.database_name, N'unknown'),
        sort_order =
            ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
     FROM b AS b

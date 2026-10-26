@@ -12,10 +12,10 @@ script at all -- the paired `DISABLE` still runs.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Runs `adversarial_test.sql`, parses the output, asserts 28 expectations across 12 rule groups. |
+| `run_tests.py` | Runs `adversarial_test.sql`, parses the output, asserts 58 expectations across 17 rule groups. |
 | `adversarial_test.sql` | Builds synthetic `test_ic_*` tables covering unique constraints, sort directions, filters, include merges, indexed views, heaps, and rule interactions. Self-cleaning. Driven by `run_tests.py`; run it directly only to eyeball output. |
 | `fixture_cases_test.py` | Drives `fixtures_more_dupe_indexes.sql` and asserts the `Expected:` comments in it -- cases 1 through 8d -- against the real `Users` table. **Also executes every generated MERGE/DISABLE script** inside a rolled-back transaction. ~2 minutes. |
-| `rule_coverage_test.py` | Small synthetic fixture in `Crap`. Covers unused-index detection (or the uptime guard, see below) and the `@min_reads`/`@min_writes` index-level screen. Fast. |
+| `rule_coverage_test.py` | Synthetic fixtures in `Crap`, `CrapA`, `CrapB` and the `ic_win_*` scratch databases (Group A-Window). Covers Rule 1 (or the uptime guard, see below) and the `@min_reads`/`@min_writes` screen. Also covers scripts that succeed but are wrong, the multi-database loop, script generation, compression and the per-database usage window. Fast. |
 | `no_access_test.py` | Creates a login with no user-database access and asserts the `HAS_DBACCESS` preflight returns instead of spinning at 100% CPU forever (PerformanceMonitor #915). Drops the login afterward. |
 
 ```
@@ -27,7 +27,9 @@ python no_access_test.py --server SQL2022
 ```
 
 All take `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `28`, `31`, `11`, and `4` passed.
+password). Expect `58`, `30`, `134`, and `4` passed. `rule_coverage_test.py`
+asserts `131` on a server up more than 7 days, where Group A checks Rule 1
+instead of the uptime guard (see below).
 
 ### The execute check is the one that earns its keep
 
@@ -62,6 +64,14 @@ long-uptime instance it asserts Rule 1 flags the unused index; on a fresh one it
 asserts the guard fired and suppressed it. It never silently skips, and it proves
 the index was analyzed and genuinely has zero reads first, so the absence of an
 `Unused Index` row means the guard, not an invisible index.
+
+The guard is per database as well as per server: a database restored or created 7
+days ago or less skips Rule 1 whatever the server uptime. Group `A-Window` covers
+that on any instance. It installs a scratch copy of the procedure
+(`sp_IndexCleanup_zz_window`) with the server start pinned 12 days back and each
+scratch database's `create_date` moved back, then builds `ic_win_*` databases,
+backs one up to the default backup directory and restores it under a new name and
+over an existing one. Everything it creates is dropped, backup file included.
 
 ### CI
 

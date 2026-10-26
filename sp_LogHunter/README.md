@@ -12,17 +12,21 @@ I created sp_LogHunter to search through your error logs for the important stuff
 
 It helps you give you a fuller, better picture of any bad stuff happening.
 
+## Requirements
+
+sp_LogHunter needs EXECUTE permission on `master.dbo.xp_readerrorlog`, or `rdsadmin.dbo.rds_read_error_log` if that procedure exists. It does not need sysadmin. To read archived error logs, the login must be a member of the securityadmin fixed server role. Without it, sp_LogHunter reads only the current error log and prints a message. It does not run on Azure SQL Database.
+
 ## Parameters
 
 |    parameter_name    | data_type |                  description                   |                                 valid_inputs                                 |   defaults   |
 |----------------------|-----------|------------------------------------------------|------------------------------------------------------------------------------|--------------|
-| @days_back           | integer   | how many days back you want to search the logs | an integer; will be converted to a negative number automatically             | -7           |
-| @start_date          | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
-| @end_date            | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
+| @days_back           | integer   | how many days back you want to search the logs. Not used when @start_date or @end_date is given | an integer. It is converted to a negative number automatically. 0 is treated as -1 | -7           |
+| @start_date          | datetime  | if you want to search a specific time frame    | a datetime value. Must not be later than @end_date                           | NULL         |
+| @end_date            | datetime  | if you want to search a specific time frame    | a datetime value. Must not be earlier than @start_date                       | NULL         |
 | @custom_message      | nvarchar  | if you want to search for a custom string      | something specific you want to search for. no wildcards or substitutions.      | NULL         |
-| @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1                                                                   | 0            |
+| @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1. NULL is treated as 0. 1 requires a non-empty @custom_message     | 0            |
 | @first_log_only      | bit       | only search through the first error log        | NULL, 0, 1                                                                   | 0            |
-| @language_id         | integer   | to use something other than English            | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id; | 1033         |
+| @language_id         | integer   | does not translate the search strings, which are English literals. Use @custom_message on non-English servers | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id. Any value other than 1033 only triggers a warning | 1033         |
 | @help                | bit       | how you got here                               | NULL, 0, 1                                                                   | 0            |
 | @debug               | bit       | dumps raw temp table contents                  | NULL, 0, 1                                                                   | 0            |
 | @version             | varchar   | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |

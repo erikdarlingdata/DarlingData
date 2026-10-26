@@ -1,7 +1,7 @@
 # sp_QuickieStore Tests
 
 **Run before and after any change to `sp_QuickieStore.sql`.** Compiling proves
-very little here: the procedure is ~16,000 lines that assemble a large dynamic
+very little here: the procedure is ~20,000 lines that assemble a large dynamic
 SQL statement whose *shape* changes with almost every one of its 60 parameters.
 The statement that breaks is built at run time from string fragments, so it only
 fails when it executes.
@@ -10,7 +10,10 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 227 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 251 assertions. |
+
+Install `sp_QuickieStore.sql` into `master` on the target server first. The
+script stops with an error if `dbo.sp_QuickieStore` is not there.
 
 ```
 cd sp_QuickieStore/tests
@@ -18,14 +21,16 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `227`.
+password). Expect `251`.
+
+To run only the multi-database group, add `--only multidb`.
 
 ## What it actually covers
 
 The matrix is the point. Every axis below rewrites the generated statement, and
 each run *executes* what it built:
 
-- **All 39 `@sort_order` values** — the highest-value axis. Each builds a
+- **38 `@sort_order` values** — the highest-value axis. Each builds a
   different `ORDER BY`, and the wait sorts additionally join
   `query_store_wait_stats`.
 - **9 `@wait_filter` values**, **4 `@execution_type_desc`**, **4 `@query_type`**.
@@ -38,6 +43,17 @@ each run *executes* what it built:
   detail rows, include keeps only it, a hash nobody has returns zero shapes),
   and a fixture procedure (`qs_sniff_proc`) skewed hard enough that the
   `parameter sensitive` signal must fire on a real conviction.
+- **`@find_high_impact`**: the default run, the absolute total columns, and
+  the hash-based include and ignore lists filtering bidirectionally.
+- **`@include_query_hash_totals`**: the `by_query_hash` columns are in the
+  output, and a date window with no queries returns no detail rows.
+- **Id lists**: ids separated by commas, spaces, or line breaks return the
+  same rows. A list of 380 plan ids is split without Msg 9400.
+- **Escape characters**: each escape character finds `qs_Case_Marker`, and the
+  underscore is not a wildcard.
+- **Multiple databases**: `@get_all_databases = 1` with `@expert_mode` against
+  two scratch databases whose Query Store ids collide. The output must have
+  the compilation stats row of every query.
 
 On top of that, **bidirectional** assertions prove the filters actually filter
 rather than being silently ignored — `@query_text_search` on a known string vs
@@ -99,12 +115,13 @@ The harness creates its own `quickiestore_test` database with Query Store on,
 runs a small varied workload (ad hoc queries at different costs plus a stored
 procedure, so `@query_type` has both kinds to separate), flushes Query Store, and
 drops the database in a `finally` block that runs even if assertions fail.
-Three smaller scratch databases get the same `finally` cleanup. The `@debug`
+Five smaller scratch databases get the same `finally` cleanup. The `@debug`
 check uses `quickiestore_test_empty`, which has Query Store on and no queries.
 The text search checks use `quickiestore_test_cs`, which is case sensitive.
 The regression and wait checks use `quickiestore_test_rm`, and the logging
-checks create their log tables there. Nothing outside these four databases is
-touched.
+checks create their log tables there. The multi-database checks use
+`quickiestore_test_md1` and `quickiestore_test_md2`, which have colliding
+Query Store ids. Nothing outside these six databases is touched.
 
 ## Known client limitation: `@debug = 1`
 
