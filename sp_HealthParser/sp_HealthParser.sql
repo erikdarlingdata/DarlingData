@@ -1979,13 +1979,16 @@ AND   ca.utc_timestamp < @end_date';
         /*
         The ring buffer target returns about 4 MB of XML at most, oldest
         events first, and marks the output truncated="1" when it had to
-        leave events out. The ones left out are the newest.
+        leave events out. The ones left out are the newest, so only warn
+        when the window (@end_date, already UTC) reaches past the newest
+        event that was returned.
         */
         SELECT
             @ring_buffer_events = x.x.value('(/RingBufferTarget/@eventCount)[1]', 'integer'),
             @ring_buffer_shown = x.x.value('count(/RingBufferTarget/event)', 'integer')
         FROM #x AS x
         WHERE x.x.exist('/RingBufferTarget[@truncated = "1"]') = 1
+        AND   x.x.exist('(/RingBufferTarget/event/@timestamp)[last()][. < sql:variable("@end_date")]') = 1
         OPTION(RECOMPILE);
 
         IF @ring_buffer_shown IS NOT NULL
@@ -2315,10 +2318,10 @@ AND   ca.utc_timestamp < @end_date';
         AND   w.x.exist('(action[@name="sql_text"]/value/text())') = 1
         AND   w.x.exist('(action[@name="sql_text"]/value/text()[contains(upper-case(.), "BACKUP")] )') = 0
         AND   w.x.exist('(data[@name="duration"]/value/text())[.>= sql:variable("@wait_duration_ms")]') = 1
+        /* Compare the wait type as a value, not one exist() per ignored wait */
         AND   NOT EXISTS
               (
                   SELECT
-        /* Compare the wait type as a value, not one exist() per ignored wait */
                       1/0
                   FROM #ignore_waits AS i
                   WHERE i.wait_type = w.x.value('(data[@name="wait_type"]/text/text())[1]', 'nvarchar(60)')
