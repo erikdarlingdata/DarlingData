@@ -6132,6 +6132,12 @@ The search runs once per text here. The repro builder below used it in a
 CROSS APPLY, and the optimizer copied it into every expression that used
 the PSP-free text, so each text was searched about six times under the
 column collation.
+
+Only a query that is a parameter sensitive plan variant, with a row in
+#query_store_query_variant, has the hint taken out. A query whose own text
+holds the characters PLAN PER VALUE( inside a string literal is left alone,
+and where sys.query_store_query_variant does not exist (before SQL Server
+2022) the table is empty and no text is changed.
 */
 INSERT
     #psp_hint_starts
@@ -6149,6 +6155,15 @@ SELECT
         LEN(N'PLAN PER VALUE(') + 2
 FROM #query_store_query_text AS qsqt
 WHERE CHARINDEX(N'PLAN PER VALUE(', qsqt.query_sql_text) > 0
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_query AS qsq
+          JOIN #query_store_query_variant AS qsqv
+            ON qsqv.query_variant_query_id = qsq.query_id
+          WHERE qsq.query_text_id = qsqt.query_text_id
+      )
 OPTION(RECOMPILE);
 
 /*
