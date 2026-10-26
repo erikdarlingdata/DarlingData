@@ -6147,7 +6147,9 @@ AND   ca.utc_timestamp < @end_date';
                         WHEN b.activity = ''blocking''
                         THEN -1
                         ELSE +1
-                    END
+                    END,
+                    b.spid,
+                    b.ecid
                 OPTION(RECOMPILE);
             ';
 
@@ -6239,9 +6241,7 @@ AND   ca.utc_timestamp < @end_date';
                         THEN 'no blocking found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only)
+                             RTRIM(CONVERT(date, @end_date))
                         ELSE 'no blocking found!'
                     END;
             END;

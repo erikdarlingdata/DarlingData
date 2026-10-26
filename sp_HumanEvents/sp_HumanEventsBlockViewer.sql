@@ -1743,7 +1743,9 @@ BEGIN
             WHEN b.activity = 'blocking'
             THEN -1
             ELSE +1
-        END
+        END,
+        b.spid,
+        b.ecid
     OPTION(RECOMPILE);
 
     /*
@@ -3112,7 +3114,9 @@ ORDER BY
         WHEN b.activity = ''blocking''
         THEN -1
         ELSE +1
-    END
+    END,
+    b.spid,
+    b.ecid
 OPTION(RECOMPILE);';
 
 /* Handle table logging */
