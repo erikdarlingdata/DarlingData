@@ -2297,6 +2297,7 @@ DECLARE
     @database_id integer,
     @database_name_quoted sysname,
     @procedure_name_quoted nvarchar(1024),
+    @procedure_filter nvarchar(500),
     @collation sysname,
     @text_search_column nvarchar(200),
     @text_search_open nvarchar(10),
@@ -2305,7 +2306,6 @@ DECLARE
     @sql nvarchar(max),
     @isolation_level nvarchar(max),
     @parameters nvarchar(4000),
-    @plans_top bigint,
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(max),
@@ -3829,8 +3829,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @work_end_utc time(0),
           @regression_baseline_start_date datetimeoffset(7),
           @regression_baseline_end_date datetimeoffset(7)',
-    @plans_top =
-        9223372036854775807,
     @queries_top =
         9223372036854775807,
     @nc10 = NCHAR(10),
@@ -5386,6 +5384,7 @@ BEGIN
     (
         query_hash binary(8) NOT NULL,
         query_id bigint NOT NULL,
+        query_text_id bigint NOT NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_id)
     );
@@ -5395,6 +5394,7 @@ BEGIN
     (
         query_hash binary(8) NOT NULL,
         plan_id bigint NOT NULL,
+        last_execution_time datetimeoffset(7) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, plan_id)
     );
@@ -5406,6 +5406,14 @@ BEGIN
         object_id integer NOT NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, object_id)
+    );
+
+    CREATE TABLE
+        #hi_plans
+    (
+        query_hash binary(8) NOT NULL
+            PRIMARY KEY CLUSTERED,
+        query_plan nvarchar(max) NULL
     );
 
     CREATE TABLE
@@ -5471,15 +5479,17 @@ BEGIN
     BEGIN
         SELECT
             @include_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
-                NCHAR(10), N' '), NCHAR(13), N' ');
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -5889,7 +5899,10 @@ OPTION(RECOMPILE);' + @nc10;
         WHERE igh.query_hash = qs.query_hash
     );
 
-    /*Step 2: Top N per metric (static SQL, temp tables only)*/
+    /*
+    Step 2: Top N per metric (static SQL, temp tables only).
+    query_hash breaks ties, so a rerun picks the same hashes at the cut.
+    */
     INSERT
         #hi_interesting WITH (TABLOCK)
     (
@@ -5909,7 +5922,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_cpu_ms DESC
+        ORDER BY qs.total_cpu_ms DESC, qs.query_hash
 
         UNION
 
@@ -5923,7 +5936,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_duration_ms DESC
+        ORDER BY qs.total_duration_ms DESC, qs.query_hash
 
         UNION
 
@@ -5937,7 +5950,22 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_physical_reads_mb DESC
+        ORDER BY qs.total_physical_reads_mb DESC, qs.query_hash
+
+        UNION
+
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        WHERE qs.total_writes_mb > 0
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #hi_eligible AS e
+            WHERE e.query_hash = qs.query_hash
+        )
+        ORDER BY qs.total_writes_mb DESC, qs.query_hash
 
         UNION
 
@@ -5951,7 +5979,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_writes_mb DESC
+        ORDER BY qs.total_memory_mb DESC, qs.query_hash
 
         UNION
 
@@ -5965,21 +5993,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_memory_mb DESC
-
-        UNION
-
-        SELECT TOP (@top)
-            qs.query_hash
-        FROM #hi_query_stats AS qs
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #hi_eligible AS e
-            WHERE e.query_hash = qs.query_hash
-        )
-        ORDER BY qs.total_executions DESC
+        ORDER BY qs.total_executions DESC, qs.query_hash
 
         UNION
 
@@ -5994,7 +6008,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_tempdb_mb DESC
+        ORDER BY qs.total_tempdb_mb DESC, qs.query_hash
 
         UNION
 
@@ -6009,7 +6023,7 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #hi_eligible AS e
             WHERE e.query_hash = qs.query_hash
         )
-        ORDER BY qs.total_rows DESC
+        ORDER BY qs.total_rows DESC, qs.query_hash
     ) AS qs;
 
     /*Step 3: Score with PERCENT_RANK (static SQL, SELECT INTO)*/
@@ -6109,7 +6123,8 @@ OPTION(RECOMPILE);' + @nc10;
         @sql += N'
 SELECT DISTINCT
     qsq.query_hash,
-    qsq.query_id
+    qsq.query_id,
+    qsq.query_text_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN #hi_interesting AS i
     ON qsq.query_hash = i.query_hash
@@ -6125,7 +6140,8 @@ OPTION(RECOMPILE);' + @nc10;
         #hi_id_staging_queries WITH (TABLOCK)
     (
         query_hash,
-        query_id
+        query_id,
+        query_text_id
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -6147,7 +6163,14 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 3c: Representative query text per query_hash*/
+    /*
+    Step 3c: Representative query text per query_hash.
+    query_text_id comes from the staging table, so this does not read
+    sys.query_store_query again. The hash join reads each view once:
+    nested loops read the in-memory part of the plan and query views
+    again for every staged row, about 14 ms each, 10 seconds in all
+    on a Query Store with 16,000 queries.
+    */
     SELECT
         @current_table = 'inserting #hi_representative_text',
         @sql = @isolation_level;
@@ -6172,16 +6195,14 @@ FROM
 (
     SELECT
         sq.query_hash,
-        qsq.query_text_id,
+        sq.query_text_id,
         rn =
             ROW_NUMBER() OVER
             (
                 PARTITION BY sq.query_hash
-                ORDER BY SUM(qsrs.count_executions) DESC
+                ORDER BY SUM(qsrs.count_executions) DESC, sq.query_text_id
             )
     FROM #hi_id_staging_queries AS sq
-    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-        ON qsq.query_id = sq.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
         ON qsp.query_id = sq.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
@@ -6194,12 +6215,12 @@ FROM
     SELECT
         @sql += N'    GROUP BY
         sq.query_hash,
-        qsq.query_text_id
+        sq.query_text_id
 ) AS ranked
 JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     ON qsqt.query_text_id = ranked.query_text_id
 WHERE ranked.rn = 1
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -6263,6 +6284,10 @@ OPTION(RECOMPILE);' + @nc10;
     DATEPART(WEEKDAY, ...) IN (1, 7) only meant Sat+Sun under @@DATEFIRST = 7;
     on a DATEFIRST = 1 server it mislabeled Monday as Weekend and Saturday as
     a weekday. The SELECT and GROUP BY expressions below must stay identical.
+
+    The hash join reads sys.query_store_plan once. With a small @top or
+    a short window, nested loops read its in-memory part again for every
+    staged query, about 14 ms each.
     */
     SELECT
         @sql += N'
@@ -6324,7 +6349,7 @@ GROUP BY
             THEN N''Business''
         ELSE N''Off-hours''
     END
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -6445,7 +6470,7 @@ SELECT
         ROW_NUMBER() OVER
         (
             PARTITION BY qsq.query_hash
-            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC, qsws.wait_category_desc
         )
 FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -6524,7 +6549,7 @@ OPTION(RECOMPILE);' + @nc10;
                         WHERE ws2.query_hash = ws.query_hash
                         AND   ws2.rn <= 3
                         ORDER BY
-                            ws2.total_wait_ms DESC
+                            ws2.rn
                         FOR
                             XML PATH(N''),
                             TYPE
@@ -6549,7 +6574,8 @@ OPTION(RECOMPILE);' + @nc10;
         @sql += N'
 SELECT DISTINCT
     qsq.query_hash,
-    qsp.plan_id
+    qsp.plan_id,
+    qsp.last_execution_time
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     ON qsq.query_id = qsp.query_id
@@ -6567,7 +6593,8 @@ OPTION(RECOMPILE);' + @nc10;
         #hi_id_staging_plans WITH (TABLOCK)
     (
         query_hash,
-        plan_id
+        plan_id,
+        last_execution_time
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -7428,7 +7455,95 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 7: Final output with plans (dynamic SQL for OUTER APPLY)*/
+    /*
+    Step 6b: The latest plan per output query hash, read in one pass.
+    The latest plan_id comes from the staging table, so only the
+    picked plans are read and decompressed. An apply per output row in
+    the final select sorted every staged plan of the hash with its
+    plan text to find the latest one, and could read the in-memory
+    part of sys.query_store_plan again for every row. The final select
+    cannot take OPTION(HASH JOIN) because of its query_sql_text subquery.
+    */
+    SELECT
+        @current_table = 'inserting #hi_plans',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    lp.query_hash,
+    qsp.query_plan
+FROM
+(
+    SELECT
+        sp.query_hash,
+        sp.plan_id,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    sp.query_hash
+                ORDER BY
+                    sp.last_execution_time DESC,
+                    sp.plan_id DESC
+            )
+    FROM #hi_id_staging_plans AS sp
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #hi_output AS o
+        WHERE o.query_hash = sp.query_hash
+    )
+) AS lp
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = lp.plan_id
+WHERE lp.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_plans WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 7: Final output with plans*/
     SELECT
         @current_table = 'selecting high impact results',
         @sql = @isolation_level;
@@ -7516,31 +7631,8 @@ SELECT
     o.volatile_metrics,
     o.resource_metrics
 FROM #hi_output AS o
-OUTER APPLY
-(
-    SELECT
-        qp0.*
-    FROM
-    (
-        SELECT
-            n = ROW_NUMBER() OVER
-                (
-                    ORDER BY
-                        qsp.last_execution_time DESC
-                ),
-            qsp.query_plan
-        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #hi_id_staging_plans AS sp
-            WHERE qsp.plan_id = sp.plan_id
-            AND   o.query_hash = sp.query_hash
-        )
-    ) AS qp0
-    WHERE qp0.n = 1
-) AS qp
+LEFT JOIN #hi_plans AS qp
+  ON qp.query_hash = o.query_hash
 ' +
     CASE
         WHEN @primary_window IS NULL
@@ -7562,7 +7654,8 @@ OUTER APPLY
         WHEN 'memory'         THEN N'o.memory_share'
         WHEN 'executions'     THEN N'o.executions_share'
         ELSE N'o.cpu_share'
-    END + N' DESC
+    END + N' DESC,
+    o.query_hash
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -7701,6 +7794,8 @@ BEGIN
         query_plan_hash binary(8) NOT NULL,
         query_id bigint NOT NULL,
         plan_id bigint NOT NULL,
+        query_text_id bigint NOT NULL,
+        last_execution_time datetimeoffset(7) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash, query_id, plan_id)
     );
@@ -7712,6 +7807,16 @@ BEGIN
         query_plan_hash binary(8) NOT NULL,
         query_sql_text nvarchar(max) NULL,
         rn bigint NOT NULL,
+        PRIMARY KEY CLUSTERED
+            (query_hash, query_plan_hash)
+    );
+
+    CREATE TABLE
+        #ps_plans
+    (
+        query_hash binary(8) NOT NULL,
+        query_plan_hash binary(8) NOT NULL,
+        query_plan nvarchar(max) NULL,
         PRIMARY KEY CLUSTERED
             (query_hash, query_plan_hash)
     );
@@ -7850,25 +7955,29 @@ BEGIN
     BEGIN
         SELECT
             @include_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_query_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @include_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@include_plan_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
                 NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' '),
             @ignore_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@ignore_plan_hashes)),
                 CHAR(10), N' '), CHAR(13), N' '),
-                NCHAR(10), N' '), NCHAR(13), N' ');
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         IF @include_query_hashes IS NOT NULL
         BEGIN
@@ -8565,7 +8674,9 @@ SELECT DISTINCT
     qsq.query_hash,
     qsp.query_plan_hash,
     qsp.query_id,
-    qsp.plan_id
+    qsp.plan_id,
+    qsq.query_text_id,
+    qsp.last_execution_time
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     ON qsq.query_id = qsp.query_id
@@ -8596,7 +8707,9 @@ OPTION(RECOMPILE);' + @nc10;
         query_hash,
         query_plan_hash,
         query_id,
-        plan_id
+        plan_id,
+        query_text_id,
+        last_execution_time
     )
     EXECUTE sys.sp_executesql
         @sql;
@@ -8618,7 +8731,12 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 4b: Representative query text per shape (the most-executed query_id in the window)*/
+    /*
+    Step 4b: Representative query text per shape (the most-executed query_id in the window).
+    query_text_id comes from the staging table, so this does not read
+    sys.query_store_query, whose in-memory part nested loops read again
+    for every staged row, about 14 ms each.
+    */
     SELECT
         @current_table = 'inserting #ps_representative_text',
         @sql = @isolation_level;
@@ -8645,7 +8763,7 @@ FROM
     SELECT
         s.query_hash,
         s.query_plan_hash,
-        qsq.query_text_id,
+        s.query_text_id,
         rn =
             ROW_NUMBER() OVER
             (
@@ -8653,11 +8771,10 @@ FROM
                     s.query_hash,
                     s.query_plan_hash
                 ORDER BY
-                    SUM(qsrs.count_executions) DESC
+                    SUM(qsrs.count_executions) DESC,
+                    s.query_text_id
             )
     FROM #ps_id_staging AS s
-    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-        ON qsq.query_id = s.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
         ON qsrs.plan_id = s.plan_id
     WHERE EXISTS
@@ -8671,7 +8788,7 @@ FROM
     GROUP BY
         s.query_hash,
         s.query_plan_hash,
-        qsq.query_text_id
+        s.query_text_id
 ) AS ranked
 JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     ON qsqt.query_text_id = ranked.query_text_id
@@ -8781,7 +8898,8 @@ SELECT
                 s.query_hash,
                 s.query_plan_hash
             ORDER BY
-                SUM(qsws.total_query_wait_time_ms) DESC
+                SUM(qsws.total_query_wait_time_ms) DESC,
+                qsws.wait_category_desc
         )
 FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 JOIN #ps_id_staging AS s
@@ -8860,7 +8978,7 @@ OPTION(RECOMPILE);' + @nc10;
                         AND   ws2.query_plan_hash = ws.query_plan_hash
                         AND   ws2.rn <= 3
                         ORDER BY
-                            ws2.total_wait_ms DESC
+                            ws2.rn
                         FOR
                             XML PATH(N''),
                             TYPE
@@ -9429,7 +9547,99 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    /*Step 7: Final output with plans (dynamic SQL for OUTER APPLY)*/
+    /*
+    Step 6b: The latest plan per output shape, read in one pass.
+    The latest plan_id comes from the staging table, so only the
+    picked plans are read and decompressed. An apply per output row in
+    the final select read the in-memory part of sys.query_store_plan
+    again for every row, about 14 ms each, and the final select cannot
+    take OPTION(HASH JOIN) because of its query_sql_text subquery.
+    */
+    SELECT
+        @current_table = 'inserting #ps_plans',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    lp.query_hash,
+    lp.query_plan_hash,
+    qsp.query_plan
+FROM
+(
+    SELECT
+        s.query_hash,
+        s.query_plan_hash,
+        s.plan_id,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    s.query_hash,
+                    s.query_plan_hash
+                ORDER BY
+                    s.last_execution_time DESC,
+                    s.plan_id DESC
+            )
+    FROM #ps_id_staging AS s
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #ps_output AS o
+        WHERE o.query_hash = s.query_hash
+        AND   o.query_plan_hash = s.query_plan_hash
+    )
+) AS lp
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = lp.plan_id
+WHERE lp.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #ps_plans WITH (TABLOCK)
+    (
+        query_hash,
+        query_plan_hash,
+        query_plan
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 7: Final output with plans*/
     SELECT
         @current_table = 'selecting parameter sensitivity results',
         @sql = @isolation_level;
@@ -9522,32 +9732,9 @@ SELECT
         END + N',
     o.variance_metrics
 FROM #ps_output AS o
-OUTER APPLY
-(
-    SELECT
-        qp0.*
-    FROM
-    (
-        SELECT
-            n = ROW_NUMBER() OVER
-                (
-                    ORDER BY
-                        qsp.last_execution_time DESC
-                ),
-            qsp.query_plan
-        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-        WHERE EXISTS
-        (
-            SELECT
-                1/0
-            FROM #ps_id_staging AS s
-            WHERE qsp.plan_id = s.plan_id
-            AND   o.query_hash = s.query_hash
-            AND   o.query_plan_hash = s.query_plan_hash
-        )
-    ) AS qp0
-    WHERE qp0.n = 1
-) AS qp
+LEFT JOIN #ps_plans AS qp
+  ON  qp.query_hash = o.query_hash
+  AND qp.query_plan_hash = o.query_plan_hash
 ORDER BY
     o.sort_value DESC,
     o.query_hash,
@@ -9759,56 +9946,54 @@ BEGIN
     Parameter Sensitive Plan variants are queries of their own, with
     object_id 0. Their runtime stats are on the variant plans, so
     the variants of the procedure's queries come along here.
+
+    The variants are a second branch of a UNION ALL rather than an
+    apply per query, so the hash join can read sys.query_store_plan
+    once. Nested loops read its in-memory part again for every query
+    of the procedure, about 14 ms each.
     */
+    SELECT
+        @procedure_filter =
+            CASE
+                WHEN CHARINDEX(N'%', @procedure_name) = 0
+                THEN N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)'
+                ELSE N'EXISTS
+    (
+         SELECT
+             1/0
+        FROM #procedure_object_ids AS poi
+        WHERE poi.[object_id] = qsq.[object_id]
+    )'
+            END;
+
     SELECT
         @sql += N'
 SELECT DISTINCT
     qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq' +
-    CASE
-        WHEN @sql_2022_views = 1
-        THEN N'
-CROSS APPLY
+FROM
 (
     SELECT
         query_id = qsq.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE ' + @procedure_filter +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
 
     UNION ALL
 
     SELECT
         query_id = qsqv.query_variant_query_id
-    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
-    WHERE qsqv.parent_query_id = qsq.query_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+      ON qsqv.parent_query_id = qsq.query_id
+    WHERE ' + @procedure_filter
+        ELSE N''
+    END + N'
 ) AS q
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-  ON qsp.query_id = q.query_id'
-        ELSE N'
-JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-   ON qsq.query_id = qsp.query_id'
-    END + N'
-WHERE ';
-
-IF CHARINDEX(N'%', @procedure_name) = 0
-BEGIN
-    SELECT
-        @sql += N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)';
-END;
-
-IF CHARINDEX(N'%', @procedure_name) > 0
-BEGIN
-    SELECT
-        @sql += N'EXISTS
-(
-     SELECT
-         1/0
-    FROM #procedure_object_ids AS poi
-    WHERE poi.[object_id] = qsq.[object_id]
-)';
-END;
-
-    SELECT
-        @sql += N'
-OPTION(RECOMPILE);' + @nc10;
+  ON qsp.query_id = q.query_id
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -9878,7 +10063,11 @@ BEGIN
 
     /*
     Parameter Sensitive Plan variants have object_id 0, so they
-    take the object_id of their parent query
+    take the object_id of their parent query.
+
+    The hash join reads each view once. Nested loops read the
+    in-memory part of sys.query_store_plan again for every module
+    query, about 14 ms each.
     */
     SELECT
         @sql += N'
@@ -9904,7 +10093,7 @@ CASE
     ELSE N'<> 0'
 END
 + N'
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -10002,10 +10191,11 @@ BEGIN
         /* Clean parameter value */
         SELECT
             @param_value =
-                REPLACE(REPLACE(REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                 LTRIM(RTRIM(@param_value)),
                 CHAR(10), N' '), CHAR(13), N' '),
-                NCHAR(10), N' '), NCHAR(13), N' ');
+                NCHAR(10), N' '), NCHAR(13), N' '),
+                NCHAR(9), N' ');
 
         /* Log current operation if debugging */
         IF @debug = 1
@@ -10103,7 +10293,12 @@ BEGIN
             SELECT
                 @current_table = 'inserting #include_plan_ids for ' + @param_name;
 
-            /* Build appropriate SQL based on parameter type */
+            /*
+            Build appropriate SQL based on parameter type.
+            The hash joins read each Query Store view once. Nested loops
+            read the in-memory part of a view again for every id in the
+            list, about 14 ms each.
+            */
             IF @param_name = 'include_query_ids'
             OR @param_name = 'ignore_query_ids'
             BEGIN
@@ -10126,7 +10321,7 @@ BEGIN
                               N'_query_ids AS iqi
                           WHERE iqi.query_id = qsp.query_id
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -10159,7 +10354,7 @@ BEGIN
                                     WHERE iqh.query_hash = qsq.query_hash
                                 )
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -10184,7 +10379,7 @@ BEGIN
                               END + N'_plan_hashes AS iph
                           WHERE iph.plan_hash = qsp.query_plan_hash
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
             ELSE
 
@@ -10223,7 +10418,7 @@ BEGIN
                                         )
                               )
                       )
-                OPTION(RECOMPILE);' + @nc10;
+                OPTION(RECOMPILE, HASH JOIN);' + @nc10;
             END;
 
             /* Process secondary sql if defined */
@@ -11129,6 +11324,12 @@ collation on upper-cased text, the same way the text search does.
 Nine NOT LIKEs on every query text under the column's linguistic
 collation took most of the run time of a default run on a big
 Query Store.
+
+The patterns that only look at the start of the text test the
+first 40 characters, which is not a max type. Every LIKE against
+the upper-cased nvarchar(max) text costs about as much as the
+upper-casing itself, so only the two patterns that can match past
+the start of the text look at all of it.
 */
 SELECT
     @sql += N'
@@ -11142,18 +11343,22 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 CROSS APPLY
 (
     SELECT
-        query_sql_text_upper =
-            UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2
+        query_sql_text_start =
+            UPPER(CONVERT(nvarchar(40), qsqt.query_sql_text)) COLLATE Latin1_General_100_BIN2
 ) AS u
-WHERE u.query_sql_text_upper LIKE N''ALTER INDEX%''
-OR    u.query_sql_text_upper LIKE N''ALTER TABLE%''
-OR    u.query_sql_text_upper LIKE N''CREATE%INDEX%''
-OR    u.query_sql_text_upper LIKE N''CREATE STATISTICS%''
-OR    u.query_sql_text_upper LIKE N''UPDATE STATISTICS%''
-OR    u.query_sql_text_upper LIKE N''%SELECT STATMAN%''
-OR    u.query_sql_text_upper LIKE N''DBCC%''
-OR    u.query_sql_text_upper LIKE N''(@[_]MSPARAM%''
-OR    u.query_sql_text_upper LIKE N''WAITFOR%''
+WHERE u.query_sql_text_start LIKE N''ALTER INDEX%''
+OR    u.query_sql_text_start LIKE N''ALTER TABLE%''
+OR    u.query_sql_text_start LIKE N''CREATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''UPDATE STATISTICS%''
+OR    u.query_sql_text_start LIKE N''DBCC%''
+OR    u.query_sql_text_start LIKE N''(@[_]MSPARAM%''
+OR    u.query_sql_text_start LIKE N''WAITFOR%''
+OR
+(
+      u.query_sql_text_start LIKE N''CREATE%''
+  AND UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''CREATE%INDEX%''
+)
+OR    UPPER(qsqt.query_sql_text) COLLATE Latin1_General_100_BIN2 LIKE N''%SELECT STATMAN%''
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -11218,6 +11423,11 @@ This is similar to the sort-helping tables that you are
 about to see, but easier because we do not need to return or sort
 by the execution count.
 We just need to know that these plans have enough executions.
+
+The rows are summed per plan first, so the window sum per query
+runs over one row per plan instead of one row per interval, and
+query_id comes from sys.query_store_plan, which has it, instead of
+a join to sys.query_store_query.
 */
 IF @execution_count > 0
 BEGIN
@@ -11237,26 +11447,27 @@ BEGIN
 
     SELECT
         @sql += N'
-    SELECT DISTINCT
+    SELECT
         unfiltered_execution_counts.plan_id
     FROM
     (
        SELECT
            qsp.plan_id,
            total_executions_for_query_of_plan =
-               SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_id)
-       FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-       JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-         ON qsq.query_id = qsp.query_id
+               SUM(SUM(qsrs.count_executions)) OVER (PARTITION BY qsp.query_id)
+       FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
        JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
          ON qsp.plan_id = qsrs.plan_id
        WHERE 1 = 1
        ' + @where_clause
          + N'
+       GROUP BY
+           qsp.query_id,
+           qsp.plan_id
     ) AS unfiltered_execution_counts
     WHERE
         unfiltered_execution_counts.total_executions_for_query_of_plan >= @execution_count
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -11571,7 +11782,11 @@ BEGIN
 
     /*
     Counts that show why each of those query hashes has so many plans,
-    over every plan of the query hash that ran in the window
+    over every plan of the query hash that ran in the window.
+    The hash join reads each view once. With few query hashes, nested
+    loops read the in-memory parts of sys.query_store_query and
+    sys.query_store_plan again for every query of the hashes, and a
+    literal-text hash can have thousands of queries.
     */
     SELECT
         @current_table = 'updating #plan_ids_with_query_hashes plan counts',
@@ -11779,7 +11994,7 @@ BEGIN
     ) AS counts
       ON counts.query_hash = hashes.query_hash
     WHERE hashes.database_id = @database_id
-    OPTION(RECOMPILE);' + @nc10;
+    OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -11972,7 +12187,8 @@ OR
             ELSE ''Yes''
         END
     ORDER BY
-        SUM(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
@@ -12130,7 +12346,8 @@ BEGIN
             ELSE ''Yes''
         END
     ORDER BY
-        SUM(qsws.total_query_wait_time_ms) DESC
+        SUM(qsws.total_query_wait_time_ms) DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @regression_mode = 1
@@ -12580,7 +12797,8 @@ BEGIN
                    WHEN 'magnitude' THEN N'ABS(change_since_regression_time_period)'
                    WHEN 'absolute' THEN N'ABS(change_since_regression_time_period)'
               END
-            + N' DESC
+            + N' DESC,
+            compared_stats.query_hash
     ) AS hashes_with_changes
     JOIN
     (
@@ -12770,7 +12988,9 @@ BEGIN
         THEN N')'
         ELSE N' * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
     END +
-    N' DESC
+    /* plan_id breaks ties, so a rerun keeps the same plans at the cut */
+    N' DESC,
+        qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END;
 
@@ -13444,6 +13664,11 @@ END;
 In regression mode, #query_store_runtime_stats has a row per plan
 and time period, so take each plan once. Duplicate plan rows here
 multiply every row in the tables built from this one.
+
+plan_id is unique in sys.query_store_plan, so this is a plain join.
+The hash join reads the view once: an apply per plan read the
+in-memory part of the view again for every plan, about 14 ms each
+on a Query Store with 17,000 plans.
 */
 SELECT
     @sql += N'
@@ -13454,17 +13679,10 @@ FROM
     FROM #query_store_runtime_stats AS qsrs
     WHERE qsrs.database_id = @database_id
 ) AS qsrs
-CROSS APPLY
-(
-    SELECT TOP (@plans_top)
-        qsp.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    WHERE qsp.plan_id = qsrs.plan_id
-    AND   qsp.is_online_index_plan = 0
-    ORDER BY
-        qsp.last_execution_time DESC
-) AS qsp
-OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+  ON qsp.plan_id = qsrs.plan_id
+WHERE qsp.is_online_index_plan = 0
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -13507,9 +13725,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@plans_top bigint,
-    @database_id int',
-    @plans_top,
+  N'@database_id int',
     @database_id;
 
 IF @troubleshoot_performance = 1
@@ -13652,7 +13868,12 @@ END;
 
 /*
 Parameter Sensitive Plan variants have object_id 0, so they show
-the object of their parent query instead of Adhoc
+the object of their parent query instead of Adhoc.
+
+Joins instead of an apply and a subquery per query, so the hash
+join reads each view once. Per query, nested loops read the
+in-memory part of sys.query_store_query again, about 14 ms each
+on a Query Store with 16,000 queries.
 */
 SELECT
     @sql += N'
@@ -13667,14 +13888,7 @@ SELECT
     object_id =
         ISNULL
         (
-            (
-                SELECT TOP (1)
-                    qsq_parent.object_id
-                FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
-                JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
-                  ON qsq_parent.query_id = qsqv.parent_query_id
-                WHERE qsqv.query_variant_query_id = qsq.query_id
-            ),
+            qsqv.parent_object_id,
             qsq.object_id
         ),'
         ELSE N'
@@ -13707,24 +13921,49 @@ SELECT
     qsq.is_clouddb_internal_query
 FROM
 (
-    /*
-    A query with more than one plan would otherwise get a row per plan
-    */
-    SELECT DISTINCT
-        qsp.query_id
-    FROM #query_store_plan AS qsp
-    WHERE qsp.database_id = @database_id
-) AS qsp
-CROSS APPLY
+    SELECT
+        qsq.*,
+        n =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id
+                ORDER BY
+                    qsq.last_execution_time DESC
+            )
+    FROM
+    (
+        /*
+        A query with more than one plan would otherwise get a row per plan
+        */
+        SELECT DISTINCT
+            qsp.query_id
+        FROM #query_store_plan AS qsp
+        WHERE qsp.database_id = @database_id
+    ) AS qsp
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+      ON qsq.query_id = qsp.query_id
+) AS qsq' +
+    CASE
+        WHEN @sql_2022_views = 1
+        THEN N'
+LEFT JOIN
 (
-    SELECT TOP (1)
-        qsq.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    WHERE qsq.query_id = qsp.query_id
-    ORDER BY
-        qsq.last_execution_time DESC
-) AS qsq
-OPTION(RECOMPILE);' + @nc10;
+    SELECT
+        qsqv.query_variant_query_id,
+        parent_object_id =
+            MAX(qsq_parent.object_id)
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq_parent
+      ON qsq_parent.query_id = qsqv.parent_query_id
+    GROUP BY
+        qsqv.query_variant_query_id
+) AS qsqv
+  ON qsqv.query_variant_query_id = qsq.query_id'
+        ELSE N''
+    END + N'
+WHERE qsq.n = 1
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
 IF @debug = 1
 BEGIN
@@ -13807,6 +14046,10 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    The hash join reads sys.query_store_query once. Nested loops read
+    its in-memory part again for every matching query, about 14 ms each.
+    */
     SELECT
         @sql += N'
     SELECT
@@ -13857,7 +14100,7 @@ BEGIN
     AND qsrs.last_execution_time < @end_date
     GROUP BY
         qsq.query_hash
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, HASH JOIN);
 ';
 
     IF @debug = 1
@@ -14017,6 +14260,9 @@ END; /*End getting query text*/
 /*
 Here we try to get some data from the "plan cache"
 that isn't available in Query Store :(
+
+The hash join reads sys.dm_exec_query_stats once. With few query
+texts, nested loops read the whole plan cache again for every text.
 */
 SELECT
     @sql = N'',
@@ -14156,7 +14402,7 @@ FROM
 ) AS deqs_with_lasts
 GROUP BY
     deqs_with_lasts.statement_sql_handle
-OPTION(RECOMPILE);
+OPTION(RECOMPILE, HASH JOIN);
 
 SELECT
     @rc = ROWCOUNT_BIG();
@@ -14941,6 +15187,10 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
+    /*
+    The hash join reads the in-memory part of the view once. Nested
+    loops read it again for every feedback row, about 14 ms each.
+    */
     SELECT
         @sql += N'
 SELECT
@@ -14961,7 +15211,7 @@ WHERE EXISTS
           WHERE qspf.plan_id = qsp.plan_id
           AND   qsp.database_id = @database_id
       )
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -15806,7 +16056,8 @@ SELECT
                        GROUP BY
                            qsws.wait_category_desc
                        ORDER BY
-                           SUM(qsws.avg_query_wait_time_ms) DESC
+                           SUM(qsws.avg_query_wait_time_ms) DESC,
+                           qsws.wait_category_desc
                        FOR XML
                            PATH(''''),
                            TYPE
@@ -15965,7 +16216,10 @@ ORDER BY
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
              END END
     END
-             + N' DESC
+             /* database_name and plan_id break ties, so a rerun returns the same order */
+             + N' DESC,
+    x.database_name,
+    x.plan_id
 OPTION(RECOMPILE);' + @nc10
     );
 
@@ -16091,7 +16345,9 @@ BEGIN
                         qspf.last_updated_time
                 FROM #query_store_plan_feedback AS qspf
                 ORDER BY
-                    qspf.plan_id
+                    qspf.plan_id,
+                    qspf.plan_feedback_id,
+                    qspf.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -16175,7 +16431,9 @@ BEGIN
                     qsqh.source_desc
                 FROM #query_store_query_hints AS qsqh
                 ORDER BY
-                    qsqh.query_id
+                    qsqh.query_id,
+                    qsqh.query_hint_id,
+                    qsqh.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -16245,7 +16503,9 @@ BEGIN
                     qsqv.dispatcher_plan_id
                 FROM #query_store_query_variant AS qsqv
                 ORDER BY
-                    qsqv.parent_query_id
+                    qsqv.parent_query_id,
+                    qsqv.query_variant_query_id,
+                    qsqv.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -17933,8 +18193,6 @@ BEGIN
             @isolation_level,
         parameters =
             @parameters,
-        plans_top =
-            @plans_top,
         queries_top =
             @queries_top,
         nc10 =
@@ -19590,6 +19848,29 @@ BEGIN
                 result =
                     '#hi_output is empty';
         END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #hi_plans AS hp
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#hi_plans',
+                hp.*
+            FROM #hi_plans AS hp
+            ORDER BY
+                hp.query_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#hi_plans is empty';
+        END;
     END;
 
     IF  @find_parameter_sensitive = 1
@@ -19881,6 +20162,30 @@ BEGIN
             SELECT
                 result =
                     '#ps_output is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #ps_plans AS pp
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#ps_plans',
+                pp.*
+            FROM #ps_plans AS pp
+            ORDER BY
+                pp.query_hash,
+                pp.query_plan_hash
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#ps_plans is empty';
         END;
     END;
 
