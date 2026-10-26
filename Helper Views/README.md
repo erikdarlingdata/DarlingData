@@ -41,7 +41,8 @@ A table-valued function that provides information about locks taken by specific 
 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
-| @spid | integer | NULL | Session ID to examine. If NULL, returns information for all sessions |
+| @spid | integer | none | Session ID to examine. Pass NULL to return information for all sessions |
+| @outsider | bit | 'false' | Applies only when @spid is not NULL. If 'false', returns only the locks that belong to the current request and transaction of the calling session. If 'true', also returns locks for @spid from other requests and transactions |
 
 **Functionality**:
 - Displays session ID and blocking session ID information

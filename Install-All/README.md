@@ -26,6 +26,8 @@ The DarlingData.sql file includes all of the following stored procedures:
 | [sp_LogHunter](../sp_LogHunter) | Searches SQL Server error logs for important messages | [Link](../sp_LogHunter) |
 | [sp_PerfCheck](../sp_PerfCheck) | Comprehensive SQL Server performance health check | [Link](../sp_PerfCheck) |
 | [sp_PressureDetector](../sp_PressureDetector) | Detects CPU and memory pressure in SQL Server | [Link](../sp_PressureDetector) |
+| [sp_QueryReproBuilder](../sp_QueryReproBuilder) | Generates executable reproduction scripts from Query Store data | [Link](../sp_QueryReproBuilder) |
+| [sp_QuickieCache](../sp_QuickieCache) | High-impact query detection from the plan cache using Pareto analysis | [Link](../sp_QuickieCache) |
 | [sp_QuickieStore](../sp_QuickieStore) | Fast and configurable way to navigate Query Store data | [Link](../sp_QuickieStore) |
 
 ## Usage
@@ -48,7 +50,7 @@ If you want to generate a fresh copy of the DarlingData.sql file:
 
 The script will:
 1. Find all sp_* directories
-2. Skip sp_WhoIsActive directories
+2. Skip sp_WhoIsActive and sp_QueryStoreCleanup directories
 3. Get all sp_* files (skipping agent job files)
 4. Combine them into a single file
 5. Add a compile date header

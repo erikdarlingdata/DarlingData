@@ -278,8 +278,8 @@ jobs:
         run: |
           python3 sp_LogHunter/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
 
-      # sp_QuickieStore is ~16k lines of dynamic SQL whose shape changes with
-      # almost every parameter, so this is a parameter matrix: all 39 sort
+      # sp_QuickieStore is ~20k lines of dynamic SQL whose shape changes with
+      # almost every parameter, so this is a parameter matrix: the 38 tested sort
       # orders, the wait filters, execution types, query types and the
       # expert/format grid, each of which executes the statement it just built.
       # It creates and drops its own Query Store scratch database.
