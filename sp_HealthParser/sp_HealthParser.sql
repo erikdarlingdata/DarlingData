@@ -2318,9 +2318,10 @@ AND   ca.utc_timestamp < @end_date';
         AND   NOT EXISTS
               (
                   SELECT
+        /* Compare the wait type as a value, not one exist() per ignored wait */
                       1/0
                   FROM #ignore_waits AS i
-                  WHERE w.x.exist('(data[@name="wait_type"]/text/text())[1][.= sql:column("i.wait_type")]') = 1
+                  WHERE i.wait_type = w.x.value('(data[@name="wait_type"]/text/text())[1]', 'nvarchar(60)')
               )
         OPTION(RECOMPILE, MAXDOP 1);
 
