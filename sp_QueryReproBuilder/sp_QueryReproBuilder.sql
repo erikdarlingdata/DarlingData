@@ -55,8 +55,8 @@ ALTER PROCEDURE
     dbo.sp_QueryReproBuilder
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
-    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
-    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @include_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
     @include_query_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
     @include_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to search for*/
@@ -117,8 +117,8 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
-                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
-                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
+                WHEN N'@start_date' THEN 'the begin date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
                 WHEN N'@include_query_ids' THEN 'a list of query ids to search for'
                 WHEN N'@include_query_hashes' THEN 'a list of query hashes to search for'

@@ -26,7 +26,7 @@ the large surface it therefore does not cover.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Drives `dbo.sp_PerfCheck` over `sqlcmd`, parses the two result sets, and asserts **39** expectations across four groups: 11 structural/smoke, 12 forced server-configuration, 11 forced database-configuration, 5 inaccessible-database regression. Self-cleaning and idempotent. |
+| `run_tests.py` | Drives `dbo.sp_PerfCheck` over `sqlcmd`, parses the two result sets, and asserts **46** expectations across five groups: 11 structural/smoke, 12 forced server-configuration, 11 forced database-configuration, 5 inaccessible-database regression, 7 wait-floor (6001). Self-cleaning and idempotent. |
 
 ```
 cd sp_PerfCheck/tests
@@ -34,7 +34,7 @@ python run_tests.py --server SQL2022
 ```
 
 `--server` and `--password` default to `SQL2022` / the standard local `sa`
-password. Expect `39 passed, 0 failed`. The proc must be installed in `master`
+password. Expect `46 passed, 0 failed`. The proc must be installed in `master`
 on the target instance (there is a preflight that fails fast if it is not).
 
 ### What it covers
@@ -107,6 +107,15 @@ idempotent (it drops any leaked copy first).
 **whole-instance run with the offline database present**, all complete without a
 severe error. See the section below for what this is guarding.
 
+**5. Wait floor (7).** Real wait statistics cannot be forced on a shared
+instance. The harness builds a scratch copy of the proc
+(`dbo.sp_PerfCheck_zz_waitfloor` in `master`, dropped afterwards) from
+`sp_PerfCheck.sql`. In the copy, two fixed rows replace `sys.dm_os_wait_stats`,
+and the uptime is pinned to 30 days. The harness asserts that `LCK_M_X` (80
+seconds of total wait time) surfaces as High. It also asserts that `LCK_M_IS`
+(6.9 seconds of total wait time) does not surface. Both rows have an average
+wait over 1 second, so only the 6001 total-wait floor decides the result.
+
 ### Why the forced-condition assertions are trusted
 
 Every forced-condition assertion was watched fail-to-fire at the non-triggering
@@ -139,7 +148,8 @@ would flake run-to-run):**
   dialed to a threshold on demand
 - Everything in the **Wait Statistics** (`6001`), **CPU Scheduling**
   (`6101`, `6102`), and **Memory Usage** (`6002`, `6003`) categories --
-  cumulative since restart, uncontrollable
+  cumulative since restart, uncontrollable. The one exception is the `6001`
+  total-wait floor, which group 5 covers with fixed wait rows
 - The default-trace findings (`5001` slow auto-grow, `5002` auto-shrink events,
   `5003` disruptive DBCC) -- these read events that already happened, and
   `5000` / `5004` fire only when the trace cannot be read at all

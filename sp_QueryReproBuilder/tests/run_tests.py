@@ -23,11 +23,12 @@ database. Plans reference sys objects (always present); the one case that needs
 a real user table uses a small fixture the harness creates in tempdb and drops.
 
 The exceptions are the procname: family, which covers @procedure_name
-resolution (including three-part MyDb.dbo.MyProc pastes), and the waitwindow:
-case, which checks that wait stats cover the whole search window. Both read
-Query Store in a real database, which no synthetic plan can exercise, so they
-build and drop scratch databases of their own. See run_procname_cases and
-run_wait_window_cases.
+resolution (including three-part MyDb.dbo.MyProc pastes), the waitwindow:
+case, which checks that wait stats cover the whole search window, and the psp:
+cases, which check that @procedure_name finds Parameter Sensitive Plan variants
+(SQL Server 2022 and later). All read Query Store in a real database, which no
+synthetic plan can exercise, so they build and drop scratch databases of their
+own. See run_procname_cases, run_wait_window_cases and run_psp_cases.
 
 The authentic ParameterCompiledValue serializations used below (e.g. numeric as
 (12.50), money as ($99.9500), datetimeoffset as '... +05:30', guid as

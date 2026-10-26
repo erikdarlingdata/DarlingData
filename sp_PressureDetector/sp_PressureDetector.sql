@@ -143,7 +143,7 @@ BEGIN
                 WHEN N'@log_database_name' THEN N'any valid database name'
                 WHEN N'@log_schema_name' THEN N'any valid schema name'
                 WHEN N'@log_table_name_prefix' THEN N'any valid identifier, 112 characters or fewer'
-                WHEN N'@log_retention_days' THEN N'a positive integer'
+                WHEN N'@log_retention_days' THEN N'a positive integer, or 0 to keep logs indefinitely'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@troubleshoot_blocking' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'

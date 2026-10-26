@@ -32,6 +32,20 @@
     - [sp_IndexCleanup](#index-cleanup): Identify unused and duplicate indexes
     - [sp_QueryStoreCleanup](#query-store-cleanup): Remove duplicate and noisy queries from Query Store
 
+## Installing
+To install every procedure in the list above except sp_QueryStoreCleanup, run [Install-All/DarlingData.sql](Install-All/DarlingData.sql). To install one procedure, run the .sql file in its folder. sp_QueryStoreCleanup is not in the bundle because it removes queries from Query Store. Install it from its own folder.
+
+## Utility scripts
+These folders each have their own README:
+ - [Clear Token Perm](Clear%20Token%20Perm): Monitor and clear the security token cache
+ - [Export-SqlResults](Export-SqlResults): Run a query and export every result set to CSV
+ - [Helper Views](Helper%20Views): Views and functions for diagnosing performance issues
+ - [Ola Stats Only Job](Ola%20Stats%20Only%20Job): Agent job for nightly statistics updates with Ola Hallengren's solution
+ - [ProtectSession](ProtectSession): Keep a session alive when it is blocked on lock waits
+ - [sp_WhoIsActive Logging](sp_WhoIsActive%20Logging): Log sp_WhoIsActive output to tables
+ - [String Functions](String%20Functions): Functions that extract or remove characters from strings
+ - [TestBackupPerformance](TestBackupPerformance): Test backup settings to find the fastest combination
+
 ## Who are these scripts for?
 You need to troubleshoot performance problems with SQL Server, and you need to do it now. 
 
@@ -68,6 +82,8 @@ All you need to do is hit F5 to get information about:
  * Thread count and current usage 
  * Any current THREADPOOL waits (best observed with the DAC)
  * Currently executing queries, along with other execution details
+ * Blocking chains with lead blockers (@troubleshoot_blocking = 1)
+ * Optional logging to permanent tables (@log_to_table = 1)
 
 For a video walkthrough of the script and the results, [head over here](https://www.erikdarling.com/sp_pressuredetector/).
 
@@ -79,14 +95,14 @@ Current valid parameter details:
 | @skip_queries              | bit       | if you want to skip looking at running queries                                 | 0 or 1                                               | 0            |
 | @skip_plan_xml             | bit       | if you want to skip getting plan XML                                           | 0 or 1                                               | 0            |
 | @minimum_disk_latency_ms   | smallint  | low bound for reporting disk latency                                           | a reasonable number of milliseconds for disk latency | 100          |
-| @cpu_utilization_threshold | smallint  | low bound for reporting high cpu utlization                                    | a reasonable cpu utlization percentage               | 50           |
+| @cpu_utilization_threshold | smallint  | low bound for reporting high cpu utilization                                    | a reasonable cpu utilization percentage               | 50           |
 | @skip_waits                | bit       | skips waits when you do not need them on every run                             | 0 or 1                                               | 0            |
 | @skip_perfmon              | bit       | skips perfmon counters when you do not need them on every run                  | 0 or 1                                               | 0            |
 | @sample_seconds            | tinyint   | take a sample of your server's metrics                                         | a valid tinyint: 0-255                               | 0            |
-| @log_to_table              | bit       | enable logging to permanent tables instead of returning results                | 0 or 1                                               | 0            |
+| @log_to_table              | bit       | enable logging to permanent tables instead of returning results. Ignores @what_to_check, @sample_seconds and the @skip_* parameters, and logs all CPU utilization (treats @cpu_utilization_threshold as 0) | 0 or 1                                               | 0            |
 | @log_database_name         | sysname   | database to store logging tables                                               | valid database name                                  | NULL (current database) |
 | @log_schema_name           | sysname   | schema to store logging tables                                                 | valid schema name                                    | NULL (dbo)   |
-| @log_table_name_prefix     | sysname   | prefix for all logging tables                                                  | valid table name prefix                               | 'PressureDetector' |
+| @log_table_name_prefix     | sysname   | prefix for all logging tables                                                  | any valid identifier, 112 characters or fewer        | 'PressureDetector' |
 | @log_retention_days        | integer   | Number of days to keep logs, 0 = keep indefinitely                             | integer                                              | 30           |
 | @troubleshoot_blocking       | bit       | show blocking chains instead of pressure analysis                              | 0 or 1                                               | 0            |
 | @help                      | bit       | how you got here                                                               | 0 or 1                                               | 0            |
@@ -104,14 +120,16 @@ Extended Events are hard. You don't know which ones to use, when to use them, or
 
 This procedure is designed to make them easier for you, by creating event sessions to help you troubleshoot common scenarios:
  * Blocking: blocked process report
- * Query performance: query execution metrics an actual execution plans
+ * Query performance: query execution metrics and actual execution plans
  * Compiles: catch query compilations
  * Recompiles: catch query recompilations
  * Wait Stats: server wait stats, broken down by query and database
 
-The default behavior is to run a session for a set period of time to capture information, but you can also set sessions up to data to permanent tables.
+The default behavior is to run a session for a set period of time to capture information, but you can also set sessions up to log data to permanent tables.
 
-For execution examples, see here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_HumanEvents/Examples.sql)
+Requires SQL Server 2012 SP4 or newer (the query_hash_signed action must exist). The blocking event needs the blocked process threshold option set.
+
+For execution examples, run it with @help = 1.
 
 If you set up sessions to capture long term data, you'll need an agent job set up to poll them. You can find an example of that here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_HumanEvents/sp_Human%20Events%20Agent%20Job%20Example.sql)
 
@@ -128,7 +146,7 @@ Current valid parameter details:
 | @query_duration_ms     | decimal  | (>=) used to set a minimum query duration (milliseconds) to collect data for; 0 removes the floor and collects every duration | a decimal; fractional milliseconds allowed (e.g. 0.5 = 500 microseconds), 0 captures all durations | 500 (ms)                                        |
 | @query_sort_order      | nvarchar | when you use the "query" event, lets you choose which metrics to sort results by             | "cpu", "reads", "writes", "duration", "memory", or "spills" (any of which you can prefix with "avg" to sort by averages, e.g. "avg cpu"), or "event_time" | "cpu"                                           |
 | @skip_plans            | bit      | when you use the "query" event, lets you skip collecting actual execution plans              |1 or 0                                                                                                               | 0                                               |
-| @keep_prepare_rpc      | bit      | when you use the "query" event, adds a result set of the prepared-statement RPC calls (sp_prepare, sp_prepexec, sp_execute, sp_unprepare) that are normally filtered out; shows whether a driver is preparing and reusing statements, e.g. pyodbc's fast_executemany | 1 or 0 | 0                                               |
+| @keep_prepare_rpc      | bit      | when you use the "query" event, adds a result set of the prepared-statement RPC calls (sp_prepare, sp_prepexec, sp_execute, sp_unprepare, anything matching sp_cursor%, and sp_describe_undeclared_parameters) that are normally filtered out. Lower @query_duration_ms (to 0 or a fractional value) to get rows back. Shows whether a driver is preparing and reusing statements, e.g. pyodbc's fast_executemany | 1 or 0 | 0                                               |
 | @blocking_duration_ms  | integer  | (>=) used to set a minimum blocking duration to collect data for                             | an integer                                                                                                          | 500 (ms)                                        |
 | @wait_type             | nvarchar | (inclusive) filter to only specific wait types                                               | a single wait type, or a CSV list of wait types                                                                     | "all", which uses a list of "interesting" waits |
 | @wait_duration_ms      | integer  | (>=) used to set a minimum time per wait to collect data for                                 | an integer                                                                                                          | 10 (ms)                                         |
@@ -138,7 +156,7 @@ Current valid parameter details:
 | @session_id            | nvarchar | (inclusive) filter to only a specific session id, or a sample of session ids                 | an integer, or "sample" to sample a workload                                                                        | intentionally left blank                        |
 | @sample_divisor        | integer  | the divisor for session ids when sampling a workload, e.g. SPID % 5                          | an integer                                                                                                          | 5                                               |
 | @username              | sysname  | (inclusive) filter to only a specific user                                                   | a stringy thing                                                                                                     | intentionally left blank                        |
-| @object_name           | sysname  | (inclusive) to only filter to a specific object name                                         | a stringy thing                                                                                                     | intentionally left blank                        |
+| @object_name           | sysname  | (inclusive) to only filter to a specific object name. With the blocking event, also pass @database_name | a stringy thing                                                                                                     | intentionally left blank                        |
 | @object_schema         | sysname  | (inclusive) the schema of the object you want to filter to; only needed with blocking events | a stringy thing                                                                                                     | dbo                                             |
 | @requested_memory_mb   | integer  | (>=) the memory grant a query must ask for to have data collected                            | an integer                                                                                                          | 0                                               |
 | @seconds_sample        | tinyint  | the duration in seconds to run the event session for                                         | an integer                                                                                                          | 10                                              |
@@ -207,6 +225,8 @@ ON SERVER
     STATE = START;
 ```
 
+The setup session above does not work in Azure SQL Database as written. There, create it ON DATABASE instead of ON SERVER, with a ring_buffer target.
+
 Once it has data collected, you can analyze it using this command:
 
 ```
@@ -220,21 +240,21 @@ Current valid parameter details:
 | parameter_name        | data_type |                   description                   |                              valid_inputs                              |              defaults              |
 |-----------------------|-----------|-------------------------------------------------|------------------------------------------------------------------------|------------------------------------|
 | @session_name         | sysname   | name of the extended event session to pull from | extended event session name capturing sqlserver.blocked_process_report, system_health also works | keeper_HumanEvents_blocking        |
-| @target_type          | sysname   | target type of the extended event session (ring buffer, file) or 'table' to read from a table | event_file or ring_buffer or table                                     | NULL                               |
+| @target_type          | sysname   | target type of the extended event session (ring_buffer, event_file) or 'table' to read from a table. NULL detects it from the session | event_file or ring_buffer or table                                     | NULL                               |
 | @start_date           | datetime2 | filter by date                                  | a reasonable date                                                      | NULL; will shortcut to last 7 days |
 | @end_date             | datetime2 | filter by date                                  | a reasonable date                                                      | NULL                               |
-| @database_name        | sysname   | filter by database name                         | a database that exists on this server                                  | NULL                               |
+| @database_name        | sysname   | filter by database name                         | a database name. A name not on this server gives a warning and matches only reports recorded under that name                                  | NULL                               |
 | @object_name          | sysname   | filter by table name                            | a schema-prefixed table name                                           | NULL                               |
 | @target_database      | sysname   | database containing the table with BPR data     | a valid database name                                                  | NULL                               |
-| @target_schema        | sysname   | schema of the table                             | a valid schema name                                                    | NULL                               |
-| @target_table         | sysname   | table name                                      | a valid table name                                                     | NULL                               |
-| @target_column        | sysname   | column containing XML data                      | an XML column containing blocked process report data                   | NULL                               |
+| @target_schema        | sysname   | schema of the table containing blocked process report data                             | a schema in the target database                                                    | NULL                               |
+| @target_table         | sysname   | table containing blocked process report data                                      | a table in the target schema                                                     | NULL                               |
+| @target_column        | sysname   | column containing blocked process report XML                      | an XML column containing blocked process report data                   | NULL                               |
 | @timestamp_column     | sysname   | column containing UTC timestamp for filtering (optional). MUST be stored in UTC — @start_date and @end_date are shifted to UTC internally to match the XML @timestamp attribute, and the same UTC-shifted values are used for this column filter. A column in local time will be filtered against the wrong window. | a datetime / datetime2 / datetimeoffset column storing UTC timestamps  | NULL                               |
 | @log_to_table         | bit       | enable logging to permanent tables instead of returning results | 0 or 1                                                                 | 0                                  |
 | @log_database_name    | sysname   | database to store logging tables                | a valid database name                                                  | NULL (current database)            |
 | @log_schema_name      | sysname   | schema to store logging tables                  | a valid schema name                                                    | NULL (dbo)                         |
 | @log_table_name_prefix| sysname   | prefix for all logging tables                   | a valid table name prefix                                              | 'HumanEventsBlockViewer'           |
-| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a valid integer                                                    | 30                                 |
+| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a positive integer, or 0 to keep logs indefinitely                                                | 30                                 |
 | @max_blocking_events  | integer   | maximum blocking events to analyze, 0 = unlimited  | 0 to 2147483647 (0 = unlimited)                                    | 5000                               |
 | @skip_execution_plans | bit       | skip gathering and returning the execution plans result set and jump straight to the findings rollup | 0 or 1                                                             | 0                                  |
 | @help                 | bit       | how you got here                                | 0 or 1                                                                 | 0                                  |
@@ -280,9 +300,9 @@ Current valid parameter details:
 |-----------------------------------------|----------------|---------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------|
 | @database_name                          | sysname        | the name of the database you want to look at query store in                                                                                       | a database name with query store enabled                                                                                                                                                                                                                                                                                                                          | NULL; current database name if NULL                                       |
 | @sort_order                             | varchar        | the runtime metric you want to prioritize results by                                                                                              | cpu, logical reads, physical reads, writes, duration, memory, log, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits, rows, total cpu, total logical reads, total physical reads, total writes, total duration, total memory, total log, total tempdb, total rows (avg/average prefix also accepted, e.g. avg cpu, average duration) | cpu                                                                       |
-| @top                                    | bigint         | the number of queries you want to pull back                                                                                                       | a positive integer between 1 and 9,223,372,036,854,775,807                                                                                                                                                                                                                                                                                                        | 10                                                                        |
-| @start_date                             | datetimeoffset | the begin date of your search, will be converted to UTC internally                                                                                | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | the last seven days                                                       |
-| @end_date                               | datetimeoffset | the end date of your search, will be converted to UTC internally                                                                                  | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | NULL                                                                      |
+| @top                                    | bigint         | the number of queries you want to pull back                                                                                                       | 0 or a positive integer up to 9,223,372,036,854,775,807                                                                                                                                                                                                                                                                                                           | 10                                                                        |
+| @start_date                             | datetimeoffset | the begin date of your search. No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally.     | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | the last seven days                                                       |
+| @end_date                               | datetimeoffset | the end date of your search. No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally.       | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | NULL                                                                      |
 | @timezone                               | sysname        | user specified time zone to override dates displayed in results                                                                                   | SELECT tzi.* FROM sys.time_zone_info AS tzi;                                                                                                                                                                                                                                                                                                                      | NULL                                                                      |
 | @execution_count                        | bigint         | the minimum number of executions a query must have                                                                                                | a positive integer between 1 and 9,223,372,036,854,775,807                                                                                                                                                                                                                                                                                                        | NULL                                                                      |
 | @duration_ms                            | bigint         | the minimum duration a query must have to show up in results                                                                                      | a positive integer between 1 and 9,223,372,036,854,775,807                                                                                                                                                                                                                                                                                                        | NULL                                                                      |
@@ -299,9 +319,9 @@ Current valid parameter details:
 | @ignore_query_hashes                    | nvarchar       | a list of query hashes to ignore                                                                                                                  | a string; comma separated for multiple hashes                                                                                                                                                                                                                                                                                                                     | NULL                                                                      |
 | @ignore_plan_hashes                     | nvarchar       | a list of query plan hashes to ignore                                                                                                             | a string; comma separated for multiple hashes                                                                                                                                                                                                                                                                                                                     | NULL                                                                      |
 | @ignore_sql_handles                     | nvarchar       | a list of sql handles to ignore                                                                                                                   | a string; comma separated for multiple handles                                                                                                                                                                                                                                                                                                                    | NULL                                                                      |
-| @query_text_search                      | nvarchar       | query text to search for                                                                                                                          | a string; leading and trailing wildcards will be added if missing                                                                                                                                                                                                                                                                                                 | NULL                                                                      |
-| @query_text_search_not                  | nvarchar       | query text to exclude                                                                                                                             | a string; leading and trailing wildcards will be added if missing                                                                                                                                                                                                                                                                                                 | NULL                                                                      |
-| @escape_brackets                        | bit            | Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)                     | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
+| @query_text_search                      | nvarchar       | query text to search for. Matched with LIKE, so _ % [ ] are treated as wildcards unless you set @escape_brackets = 1                              | a string; leading and trailing wildcards will be added if missing                                                                                                                                                                                                                                                                                                 | NULL                                                                      |
+| @query_text_search_not                  | nvarchar       | query text to exclude. Matched with LIKE, so _ % [ ] are treated as wildcards unless you set @escape_brackets = 1                                 | a string; leading and trailing wildcards will be added if missing                                                                                                                                                                                                                                                                                                 | NULL                                                                      |
+| @escape_brackets                        | bit            | Set this bit to 1 to treat [, ], and _ as literals (not LIKE wildcards) in @query_text_search and @query_text_search_not. Helpful for .NET Entity Framework and other ORM query text. Percent (%) stays a wildcard. | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @escape_character                       | nchar          | Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character                                    | some escape character, SQL standard is backslash (\)                                                                                                                                                                                                                                                                                                              | \                                                                         |
 | @only_queries_with_hints                | bit            | only return queries with query hints                                                                                                              | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @only_queries_with_feedback             | bit            | only return queries with query feedback                                                                                                           | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
@@ -319,14 +339,14 @@ Current valid parameter details:
 | @workdays                               | bit            | use this to filter out weekends and after-hours queries                                                                                           | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @work_start                             | time           | use this to set a specific start of your work days                                                                                                | a time like 8am, 9am or something                                                                                                                                                                                                                                                                                                                                 | 9am                                                                       |
 | @work_end                               | time           | use this to set a specific end of your work days                                                                                                  | a time like 5pm, 6pm or something                                                                                                                                                                                                                                                                                                                                 | 5pm                                                                       |
-| @regression_baseline_start_date         | datetimeoffset | the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally                        | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | NULL                                                                      |
-| @regression_baseline_end_date           | datetimeoffset | the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally                          | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | NULL; One week after @regression_baseline_start_date if that is specified |
+| @regression_baseline_start_date         | datetimeoffset | the begin date of the baseline that you are checking for regressions against (if any). No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally. Required if you set any other @regression_ parameter. Cannot be used with @sort_order 'recent' or 'plan count by hashes'. | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | NULL                                                                      |
+| @regression_baseline_end_date           | datetimeoffset | the end date of the baseline that you are checking for regressions against (if any). No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally. | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | NULL; One week after @regression_baseline_start_date if that is specified |
 | @regression_comparator                  | varchar        | what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with any regression time period. | relative, absolute                                                                                                                                                                                                                                                                                                                                                | NULL; absolute if @regression_baseline_start_date is specified            |
 | @regression_direction                   | varchar        | when comparing against any regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?                 | regressed, worse, improved, better, magnitude, absolute, whatever                                                                                                                                                                                                                                                                                                 | NULL; regressed if @regression_baseline_start_date is specified           |
-| @include_query_hash_totals             | bit            | will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
-| @find_high_impact                      | bit            | finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
-| @primary_window                        | nvarchar       | with @find_high_impact, restricts results to queries whose majority activity is in this window (business, off-hours, or weekend) | business, off-hours, or weekend (any unambiguous prefix works: b, biz, off, overnight, w, wknd, etc.)                                                                                                                                                                                                                                                             | NULL                                                                      |
-| @find_parameter_sensitive              | bit            | finds plan shapes whose runtime metrics swing wildly across executions of the same plan: classic parameter sensitivity | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
+| @include_query_hash_totals             | bit            | will add additional columns to final output with total resource usage by query hash within the requested date window, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
+| @find_high_impact                      | bit            | finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions. Cannot be combined with @get_all_databases, @log_to_table, or @find_parameter_sensitive. | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
+| @primary_window                        | nvarchar       | with @find_high_impact, restricts results to queries whose majority activity is in this window (business, off-hours, or weekend). Requires @find_high_impact = 1. | business, off-hours, or weekend (any unambiguous prefix works: b, biz, off, overnight, w, wknd, etc.)                                                                                                                                                                                                                                                             | NULL                                                                      |
+| @find_parameter_sensitive              | bit            | finds plan shapes whose runtime metrics swing wildly across executions of the same plan: classic parameter sensitivity. Cannot be combined with @get_all_databases, @log_to_table, or @find_high_impact. | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @include_maintenance                   | bit            | add maintenance operations such as index creation to the result set                                                                               | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @log_to_table                          | bit            | enable logging to permanent tables instead of returning results                                                                                   | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @log_database_name                     | sysname        | database to store logging tables                                                                                                                  | a valid database name                                                                                                                                                                                                                                                                                                                                             | NULL; current database                                                    |
@@ -349,9 +369,11 @@ The plan cache companion to sp_QuickieStore. While QuickieStore digs into Query 
 It aggregates data from `sys.dm_exec_query_stats`, `sys.dm_exec_procedure_stats`, `sys.dm_exec_function_stats`, and `sys.dm_exec_trigger_stats`, then scores queries across 7 resource dimensions (CPU, duration, reads, writes, memory grants, spills, executions) using `PERCENT_RANK`. Only the vital few queries with disproportionate resource consumption are surfaced.
 
 Results come in three result sets:
- * **Plan cache health findings**: plan age distribution, single-use plan bloat, duplicate plan detection, USERSTORE_TOKENPERM pressure
- * **High-impact queries**: Pareto-scored queries with impact scores, resource shares, and diagnostic signals (parameter sniffing, plan instability, wasteful grants, wait-bound queries, etc.)
  * **Workload profile summary**: overall concentration analysis with tuning recommendations
+ * **High-impact queries**: Pareto-scored queries with impact scores, resource shares, and diagnostic signals (parameter sniffing, plan instability, wasteful grants, wait-bound queries, etc.)
+ * **Plan cache health findings**: plan age distribution, single-use plan bloat, duplicate plan detection, USERSTORE_TOKENPERM pressure
+
+With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure returns only that list and skips the three result sets above. The lists are the largest single-use plans by cached size, or query hashes with more than one cached plan per database.
 
 Requires SQL Server 2016 SP1+ for full memory grant and spill analysis.
 
@@ -362,8 +384,8 @@ Current valid parameter details:
 | @top                        | bigint       | candidates per metric dimension before dedup                                                         | a positive integer                       | 10         |
 | @sort_order                 | varchar      | secondary sort after impact_score                                                                    | cpu, duration, reads, writes, memory, spills, executions | cpu        |
 | @database_name              | sysname      | filter to a specific database                                                                        | a valid database name                    | NULL       |
-| @start_date                 | datetime     | only include plans created after this date                                                           | a valid datetime                         | NULL       |
-| @end_date                   | datetime     | only include plans created before this date                                                          | a valid datetime                         | NULL       |
+| @start_date                 | datetime     | only include plans created or cached on or after this date                                           | a valid datetime                         | NULL       |
+| @end_date                   | datetime     | only include plans created or cached before this date                                                | a valid datetime                         | NULL       |
 | @minimum_execution_count    | bigint       | minimum execution count to include a query                                                           | a positive integer                       | 2          |
 | @ignore_system_databases    | bit          | exclude system databases (master, model, msdb, tempdb), unless @database_name names one              | 0 or 1                                   | 1          |
 | @impact_threshold           | decimal(3,2) | minimum impact_score (0.00-1.00) to surface in results                                               | 0.00 to 1.00                             | 0.50       |
@@ -390,6 +412,14 @@ EXECUTE dbo.sp_QuickieCache
 EXECUTE dbo.sp_QuickieCache
     @impact_threshold = 0.25,
     @top = 20;
+
+-- Single-use plans that use the most memory (returns only that list)
+EXECUTE dbo.sp_QuickieCache
+    @find_single_use_plans = 1;
+
+-- Query hashes with more than one cached plan (returns only that list)
+EXECUTE dbo.sp_QuickieCache
+    @find_duplicate_plans = 1;
 ```
 
 [*Back to top*](#navigatory)
@@ -409,8 +439,6 @@ You can filter queries by plan_id or query_id, and optionally specify a date ran
 
 The executable_query column is displayed as clickable XML - click on it in SSMS to view the formatted, ready-to-run script.
 
-More examples can be found here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_QueryReproBuilder/Examples.sql)
-
 More resources:
  * For a text-based adventure, head to [my site here](https://www.erikdarling.com/sp_queryreprobuilder/).
 
@@ -419,8 +447,8 @@ Current valid parameter details:
 | parameter_name      | data_type  | description                                                           | valid_inputs                                       | defaults                         |
 |---------------------|------------|-----------------------------------------------------------------------|----------------------------------------------------|----------------------------------|
 | @database_name         | sysname            | the name of the database you want to look at query store in           | a database name with query store enabled           | NULL; current database if NULL   |
-| @start_date            | datetimeoffset(7)  | the begin date of your search, will be converted to UTC internally    | January 1, 1753, through December 31, 9999         | the last seven days              |
-| @end_date              | datetimeoffset(7)  | the end date of your search, will be converted to UTC internally      | January 1, 1753, through December 31, 9999         | NULL                             |
+| @start_date            | datetimeoffset(7)  | the begin date of your search. No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally.    | January 1, 1753, through December 31, 9999         | the last seven days              |
+| @end_date              | datetimeoffset(7)  | the end date of your search. No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally.      | January 1, 1753, through December 31, 9999         | NULL                             |
 | @include_plan_ids      | nvarchar(4000)     | a list of plan ids to search for                                      | a string; comma separated for multiple ids         | NULL                             |
 | @include_query_ids     | nvarchar(4000)     | a list of query ids to search for                                     | a string; comma separated for multiple ids         | NULL                             |
 | @include_query_hashes  | nvarchar(4000)     | a list of query hashes to search for                                  | a string; comma separated for multiple hashes      | NULL                             |
@@ -435,6 +463,8 @@ Current valid parameter details:
 | @procedure_name        | sysname            | the name of the programmable object you're searching for              | a valid programmable object in your database       | NULL                             |
 | @query_text_search     | nvarchar(4000)     | query text to search for                                              | a string; leading and trailing wildcards will be added if missing | NULL                             |
 | @query_text_search_not | nvarchar(4000)     | query text to exclude                                                 | a string; leading and trailing wildcards will be added if missing | NULL                             |
+| @top                   | bigint             | the number of plans you want to pull back, most recently executed first | a positive integer between 1 and 9,223,372,036,854,775,807 | 10, or every matching plan when an @include_ list or @procedure_name is given |
+| @include_maintenance   | bit                | set this bit to 1 to keep index and statistics maintenance plans (index builds, statistics updates, StatMan, DBCC) in the result set | 0 or 1 | 0 |
 | @query_plan_xml | xml                | a single query plan XML to process directly, bypassing Query Store    | a valid ShowPlanXML document; when supplied, all Query Store filters are ignored | NULL                             |
 | @help                  | bit                | return available parameter details, etc.                              | 0 or 1                                             | 0                                |
 | @debug                 | bit                | prints dynamic sql, statement length, parameter and variable values   | 0 or 1                                             | 0                                |
@@ -451,16 +481,23 @@ The problem is, hardly anyone ever looks at it, and when they do, they realize h
 
 This stored procedure takes all that pain away.
 
-Note that it focuses on performance data, and does not output errors or security details, or any of the other non-performance related data.
+Note that it focuses on performance data, and does not output security details or most other non-performance related data. The one exception is severe errors (severity 16 and up, or 19 and up when @warnings_only = 1).
+
+Does not run on Azure SQL Database.
 
 Typical result set will show you
  * Queries with significant waits
  * Waits by count
  * Waits by duration
  * Potential I/O issues
- * CPU task details
+ * CPU task details (including pending task counts and the entry points of pending tasks)
  * Memory conditions
+ * Memory broker notifications
+ * Memory node out-of-memory events
  * Overall system health
+ * Scheduler monitor health
+ * Severe errors
+ * CPU intensive requests
  * A limited version of the blocked process report
  * XML deadlock report
  * Query plans for queries involved in blocking and deadlocks (when available)
@@ -472,10 +509,10 @@ Current valid parameter details:
 
 |        parameter_name        |   data_type    |                             description                             |                             valid_inputs                              |    defaults     |
 |------------------------------|----------------|---------------------------------------------------------------------|-----------------------------------------------------------------------|-----------------|
-| @what_to_check               | varchar        | areas of system health to check                                     | all, waits, disk, cpu, memory, system, locking                        | all             |
-| @start_date                  | datetimeoffset | earliest date to show data for, will be internally converted to UTC | a reasonable date                                                     | seven days back |
-| @end_date                    | datetimeoffset | latest date to show data for, will be internally converted to UTC   | a reasonable date                                                     | current date    |
-| @warnings_only               | bit            | only show rows where a warning was reported                         | NULL, 0, 1                                                            | 0               |
+| @what_to_check               | varchar        | areas of system health to check                                     | all, waits, disk, cpu, memory, system, locking (also accepts wait, blocking, blocks, deadlock, deadlocks, lock, locks) | all             |
+| @start_date                  | datetimeoffset | earliest date to show data for. A value without an offset (or with +00:00) is server local time, like the output. It is converted to UTC internally | a reasonable date                                                     | seven days back |
+| @end_date                    | datetimeoffset | latest date to show data for. A value without an offset (or with +00:00) is server local time, like the output. It is converted to UTC internally | a reasonable date                                                     | current date    |
+| @warnings_only               | bit            | only show rows where a warning was reported (the blocked process report is not filtered) | NULL, 0, 1                                                            | 0               |
 | @database_name               | sysname        | database name to show blocking events for                           | the name of a database                                                | NULL            |
 | @wait_duration_ms            | bigint         | minimum wait duration                                               | the minimum duration of a wait for queries with interesting waits     | 500             |
 | @wait_round_interval_minutes | bigint         | interval to round minutes to for wait stats                         | interval to round minutes to for top wait stats by count and duration | 60              |
@@ -486,7 +523,7 @@ Current valid parameter details:
 | @log_to_table                | bit            | enable logging to permanent tables instead of returning results     | 0 or 1                                                                | 0               |
 | @log_database_name           | sysname        | database to store logging tables                                    | valid database name                                                   | NULL (current database) |
 | @log_schema_name             | sysname        | schema to store logging tables                                      | valid schema name                                                     | NULL (dbo)      |
-| @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid table name prefix                                               | 'HealthParser'  |
+| @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid identifier, 111 characters or fewer                             | 'HealthParser'  |
 | @log_retention_days          | integer        | Number of days to keep logs, 0 = keep indefinitely                  | integer                                                               | 30              |
 | @debug                       | bit            | prints dynamic sql, selects from temp tables                        | 0 or 1                                                                | 0               |
 | @help                        | bit            | how you got here                                                    | 0 or 1                                                                | 0               |
@@ -497,7 +534,7 @@ Current valid parameter details:
 
 ## Log Hunter
 
-The SQL Server error log can have a lot of good information in it about what's goin on, whether it's right or wrong.
+The SQL Server error log can have a lot of good information in it about what's going on, whether it's right or wrong.
 
 The problem is that it's hard to know *what* to look for, and what else was going on once you filter it.
 
@@ -507,6 +544,8 @@ I created sp_LogHunter to search through your error logs for the important stuff
 
 It helps you give you a fuller, better picture of any bad stuff happening.
 
+sp_LogHunter needs EXECUTE permission on `master.dbo.xp_readerrorlog`, or `rdsadmin.dbo.rds_read_error_log` if that procedure exists. It does not need sysadmin. To read archived error logs, the login must be a member of the securityadmin fixed server role. Without it, sp_LogHunter reads only the current error log and prints a message. It does not run on Azure SQL Database.
+
 More resources:
  * [YouTube introduction](https://youtu.be/L_yJ6zPjHfs)
 
@@ -514,13 +553,13 @@ Current valid parameter details:
 
 |    parameter_name    | data_type |                  description                   |                                 valid_inputs                                 |   defaults   |
 |----------------------|-----------|------------------------------------------------|------------------------------------------------------------------------------|--------------|
-| @days_back           | integer   | how many days back you want to search the logs | an integer; will be converted to a negative number automatically             | -7           |
-| @start_date          | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
-| @end_date            | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
+| @days_back           | integer   | how many days back you want to search the logs. Not used when @start_date or @end_date is given | an integer. It is converted to a negative number automatically. 0 is treated as -1 | -7           |
+| @start_date          | datetime  | if you want to search a specific time frame    | a datetime value. Must not be later than @end_date                           | NULL         |
+| @end_date            | datetime  | if you want to search a specific time frame    | a datetime value. Must not be earlier than @start_date                       | NULL         |
 | @custom_message      | nvarchar  | if you want to search for a custom string      | something specific you want to search for. no wildcards or substitutions.      | NULL         |
-| @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1                                                                   | 0            |
+| @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1. NULL is treated as 0. 1 requires a non-empty @custom_message     | 0            |
 | @first_log_only      | bit       | only search through the first error log        | NULL, 0, 1                                                                   | 0            |
-| @language_id         | integer   | to use something other than English            | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id; | 1033         |
+| @language_id         | integer   | does not translate the search strings, which are English literals. Use @custom_message on non-English servers | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id. Any value other than 1033 only triggers a warning | 1033         |
 | @help                | bit       | how you got here                               | NULL, 0, 1                                                                   | 0            |
 | @debug               | bit       | dumps raw temp table contents                  | NULL, 0, 1                                                                   | 0            |
 | @version             | varchar   | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
@@ -542,7 +581,7 @@ The procedure performs extensive checks in multiple categories:
 - Database file auto-growth settings
 - Query Store health and configuration
 
-Results are returned in a prioritized list, with the most critical issues displayed first. The procedure works on SQL Server 2016+ and Azure SQL DB.
+Results are returned in a prioritized list, with the most critical issues displayed first. The procedure works on SQL Server 2016+, Azure SQL DB, Azure SQL Managed Instance, and AWS RDS.
 
 Current valid parameter details:
 
@@ -567,7 +606,7 @@ Current valid parameter details:
 
 ## Index Cleanup
 
-This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes.
+This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes. It also finds uncompressed indexes that are candidates for page compression.
 
 **IMPORTANT: This is currently a BETA VERSION.** It needs extensive testing in real environments with real indexes to address several issues:
 * Data collection accuracy
@@ -583,11 +622,11 @@ Current valid parameter details:
 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
-| @database_name | sysname | NULL | The name of the database you wish to analyze |
-| @schema_name | sysname | NULL | The schema name to filter indexes by |
-| @table_name | sysname | NULL | The table name to filter indexes by |
-| @min_reads | bigint | 0 | Minimum number of reads for an index to be considered used |
-| @min_writes | bigint | 0 | Minimum number of writes for an index to be considered used |
+| @database_name | sysname | NULL | The name of the database you wish to analyze. Defaults to the current database when that is a user database |
+| @schema_name | sysname | NULL | The schema name to filter indexes by - limits analysis to tables in the specified schema when used without @table_name |
+| @table_name | sysname | NULL | The table or view name to filter indexes by. The schema defaults to dbo if @schema_name is NULL |
+| @min_reads | bigint | 0 | Minimum reads for an index to be deduped. Applied per table and per index. An index clears by meeting this or @min_writes. Does not affect unused-index detection or compression |
+| @min_writes | bigint | 0 | Minimum writes for an index to be deduped. Applied per table and per index. An index clears by meeting this or @min_reads. Does not affect unused-index detection or compression |
 | @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
 | @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
 | @dedupe_only | bit | 0 | When set to 1, only performs index deduplication but does not mark unused indexes for removal |
@@ -610,7 +649,11 @@ This procedure identifies and removes duplicate and noisy queries from Query Sto
 
 By default, it targets system queries, maintenance operations, and removes all copies of duplicated query and plan hashes. You can customize what to target, how to deduplicate, and whether to just report or actually remove.
 
-Queries with forced plans are always protected from removal.
+Queries with forced plans are always protected from removal. On SQL Server 2022 or later, the same protection applies to a query with a forced Query Store hint.
+
+On SQL Server 2022 or later, a parameter sensitive plan (PSP) parent query cannot be removed while any of its variant queries remain. The procedure removes parents after their variants, and leaves out a parent that has a variant not on the removal list, instead of failing on it.
+
+For report mode, removal order and compaction, read the [sp_QueryStoreCleanup README](https://github.com/erikdarlingdata/DarlingData/tree/main/sp_QueryStoreCleanup).
 
 **Note:** This procedure is not included in the Install-All script due to its destructive nature. Install it separately.
 
@@ -622,13 +665,13 @@ Current valid parameter details:
 | @cleanup_targets | varchar(100) | what to target for cleanup | all, system, maintenance (or maint), custom, none, or comma-separated combination | all |
 | @custom_query_filter | nvarchar(1024) | custom LIKE pattern for query text filtering; also applied when @cleanup_targets = all | a valid LIKE pattern | NULL |
 | @dedupe_by | varchar(50) | deduplication strategy | all, query_hash, plan_hash, none | all |
-| @min_age_days | integer | only remove queries not executed in this many days | a positive integer | NULL; no age filter |
+| @min_age_days | integer | only remove queries whose last execution is older than this many days | a positive integer | NULL; no age filter |
 | @report_only | bit | report what would be removed without removing | 0 or 1 | 0 |
 | @sort_direction | varchar(10) | removal order by query_id | ASC, DESC | ASC |
 | @compact_tables | bit | afterwards, compact Query Store's internal tables | 0 or 1 | 0 |
 | @help | bit | how you got here | 0 or 1 | 0 |
 | @debug | bit | prints dynamic sql and diagnostics | 0 or 1 | 0 |
-| @version | varchar | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
+| @version | varchar(30) | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
 | @version_date | datetime | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
 
 [*Back to top*](#navigatory)

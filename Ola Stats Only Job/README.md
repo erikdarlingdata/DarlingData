@@ -17,10 +17,10 @@ Statistics in SQL Server are vital for query optimization but can become stale o
 ## Configuration Details
 
 The script creates a SQL Agent job with the following default settings:
-- Job name: "Nightly Stats Update Job via Ola"
+- Job name: "IndexOptimize - STATISTICS_ONLY"
 - Database target: All user databases
 - Job owner: sa
-- Schedule: Every night at midnight
+- Schedule: "Nightly Statistics Update", every night at midnight
 - Statistics modification level: 5% (only updates statistics that have changed by at least 5%)
 
 ## Customization Options

@@ -1,7 +1,7 @@
 """
 sp_QuickieStore assertion test harness
 ======================================
-sp_QuickieStore is ~16,000 lines that assemble a large dynamic SQL statement
+sp_QuickieStore is ~20,000 lines that assemble a large dynamic SQL statement
 whose SHAPE changes with almost every one of its 60 parameters: @sort_order
 alone accepts 35+ values, each producing a different ORDER BY and column set,
 and @wait_filter / @execution_type_desc / @query_type / @expert_mode /

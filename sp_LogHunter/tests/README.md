@@ -20,6 +20,8 @@ healthy server because it never managed to read the log.
 | --- | --- |
 | `run_tests.py` | Runs the parameter matrix, asserting `#errors` stays empty, plus bidirectional marker and date-range checks. 78 assertions. |
 
+Install `sp_LogHunter.sql` into `master` on the target server first. `run_tests.py` exits with code 1 if `dbo.sp_LogHunter` is not installed in `master`.
+
 ```
 cd sp_LogHunter/tests
 python run_tests.py --server SQL2022
@@ -53,6 +55,8 @@ window 30 days earlier does not) and `@custom_message_only` (0 runs the canned
 sweep *and* the custom search; 1 returns strictly fewer rows). Every absence
 assertion is paired with a presence assertion on the same machinery, so nothing
 passes vacuously by returning an empty set.
+
+A separate Validation group checks the parameter guards. An invalid `@language_id` is rejected. `@custom_message_only = 1` without a search string is rejected. A `@language_id` other than 1033 must print a warning. The harness skips that check when the server has no non-English message set installed.
 
 ## Bug found and fixed by this harness
 
