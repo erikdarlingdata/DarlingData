@@ -5957,7 +5957,8 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT TOP (@top)
             qs.query_hash
         FROM #hi_query_stats AS qs
-        WHERE EXISTS
+        WHERE qs.total_writes_mb > 0
+        AND   EXISTS
         (
             SELECT
                 1/0
