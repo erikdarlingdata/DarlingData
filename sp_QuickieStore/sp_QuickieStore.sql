@@ -128,8 +128,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.10',
-    @version_date = '20261001';
+    @version = '6.11',
+    @version_date = '20261101';
 
 /*
 Helpful section! For help.
@@ -9959,8 +9959,8 @@ BEGIN
                 THEN N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)'
                 ELSE N'EXISTS
     (
-         SELECT
-             1/0
+        SELECT
+            1/0
         FROM #procedure_object_ids AS poi
         WHERE poi.[object_id] = qsq.[object_id]
     )'
@@ -13725,7 +13725,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@database_id int',
+  N'@database_id integer',
     @database_id;
 
 IF @troubleshoot_performance = 1
