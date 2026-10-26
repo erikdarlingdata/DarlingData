@@ -16338,7 +16338,8 @@ BEGIN
                 FROM #query_store_plan_feedback AS qspf
                 ORDER BY
                     qspf.plan_id,
-                    qspf.plan_feedback_id
+                    qspf.plan_feedback_id,
+                    qspf.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -16423,7 +16424,8 @@ BEGIN
                 FROM #query_store_query_hints AS qsqh
                 ORDER BY
                     qsqh.query_id,
-                    qsqh.query_hint_id
+                    qsqh.query_hint_id,
+                    qsqh.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
@@ -16494,7 +16496,8 @@ BEGIN
                 FROM #query_store_query_variant AS qsqv
                 ORDER BY
                     qsqv.parent_query_id,
-                    qsqv.query_variant_query_id
+                    qsqv.query_variant_query_id,
+                    qsqv.database_id
                 OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
