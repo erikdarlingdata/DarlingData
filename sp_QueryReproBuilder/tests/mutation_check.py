@@ -85,8 +85,8 @@ MUTATIONS = [
      "missing params default to NULL and silently execute instead of ?"),
 
     ("M3_scaled_type_split",
-     r"(REPLACE\(REPLACE\(pd\.declaration, N', @', N',@'\)), N',@', N'</p><p>@'\)",
-     r"\1, N',', N'</p><p>')",
+     r"(REPLACE\(REPLACE\(pd\.declaration, N', @', N',@'\)), N',@', NCHAR\(1\) \+ N'@'\)",
+     r"\1, N',', NCHAR(1))",
      "fill-in path splits scaled types like numeric(10,2) on the internal comma"),
 ]
 
