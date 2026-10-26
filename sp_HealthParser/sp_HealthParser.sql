@@ -4218,7 +4218,10 @@ AND   ca.utc_timestamp < @end_date';
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
-                mbi.event_time DESC
+                mbi.event_time DESC,
+                mbi.broker_id,
+                mbi.pool_metadata_id,
+                mbi.notification
             OPTION(RECOMPILE);
             ';
 
@@ -5338,7 +5341,8 @@ AND   ca.utc_timestamp < @end_date';
             SET @dsql = @dsql + N'
             ORDER BY
                 ei.event_time DESC,
-                ei.severity DESC
+                ei.severity DESC,
+                ei.error_number
             OPTION(RECOMPILE);
             ';
 
