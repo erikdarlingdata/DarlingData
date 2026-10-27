@@ -18273,7 +18273,8 @@ BEGIN
         @pp_has_nested_loops bit = 0,
         @pp_has_expr_filter bit = 0,
         @pp_troubleshoot_sql nvarchar(max) = N'(static statements of the plan parsing section, no dynamic SQL)',
-        @pp_sql nvarchar(max) = N'';
+        @pp_sql nvarchar(max) = N'',
+        @pp_print_start integer = 1;
 
     /*
     With @workdays = 1 the runtime stats only cover weekdays, Monday to Friday in server local time
@@ -20810,8 +20811,19 @@ BEGIN
     IF  @debug = 1
     AND @pp_sql IS NOT NULL
     BEGIN
+        /*
+        PRINT cuts off at 4,000 characters for nvarchar, so a long @pp_sql is printed in chunks.
+        SUBSTRING's third argument is a length, not an end position.
+        */
         PRINT LEN(@pp_sql);
-        PRINT @pp_sql;
+
+        WHILE @pp_print_start <= LEN(@pp_sql)
+        BEGIN
+            PRINT SUBSTRING(@pp_sql, @pp_print_start, 4000);
+
+            SELECT
+                @pp_print_start += 4000;
+        END;
     END;
 
     IF @pp_sql IS NOT NULL
