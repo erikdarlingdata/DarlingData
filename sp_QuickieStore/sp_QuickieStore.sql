@@ -21809,12 +21809,13 @@ BEGIN
       AND po.qp_id = pob.qp_id
       AND po.node_id = pob.node_id
     WHERE pob.obj_index IS NOT NULL
-    AND  (
-              po.physical_op LIKE N'%Insert'
-           OR po.physical_op LIKE N'%Update'
-           OR po.physical_op LIKE N'%Delete'
-           OR po.physical_op LIKE N'%Merge'
-         )
+    AND
+    (
+         po.physical_op LIKE N'%Insert'
+      OR po.physical_op LIKE N'%Update'
+      OR po.physical_op LIKE N'%Delete'
+      OR po.physical_op LIKE N'%Merge'
+    )
     AND   po.physical_op NOT LIKE N'Remote%'
     GROUP BY
         pob.database_id,
