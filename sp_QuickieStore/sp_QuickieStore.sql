@@ -1935,6 +1935,7 @@ CREATE TABLE
     pred_if bit NULL,
     pred_like_lead bit NULL,
     pred_base_col bit NULL,
+    pred_expr_col bit NULL,
     obj_database nvarchar(258) NULL,
     obj_schema nvarchar(258) NULL,
     obj_table nvarchar(258) NULL,
@@ -1994,6 +1995,7 @@ CREATE TABLE
     pred_if bit NULL,
     pred_like_lead bit NULL,
     pred_base_col bit NULL,
+    pred_expr_col bit NULL,
     pred_xml xml NULL
 );
 
@@ -18842,6 +18844,8 @@ BEGIN
     or a LIKE that starts with a wildcard. Only columns of a real table count: a column
     reference with no database (a system view) or in schema sys is left out. A table variable
     column has no database either, but it is a real table, so a table name that starts with @ counts.
+    pred_expr_col marks a predicate that reads a column another operator computed (an Expr, not a
+    parameter or variable, and not the bitmap a PROBE reads): a Filter on it cannot move down to a scan.
     */
     WITH XMLNAMESPACES
     (
@@ -18861,7 +18865,9 @@ BEGIN
         pp.pred_like_lead =
             pp.pred_xml.exist(N'Predicate//Intrinsic[@FunctionName = "like"][ScalarOperator[2]/Const[substring(@ConstValue, 1, 3) = "N''%" or substring(@ConstValue, 1, 2) = "''%"]]'),
         pp.pred_base_col =
-            pp.pred_xml.exist(N'Predicate//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]')
+            pp.pred_xml.exist(N'Predicate//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]'),
+        pp.pred_expr_col =
+            pp.pred_xml.exist(N'Predicate//ColumnReference[not(@Table)][not(substring(@Column, 1, 1) = "@")][not(substring(@Column, 1, 10) = "Opt_Bitmap")]')
     FROM #plan_predicates AS pp
     OPTION(RECOMPILE);
 
@@ -18874,7 +18880,8 @@ BEGIN
         po.pred_convert = pp.pred_convert,
         po.pred_if = pp.pred_if,
         po.pred_like_lead = pp.pred_like_lead,
-        po.pred_base_col = pp.pred_base_col
+        po.pred_base_col = pp.pred_base_col,
+        po.pred_expr_col = pp.pred_expr_col
     FROM #plan_operators AS po
     JOIN #plan_predicates AS pp
       ON  pp.database_id = po.database_id
@@ -20842,7 +20849,10 @@ BEGIN
 
     /*
     Rule 8: late filter
-    A Filter operator whose predicate reads a base table column could have been pushed into the scan or seek
+    A Filter operator whose predicate reads a base table column could have been pushed into the scan or seek.
+    Two kinds of Filter are the optimizer's own and are left out: one that only probes a bitmap
+    (the test rule 9 uses), and one whose predicate reads a column another operator computed
+    (an aggregate or a join result), which cannot be applied before that operator.
     */
     INSERT
         #plan_findings
@@ -20885,6 +20895,12 @@ BEGIN
     AND   po.startup_expr = 0
     AND   po.pred_text IS NOT NULL
     AND   po.pred_base_col = 1
+    AND   ISNULL(po.pred_expr_col, 0) = 0
+    AND   NOT
+          (
+              po.pred_text LIKE N'PROBE(%'
+              AND po.pred_text NOT LIKE N'%AND [^P]%'
+          )
     OPTION(RECOMPILE, MAXDOP 1);
 
     /*
@@ -23209,7 +23225,8 @@ BEGIN
             pp.pred_convert,
             pp.pred_if,
             pp.pred_like_lead,
-            pp.pred_base_col
+            pp.pred_base_col,
+            pp.pred_expr_col
         FROM #plan_predicates AS pp
         OPTION(RECOMPILE);
 

@@ -70,7 +70,7 @@ each run *executes* what it built:
   function over a table variable column, rule 1's `INCLUDE` must cover the column
   behind a computed spool output, `@debug = 1` must dump without Msg 208 on the
   early exits (a missing database, a bad time zone), rules 8 and 12 must stay quiet for the
-  optimizer's own filter and Top, rule 0 must not fire for a plan that is only
+  optimizer's own filter and Top, rule 8 must stay quiet for a filter on an aggregate result, rule 0 must not fire for a plan that is only
   an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its
   phase (`10 (populate)`), the phase has that operator, and the `KEYSET`
   lookup finding names the right table. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and

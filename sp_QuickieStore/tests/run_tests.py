@@ -2099,6 +2099,10 @@ SELECT /*pp_r10tv*/ @i = t.a FROM @tv AS t WHERE ABS(t.k) = 3 OPTION (RECOMPILE)
 /* 8, negative: a catalog view has a has_access filter on its base table */
 SELECT /*pp_r8cat*/ @i = o.object_id FROM sys.objects AS o WHERE o.name LIKE N'pp_x%';
 
+/* 8, negative: the Filter compares a column with an aggregate (an Expr another operator
+   computed), so it cannot move down to the scan */
+SELECT /*pp_r8expr*/ @i = s.id FROM dbo.pp_small AS s WHERE s.b <> ISNULL((SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a), 0);
+
 /* 0, negative: a plan that is only an IF condition */
 EXECUTE dbo.pp_ifproc;
 """
@@ -2395,7 +2399,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r5nn", "r5ne",
-            "r5c", "r8cat", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2545,6 +2549,7 @@ def plan_parsing_tests(server, password, R):
         quiet("r5", 12, "rule 12 stays quiet for the Top inside the NOT IN null check")
         quiet("r5c", 12, "rule 12 stays quiet for the Top inside a <> ALL null check")
         quiet("r8cat", 8, "rule 8 stays quiet for the has_access filter on a catalog view")
+        quiet("r8expr", 8, "rule 8 stays quiet for a filter on an aggregate result (an Expr from another operator)")
 
         # Rule 0: a plan that is only an IF condition is checked or skipped
         quiet("cond", 0, "rule 0 does not fire for a plan that is only an IF condition")
