@@ -18559,7 +18559,9 @@ BEGIN
         (database_id, plan_id, stmt_id, qp_id, parent_node_id, child_node_id);
 
     /*
-    Objects: one row per object under an operator (a wide DML operator lists one per index)
+    Objects: one row per object under an operator (a wide DML operator lists one per index).
+    The objects are read from their operator, not the other way round: a trip up to the
+    parent (../../@NodeId) from every Object cost more than the rest of this pass.
     */
     WITH XMLNAMESPACES
     (
@@ -18586,19 +18588,24 @@ BEGIN
         ps.plan_id,
         ps.stmt_id,
         ps.qp_id,
-        obv.node_id,
+        rv.node_id,
         obv.obj_database,
         obv.obj_schema,
         obv.obj_table,
         obv.obj_index,
         obv.obj_storage
     FROM #plan_statements AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//Object') AS ob (obj)
+    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[*/Object]') AS r (rel)
     CROSS APPLY
     (
         SELECT
             node_id =
-                ob.obj.value(N'(../../@NodeId)[1]', N'integer'),
+                r.rel.value(N'(@NodeId)[1]', N'integer')
+    ) AS rv
+    CROSS APPLY r.rel.nodes(N'*/Object') AS ob (obj)
+    CROSS APPLY
+    (
+        SELECT
             obj_database =
                 ob.obj.value(N'(@Database)[1]', N'nvarchar(258)'),
             obj_schema =
@@ -18610,7 +18617,7 @@ BEGIN
             obj_storage =
                 ob.obj.value(N'(@Storage)[1]', N'nvarchar(60)')
     ) AS obv
-    WHERE obv.node_id IS NOT NULL
+    WHERE rv.node_id IS NOT NULL
     OPTION(RECOMPILE, MAXDOP 1);
 
     /*
