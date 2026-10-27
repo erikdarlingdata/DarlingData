@@ -18200,6 +18200,7 @@ BEGIN
         @pp_has_lookup bit = 0,
         @pp_has_eager_index_spool bit = 0,
         @pp_has_nested_loops bit = 0,
+        @pp_troubleshoot_sql nvarchar(max) = N'(static statements of the plan parsing section, no dynamic SQL)',
         @pp_sql nvarchar(max) = N'';
 
     SELECT
@@ -18210,6 +18211,16 @@ BEGIN
                 THEN @pp_min_window_minutes
                 ELSE DATEDIFF(MINUTE, @start_date, @end_date)
             END;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     /*
     Convert each plan to xml once. A plan that has no text, and a plan that will not
@@ -18245,6 +18256,23 @@ BEGIN
     ) AS px
     OPTION(RECOMPILE, MAXDOP 1);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
     /*
     One row per plan with the Query Store numbers the rules use.
     Averages are weighted by executions across the runtime stats rows.
@@ -18252,6 +18280,16 @@ BEGIN
     */
     SELECT
         @current_table = 'plan parsing: collecting plan facts';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     INSERT
         #plan_facts
@@ -18356,6 +18394,23 @@ BEGIN
       AND rs.plan_id = qsp.plan_id
     OPTION(RECOMPILE, MAXDOP 1);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
     /*
     Shred the statements: one row per QueryPlan. A StmtSimple has one, a StmtCursor has one per phase
     (populate, fetch, refresh), and the IF condition of a StmtCond has one. Rule 0 only fires for a
@@ -18367,6 +18422,16 @@ BEGIN
     */
     SELECT
         @current_table = 'plan parsing: shredding statements';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     WITH XMLNAMESPACES
     (
@@ -18462,6 +18527,23 @@ BEGIN
     WHERE ppx.plan_state = 0
     OPTION(RECOMPILE, MAXDOP 1);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
     /*
     Shred the operators. Reading every property of every operator is slow
     (a child path or a trip up to the parent costs far more than an attribute),
@@ -18470,6 +18552,16 @@ BEGIN
     */
     SELECT
         @current_table = 'plan parsing: shredding operators';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     WITH XMLNAMESPACES
     (
@@ -19887,12 +19979,39 @@ BEGIN
     OR    po.logical_op = N'TopN Sort'
     OPTION(RECOMPILE, MAXDOP 1);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
     /*
     Shred the warnings and the scalar functions the plan calls.
     The convert warning belongs to the statement, so it has no node id.
     */
     SELECT
         @current_table = 'plan parsing: shredding warnings';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     WITH XMLNAMESPACES
     (
@@ -19963,11 +20082,38 @@ BEGIN
     ) AS uv
     OPTION(RECOMPILE, MAXDOP 1);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
     /*
     Shred the missing index requests: one row per request, columns as lists
     */
     SELECT
         @current_table = 'plan parsing: shredding missing indexes';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     WITH XMLNAMESPACES
     (
@@ -20050,6 +20196,23 @@ BEGIN
     FROM #plan_missing_indexes AS pmi
     OPTION(RECOMPILE);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
     /*
     The MAXDOP settings. A plan that is serial because of MaxDOPSetToOne, and a plan that ran at DOP 2,
     are only the plan's own doing when the server and database settings do not explain them.
@@ -20058,6 +20221,16 @@ BEGIN
     */
     SELECT
         @current_table = 'plan parsing: reading MAXDOP settings';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     SELECT
         @pp_server_maxdop = CONVERT(integer, c.value_in_use)
@@ -20153,12 +20326,39 @@ BEGIN
             @pp_sql;
     END;
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_sql,
+            @current_table;
+    END;
+
     /*
     The rules. Each one is an INSERT into #plan_findings, one row per plan and operator
     (or one per plan for plan level rules); the output step folds them to one row per plan and rule.
     */
     SELECT
         @current_table = 'plan parsing: running the rules';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     /*
     Rule 0: plan not checked
@@ -21885,6 +22085,23 @@ BEGIN
     WHERE pf.avg_compile_duration_ms >= @pp_compile_ms
     OPTION(RECOMPILE, MAXDOP 1);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
     /*
     Return the findings: one row per plan and rule. The first few findings are joined, and the object
     names and node ids (lowest node ids first) are listed the same way, each with "and N more" when
@@ -21894,6 +22111,16 @@ BEGIN
     */
     SELECT
         @current_table = 'plan parsing: returning findings';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
 
     UPDATE
         pfi
@@ -22098,6 +22325,24 @@ BEGIN
         fg.plan_id,
         fg.rule_id
     OPTION(RECOMPILE);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
 END; /*End plan parsing*/
 
 IF  @query_store_trouble = 1

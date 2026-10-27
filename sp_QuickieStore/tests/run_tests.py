@@ -2734,6 +2734,17 @@ def plan_parsing_tests(server, password, R):
                     and re.search(r"table_name\s+database_id\s+plan_id\s+stmt_id\s+obj_schema\s+obj_table\s+obj_index", out),
                     combined.replace("\n", " ")[:160])
 
+        # @troubleshoot_performance = 1 times the plan parsing steps like the
+        # rest of the procedure: one current_query row per step
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 1, @troubleshoot_performance = 1, @top = 5",
+                               database_name=PP_DB, timeout=600)
+        R.check(G, "@troubleshoot_performance = 1 covers the plan parsing steps",
+                completed(out) and not pp_sql_errors(combined)
+                and "plan parsing: shredding operators" in out
+                and "plan parsing: running the rules" in out,
+                combined.replace("\n", " ")[:160])
+
         # Rejected combinations: severity 11 error that names @plan_parsing,
         # and the run does not reach the footer.
         rejected = [
