@@ -2574,6 +2574,8 @@ def plan_parsing_tests(server, password, R):
                     inline is not None
                     and inline.group(0) == "INDEX [ix_tv1_spool] ([a]) INCLUDE ([b])",
                     tv_text[:400])
+        R.check(G, "rule 1 (r1tv) says a table-valued parameter takes the index in its table type",
+                "table-valued parameter" in tv_text and "table type" in tv_text, tv_text[:400])
         if inline:
             perr, perr2 = _sqlcmd(server, password,
                                   "SET PARSEONLY ON; DECLARE @tv1 TABLE (a integer NOT NULL, "

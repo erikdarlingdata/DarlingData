@@ -20936,7 +20936,8 @@ BEGIN
                     A table variable cannot take CREATE INDEX: the index goes in its DECLARE.
                     Before SQL Server 2019 the inline index cannot take INCLUDE (Msg 102), so there the
                     include columns go at the end of the key, and the temp table alternative is a separate
-                    CREATE INDEX ... INCLUDE.
+                    CREATE INDEX ... INCLUDE. A table-valued parameter looks the same in the plan, and its
+                    index goes in its table type.
                     */
                     WHEN LEFT(sk.col_table, 1) = N'@'
                     OR   LEFT(sk.col_table, 2) = N'[@'
@@ -20958,7 +20959,7 @@ BEGIN
                             THEN N' INCLUDE (' + il.include_list + N')'
                             ELSE N''
                         END +
-                        N' in its DECLARE' +
+                        N' in its DECLARE (or in its table type, for a table-valued parameter)' +
                         CASE
                             WHEN il.include_list IS NOT NULL
                             AND  @product_version < 15
