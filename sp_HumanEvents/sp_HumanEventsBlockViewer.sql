@@ -1541,7 +1541,8 @@ BEGIN
             )
         ) AS p
     ) AS pa
-    WHERE bd.exist('process/@spid') = 1
+    /* the PIVOT above has read spid already, so no second pass with exist() */
+    WHERE pa.spid IS NOT NULL
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -1657,7 +1658,8 @@ BEGIN
             )
         ) AS p
     ) AS pa
-    WHERE bg.exist('process/@spid') = 1
+    /* the PIVOT above has read spid already, so no second pass with exist() */
+    WHERE pa.spid IS NOT NULL
     OPTION(RECOMPILE);
 
     IF @debug = 1
