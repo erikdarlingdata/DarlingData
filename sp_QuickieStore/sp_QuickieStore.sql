@@ -18804,7 +18804,8 @@ BEGIN
     /*
     The NOT IN rule. A column that an operator tests with IS NULL, read from the predicate copies
     that mention IS NULL; and the columns the anti semi joins compare for equality (hash keys,
-    merge join columns, or an equality in the predicate).
+    merge join columns, or an equality in the predicate). The equality pass only opens the
+    statements that have an anti semi join.
     */
     WITH XMLNAMESPACES
     (
@@ -18871,7 +18872,23 @@ BEGIN
         av.node_id,
         col_kind = 'eq',
         cv.col_ref
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS aj
+                  WHERE aj.database_id = ps0.database_id
+                  AND   aj.plan_id = ps0.plan_id
+                  AND   aj.stmt_id = ps0.stmt_id
+                  AND   aj.qp_id = ps0.qp_id
+                  AND   aj.logical_op IN (N'Left Anti Semi Join', N'Right Anti Semi Join')
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@LogicalOp = "Left Anti Semi Join" or @LogicalOp = "Right Anti Semi Join"]') AS r (rel)
     CROSS APPLY
     (
@@ -19036,7 +19053,9 @@ BEGIN
 
     /*
     Lookups, many-to-many merge joins, Top (1) operators and eager index spools:
-    found by the operator element or an attribute, so only the operators that matter are read
+    found by the operator element or an attribute, so only the operators that matter are read.
+    Every pass reads the whole of each plan it opens, so the merge join and Top passes only open
+    the statements that have that operator in #plan_operators.
     */
     WITH XMLNAMESPACES
     (
@@ -19098,7 +19117,23 @@ BEGIN
         ps.qp_id,
         mv.node_id,
         special = 'm2m'
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS mj
+                  WHERE mj.database_id = ps0.database_id
+                  AND   mj.plan_id = ps0.plan_id
+                  AND   mj.stmt_id = ps0.stmt_id
+                  AND   mj.qp_id = ps0.qp_id
+                  AND   mj.physical_op = N'Merge Join'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//Merge[@ManyToMany = "1"]') AS m (mg)
     CROSS APPLY
     (
@@ -19131,7 +19166,23 @@ BEGIN
         ps.qp_id,
         tv.node_id,
         special = 'top1'
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS tp
+                  WHERE tp.database_id = ps0.database_id
+                  AND   tp.plan_id = ps0.plan_id
+                  AND   tp.stmt_id = ps0.stmt_id
+                  AND   tp.qp_id = ps0.qp_id
+                  AND   tp.physical_op = N'Top'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Top"][Top/TopExpression/ScalarOperator/Const[@ConstValue = "(1)" or @ConstValue = "1"]]') AS t (rel)
     CROSS APPLY
     (
@@ -19145,6 +19196,7 @@ BEGIN
     Columns, one row each, so the lists are built from rows and not from the text of an xml value:
     the columns a lookup fetches, and the seek and output columns of an eager index spool.
     The order of the rows (col_ord) is the order in the plan.
+    Each pass only opens the statements that have a lookup (found above) or an eager index spool.
     */
     WITH XMLNAMESPACES
     (
@@ -19192,7 +19244,23 @@ BEGIN
         cv.col_schema,
         cv.col_table,
         cv.col_name
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_specials AS lk
+                  WHERE lk.database_id = ps0.database_id
+                  AND   lk.plan_id = ps0.plan_id
+                  AND   lk.stmt_id = ps0.stmt_id
+                  AND   lk.qp_id = ps0.qp_id
+                  AND   lk.special = 'lookup'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//IndexScan[@Lookup = "1"]') AS l (lk)
     CROSS APPLY
     (
@@ -19262,7 +19330,24 @@ BEGIN
         cv.col_schema,
         cv.col_table,
         cv.col_name
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS sp
+                  WHERE sp.database_id = ps0.database_id
+                  AND   sp.plan_id = ps0.plan_id
+                  AND   sp.stmt_id = ps0.stmt_id
+                  AND   sp.qp_id = ps0.qp_id
+                  AND   sp.physical_op = N'Index Spool'
+                  AND   sp.logical_op = N'Eager Spool'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
     CROSS APPLY
     (
@@ -19331,7 +19416,24 @@ BEGIN
         cv.col_schema,
         cv.col_table,
         cv.col_name
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS sp
+                  WHERE sp.database_id = ps0.database_id
+                  AND   sp.plan_id = ps0.plan_id
+                  AND   sp.stmt_id = ps0.stmt_id
+                  AND   sp.qp_id = ps0.qp_id
+                  AND   sp.physical_op = N'Index Spool'
+                  AND   sp.logical_op = N'Eager Spool'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
     CROSS APPLY
     (
