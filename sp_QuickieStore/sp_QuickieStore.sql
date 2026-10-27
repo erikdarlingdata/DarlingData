@@ -18457,7 +18457,7 @@ BEGIN
         ov.physical_op,
         ov.logical_op,
         ov.est_rows,
-        ov.table_cardinality,
+        tc.table_cardinality,
         ov.exec_mode
     FROM #plan_statements AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp') AS r (rel)
@@ -18473,11 +18473,22 @@ BEGIN
                 r.rel.value(N'(@LogicalOp)[1]', N'nvarchar(60)'),
             est_rows =
                 r.rel.value(N'(@EstimateRows)[1]', N'float'),
-            table_cardinality =
-                r.rel.value(N'(@TableCardinality)[1]', N'float'),
             exec_mode =
                 r.rel.value(N'(@EstimatedExecutionMode)[1]', N'nvarchar(10)')
     ) AS ov
+    /*
+    An attribute the operator does not have makes .value() read the operator's whole subtree,
+    so TableCardinality is only read from the scans, seeks and lookups that carry it
+    */
+    OUTER APPLY
+    (
+        SELECT
+            table_cardinality =
+                r.rel.value(N'(@TableCardinality)[1]', N'float')
+        WHERE ov.physical_op LIKE N'%Scan%'
+        OR    ov.physical_op LIKE N'%Seek%'
+        OR    ov.physical_op LIKE N'%Lookup%'
+    ) AS tc
     OPTION(RECOMPILE, MAXDOP 1);
 
     CREATE CLUSTERED INDEX
