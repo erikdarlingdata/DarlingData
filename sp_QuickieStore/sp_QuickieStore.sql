@@ -19295,8 +19295,9 @@ BEGIN
         /*
         A join can output an Expr that no DefinedValue defines: the probe result of a semi join (Nested Loops
         names it in ProbeColumn and an empty DefinedValue; Merge Join only lists it in its OutputList).
-        Only the join can make it, so it counts as a result of the join, like an aggregate: a Filter on it
-        cannot run earlier.
+        A batch mode Window Aggregate does the same for COUNT_BIG(*) OVER (...): its DefinedValues are empty.
+        Only that operator can make such an Expr, so it counts as a result of the operator, like an aggregate:
+        a Filter on it cannot run earlier.
         */
         WITH XMLNAMESPACES
         (
@@ -19349,10 +19350,10 @@ BEGIN
                       AND   jo.plan_id = ps0.plan_id
                       AND   jo.stmt_id = ps0.stmt_id
                       AND   jo.qp_id = ps0.qp_id
-                      AND   jo.physical_op IN (N'Nested Loops', N'Merge Join', N'Hash Match', N'Adaptive Join')
+                      AND   jo.physical_op IN (N'Nested Loops', N'Merge Join', N'Hash Match', N'Adaptive Join', N'Window Aggregate')
                   )
         ) AS ps
-        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Nested Loops" or @PhysicalOp = "Merge Join" or @PhysicalOp = "Hash Match" or @PhysicalOp = "Adaptive Join"]/OutputList/ColumnReference[not(@Table)]') AS c (col)
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Nested Loops" or @PhysicalOp = "Merge Join" or @PhysicalOp = "Hash Match" or @PhysicalOp = "Adaptive Join" or @PhysicalOp = "Window Aggregate"]/OutputList/ColumnReference[not(@Table)]') AS c (col)
         CROSS APPLY
         (
             SELECT

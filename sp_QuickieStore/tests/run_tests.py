@@ -2154,6 +2154,16 @@ SELECT /*pp_r8semiL*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (S
 EXECUTE dbo.pp_ifproc;
 """
 
+# Rule 8 on a batch mode Window Aggregate: COUNT_BIG(*) OVER (...) has no DefinedValue, so its
+# Expr is defined nowhere. Batch mode on rowstore needs compatibility level 150 and up (SQL Server 2019+).
+# The partition is the constant pad column, so the filter on k cannot move below the window.
+PP_BATCH_SQL = """
+SET NOCOUNT ON;
+DECLARE @i integer;
+SELECT /*pp_r8bat*/ @i = d.id FROM (SELECT b.id, b.k, cnt = COUNT_BIG(*) OVER (PARTITION BY b.pad) FROM dbo.pp_big AS b) AS d WHERE d.k = 3 OR d.cnt > 50;
+SELECT /*pp_r8bat2*/ @i = d.id FROM (SELECT b.id, b.k, cnt = COUNT_BIG(*) OVER (PARTITION BY b.pad) FROM dbo.pp_big AS b) AS d WHERE d.k = 3 AND d.cnt > 50;
+"""
+
 # Cursors, each its own batch: a STATIC and a KEYSET cursor over a join. The
 # population and the fetch phases each number their operators from 0.
 PP_CURSOR_SQL = """
@@ -2423,6 +2433,9 @@ def plan_parsing_tests(server, password, R):
         for sql in (PP_REVIEW_OBJECTS_SQL, PP_REVIEW_SQL, PP_CURSOR_SQL):
             out, err = _sqlcmd(server, password, sql, database=PP_DB, timeout=900)
             errs += pp_sql_errors(out + "\n" + err)
+        if default_compat >= 150:
+            out, err = _sqlcmd(server, password, PP_BATCH_SQL, database=PP_DB, timeout=900)
+            errs += pp_sql_errors(out + "\n" + err)
         _sqlcmd(server, password,
                 "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 1;", database=PP_DB)
         out, err = _sqlcmd(server, password, PP_MAXDOP_COMMENT_SQL,
@@ -2461,7 +2474,7 @@ def plan_parsing_tests(server, password, R):
                          "SET NOCOUNT ON; SELECT 'WIN:' + CONVERT(varchar(19), "
                          "DATEADD(HOUR, -2, SYSDATETIME()), 120);")
         window = re.search(r"WIN:(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)", out).group(1)
-        all_ids = [ids[k] for k in want] + ([ids["r14new"]] if "r14new" in ids else [])
+        all_ids = [ids[k] for k in want] + [ids[k] for k in ("r14new", "r8bat", "r8bat2") if k in ids]
 
         out, combined, found = pp_run(server, password, all_ids,
                                       ", @start_date = '%s'" % window)
@@ -2547,7 +2560,8 @@ def plan_parsing_tests(server, password, R):
         # range seek that also outputs a computed column (r1b). The harness
         # cuts wide columns at 200 characters, so read these at full width.
         out, combined, found_full = pp_run(server, password,
-                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r4self"], ids["r1tv"], ids["r2c"], ids["r8mix"]],
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r4self"], ids["r1tv"], ids["r2c"], ids["r8mix"]]
+                                           + ([ids["r8bat2"]] if "r8bat2" in ids else []),
                                            width=8000)
         found_full = found_full or []
 
@@ -2698,6 +2712,29 @@ def plan_parsing_tests(server, password, R):
                 pp_has(found, ids["r8mix"], 8) and "[b]=(3)" in mix_text
                 and "part of the predicate reads an aggregate" in mix_text,
                 mix_text[:200])
+
+        # A batch mode Window Aggregate has empty DefinedValues. Batch mode on rowstore is SQL Server 2019+
+        # (compatibility level 150), so this is skipped on SQL Server 2017 and earlier.
+        if default_compat >= 150:
+            R.check(G, "batch mode window fixtures ran", "r8bat" in ids and "r8bat2" in ids,
+                    "missing markers: %s" % [k for k in ("r8bat", "r8bat2") if k not in ids])
+            if "r8bat" in ids and "r8bat2" in ids:
+                out, _ = _sqlcmd(server, password,
+                                 "SET NOCOUNT ON; SELECT 'BATCHWIN:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                                 "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                                 "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                                 "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                                 "//RelOp[@PhysicalOp = \"Window Aggregate\"][@EstimatedExecutionMode = \"Batch\"]"
+                                 "[WindowAggregate/DefinedValues[not(DefinedValue)]]') = 1;"
+                                 % ids["r8bat"], database=PP_DB)
+                R.check(G, "batch mode window fixture has a Window Aggregate with no DefinedValue",
+                        "BATCHWIN:1" in out, out[:200])
+                quiet("r8bat", 8, "rule 8 stays quiet when the other part of an OR reads a batch mode COUNT(*) OVER result")
+                bat_text = full_text("r8bat2", 8)
+                R.check(G, "rule 8 fires for the AND form and says part of it reads a window result",
+                        pp_has(found, ids["r8bat2"], 8) and "[k]=(3)" in bat_text
+                        and "part of the predicate reads an aggregate" in bat_text,
+                        bat_text[:200])
 
         # Rule 0: a plan that is only an IF condition is checked or skipped
         quiet("cond", 0, "rule 0 does not fire for a plan that is only an IF condition")
