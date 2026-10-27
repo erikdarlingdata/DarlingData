@@ -20237,15 +20237,32 @@ BEGIN
             po.node_id,
             object_name = st.table_name,
             finding =
-                N'The optimizer builds a temporary index on ' + ISNULL(st.table_name, N'a table') +
-                N' every time this runs. Create the index instead: CREATE INDEX ' +
-                QUOTENAME(N'ix_' + REPLACE(REPLACE(ISNULL(sk.col_table, N'[table]'), N'[', N''), N']', N'') + N'_spool') +
-                N' ON ' + ISNULL(st.table_name, N'<table>') + N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
                 CASE
-                    WHEN il.include_list IS NOT NULL
-                    THEN N' INCLUDE (' + il.include_list + N')'
-                    ELSE N''
-                END + N';'
+                    /* A table variable cannot take CREATE INDEX: the index goes in its DECLARE */
+                    WHEN LEFT(sk.col_table, 1) = N'@'
+                    OR   LEFT(sk.col_table, 2) = N'[@'
+                    THEN
+                        N'The optimizer builds a temporary index on the table variable ' + st.table_name +
+                        N' every time this runs. A table variable cannot take CREATE INDEX: declare it with the index, INDEX ' +
+                        QUOTENAME(N'ix_' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'') + N'_spool') +
+                        N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
+                        CASE
+                            WHEN il.include_list IS NOT NULL
+                            THEN N' INCLUDE (' + il.include_list + N')'
+                            ELSE N''
+                        END +
+                        N' in its DECLARE, or use a temp table with that index.'
+                    ELSE
+                        N'The optimizer builds a temporary index on ' + ISNULL(st.table_name, N'a table') +
+                        N' every time this runs. Create the index instead: CREATE INDEX ' +
+                        QUOTENAME(N'ix_' + REPLACE(REPLACE(ISNULL(sk.col_table, N'[table]'), N'[', N''), N']', N'') + N'_spool') +
+                        N' ON ' + ISNULL(st.table_name, N'<table>') + N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
+                        CASE
+                            WHEN il.include_list IS NOT NULL
+                            THEN N' INCLUDE (' + il.include_list + N')'
+                            ELSE N''
+                        END + N';'
+                END
         FROM #plan_operators AS po
         JOIN #plan_facts AS pf
           ON  pf.database_id = po.database_id

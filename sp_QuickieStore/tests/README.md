@@ -58,7 +58,7 @@ each run *executes* what it built:
   return no findings, and each rejected combination must raise an error. A
   failed rule check prints the fixture query's operator list (NodeId,
   PhysicalOp/LogicalOp) from its Query Store plan. Regression fixtures cover
-  the review findings: rule 1 must script a valid `CREATE INDEX` (bracketed,
+  the review findings: rule 1 must suggest the inline `INDEX` for a spool on a table variable, and must script a valid `CREATE INDEX` (bracketed,
   comma separated, no duplicates, no `Expr` columns, parses under
   `PARSEONLY`), rule 4 must separate the fetched columns and name the column its own predicate reads, and stay quiet for a lookup into a system table, rule 5 must fire for a
   `NOT NULL` key `NOT IN` a nullable indexed column (the `IS NULL` test is the

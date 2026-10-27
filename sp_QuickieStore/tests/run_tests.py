@@ -2099,6 +2099,11 @@ SELECT /*pp_r10tv*/ @i = t.a FROM @tv AS t WHERE ABS(t.k) = 3 OPTION (RECOMPILE)
 /* 8, negative: a catalog view has a has_access filter on its base table */
 SELECT /*pp_r8cat*/ @i = o.object_id FROM sys.objects AS o WHERE o.name LIKE N'pp_x%';
 
+/* 1: an eager index spool over a table variable. The finding cannot be CREATE INDEX on it */
+DECLARE @tv1 TABLE (a integer NOT NULL, b integer NOT NULL);
+INSERT @tv1 (a, b) SELECT h.a, h.b FROM dbo.pp_heap AS h;
+SELECT /*pp_r1tv*/ @j = MAX(x.m) FROM dbo.pp_small AS s CROSS APPLY (SELECT m = MAX(t.b) FROM @tv1 AS t WHERE t.a = s.a) AS x WHERE s.id < 2000 OPTION (LOOP JOIN, RECOMPILE);
+
 /* 8, negative: the Filter compares a column with an aggregate (an Expr another operator
    computed), so it cannot move down to the scan */
 SELECT /*pp_r8expr*/ @i = s.id FROM dbo.pp_small AS s WHERE s.b <> ISNULL((SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a), 0);
@@ -2399,7 +2404,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r5nn", "r5ne",
-            "r5c", "r8cat", "r8expr", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "r1tv", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2492,7 +2497,7 @@ def plan_parsing_tests(server, password, R):
         # range seek that also outputs a computed column (r1b). The harness
         # cuts wide columns at 200 characters, so read these at full width.
         out, combined, found_full = pp_run(server, password,
-                                           [ids["r1"], ids["r1b"], ids["r4b"]],
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r1tv"]],
                                            width=8000)
         found_full = found_full or []
 
@@ -2510,6 +2515,13 @@ def plan_parsing_tests(server, password, R):
                 errs = pp_sql_errors(perr + "\n" + perr2)
                 R.check(G, "rule 1 (%s) CREATE INDEX compiles under PARSEONLY" % marker,
                         not errs, str(errs[:1]) + " " + stmt)
+
+        # Rule 1 on a table variable: the index goes in the DECLARE, not CREATE INDEX ... ON @t
+        tv_text = full_text("r1tv", 1)
+        R.check(G, "rule 1 (r1tv) suggests an inline INDEX for the table variable, not CREATE INDEX",
+                "INDEX [ix_tv1_spool] ([a])" in tv_text and "in its DECLARE" in tv_text
+                and "CREATE INDEX [" not in tv_text and " ON @" not in tv_text,
+                tv_text[:300])
 
         # Rule 4 lists the columns it fetches with commas, and the column its
         # own predicate reads (b) after "filters on"
