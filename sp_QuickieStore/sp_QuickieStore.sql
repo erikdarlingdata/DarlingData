@@ -18349,6 +18349,9 @@ BEGIN
     (populate, fetch, refresh), and the IF condition of a StmtCond has one. Rule 0 only fires for a
     plan that has none. qp_id counts the QueryPlans of a statement; each is copied out on its own
     so the passes below read one QueryPlan at a time.
+    The statement kind comes from local-name() and each kind reads only its own path to its QueryPlans:
+    a self:: test on every statement, the three paths on every statement and a trip up to the parent
+    for OperationType each read the whole plan again.
     */
     SELECT
         @current_table = 'plan parsing: shredding statements';
@@ -18393,12 +18396,13 @@ BEGIN
         qv.non_parallel_reason,
         qv.qp_xml
     FROM #plan_parsing_xml AS ppx
-    CROSS APPLY ppx.plan_xml.nodes(N'//Statements/*[self::StmtSimple or self::StmtCursor or self::StmtCond]') AS s (stmt)
-    CROSS APPLY s.stmt.nodes(N'(QueryPlan, CursorPlan/Operation/QueryPlan, Condition/QueryPlan)') AS q (qp)
+    CROSS APPLY ppx.plan_xml.nodes(N'//Statements/*') AS s (stmt)
     CROSS APPLY
     (
         /* Read each attribute once; each .value() call is its own XML reader */
         SELECT
+            stmt_kind =
+                s.stmt.value(N'local-name(.)', N'nvarchar(60)'),
             stmt_id =
                 s.stmt.value(N'(@StatementId)[1]', N'integer'),
             stmt_type =
@@ -18410,11 +18414,38 @@ BEGIN
     (
         SELECT
             operation_type =
-                q.qp.value(N'(../@OperationType)[1]', N'nvarchar(60)'),
+                CONVERT(nvarchar(60), NULL),
             non_parallel_reason =
                 q.qp.value(N'(@NonParallelPlanReason)[1]', N'nvarchar(200)'),
             qp_xml =
                 q.qp.query(N'.')
+        FROM s.stmt.nodes(N'QueryPlan') AS q (qp)
+        WHERE sv.stmt_kind = N'StmtSimple'
+
+        UNION ALL
+
+        SELECT
+            operation_type =
+                CONVERT(nvarchar(60), NULL),
+            non_parallel_reason =
+                q.qp.value(N'(@NonParallelPlanReason)[1]', N'nvarchar(200)'),
+            qp_xml =
+                q.qp.query(N'.')
+        FROM s.stmt.nodes(N'Condition/QueryPlan') AS q (qp)
+        WHERE sv.stmt_kind = N'StmtCond'
+
+        UNION ALL
+
+        SELECT
+            operation_type =
+                o.op.value(N'(@OperationType)[1]', N'nvarchar(60)'),
+            non_parallel_reason =
+                q.qp.value(N'(@NonParallelPlanReason)[1]', N'nvarchar(200)'),
+            qp_xml =
+                q.qp.query(N'.')
+        FROM s.stmt.nodes(N'CursorPlan/Operation') AS o (op)
+        CROSS APPLY o.op.nodes(N'QueryPlan') AS q (qp)
+        WHERE sv.stmt_kind = N'StmtCursor'
     ) AS qv
     WHERE ppx.plan_state = 0
     OPTION(RECOMPILE, MAXDOP 1);
