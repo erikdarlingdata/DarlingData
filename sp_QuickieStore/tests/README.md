@@ -21,8 +21,9 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `342` (`341` on SQL Server 2017, which skips the rule 14 check at
-compatibility level 150 and up).
+password). Expect `346` (`347` on SQL Server 2017, which skips the rule 14 check at
+compatibility level 150 and up but runs two more rule 1 checks, because before SQL Server 2019 the
+suggested table variable index has no inline INCLUDE).
 
 The harness needs go-sqlcmd: it passes `-W` together with `-y`, which the older ODBC
 `sqlcmd` rejects.
@@ -77,7 +78,8 @@ each run *executes* what it built:
   optimizer's own filter and Top, rule 8 must stay quiet for a filter on an aggregate result, for `HAVING` and for a filter on `ROW_NUMBER()`, and must fire for a filter on a Compute Scalar over table columns and for a mixed predicate (a table column and a window aggregate), rule 0 must not fire for a plan that is only
   an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its
   phase (`10 (populate)`), the phase has that operator, and the `KEYSET`
-  lookup finding names the right table. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
+  lookup finding names the right table, and in a self-join does not list the outer alias's column. Rule 1 on a table variable must
+  parse as suggested: before SQL Server 2019 with the include column at the end of the key. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
   `MAXDOP 1`, because a small machine puts a spool over the scan. Rules
   15 (needs a linked server), 17 (needs Standard Edition) and 19 (needs a
   compile of 1 second or more) are not covered.
