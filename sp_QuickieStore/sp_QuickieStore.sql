@@ -21092,7 +21092,7 @@ BEGIN
     /*
     Rule 2: serial plan
     The reasons that cannot be acted on are left out. A plan that calls a T-SQL scalar UDF is left to rule 3,
-    whatever reason it gives (SQL Server 2017 says CouldNotGenerateValidParallelPlan for it). CLR scalar
+    whatever reason it gives (SQL Server 2019 and earlier say CouldNotGenerateValidParallelPlan for it). CLR scalar
     functions do not force a serial plan, so they do not send the plan to rule 3.
     A cursor has a QueryPlan for each phase. Its fetch and refresh steps always say
     NonParallelizableIntrinsicFunction (the cursor's own machinery), so only the populate step is read.
@@ -21172,7 +21172,7 @@ BEGIN
     Rule 3: scalar UDF
     Inlined functions do not appear in the plan, so what shows here was not inlined.
     The finding only says the functions force a serial plan when the plan gives the UDF reason:
-    TSQLUserDefinedFunctionsNotParallelizable, or CouldNotGenerateValidParallelPlan on SQL Server 2017
+    TSQLUserDefinedFunctionsNotParallelizable, or CouldNotGenerateValidParallelPlan on SQL Server 2019
     and earlier, which is what those versions report for a T-SQL scalar UDF.
     */
     INSERT
@@ -21211,7 +21211,7 @@ BEGIN
                            OR
                              (
                                  ps.non_parallel_reason = N'CouldNotGenerateValidParallelPlan'
-                             AND @product_version < 15
+                             AND @product_version < 16
                              AND @azure = 0
                              )
                          )
