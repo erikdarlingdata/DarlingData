@@ -21607,8 +21607,30 @@ BEGIN
             d.stmt_id,
             stmt_type = MAX(ps.stmt_type),
             index_count = COUNT_BIG(*),
-            min_table = MIN(d.obj_table),
-            max_table = MAX(d.obj_table),
+            /*
+            A cursor worktable has no table name. MIN and MAX over it sent
+            "Null value is eliminated" to the client, so they skip it first
+            */
+            min_table =
+                (
+                    SELECT
+                        MIN(d3.obj_table)
+                    FROM #plan_dml_indexes AS d3
+                    WHERE d3.database_id = d.database_id
+                    AND   d3.plan_id = d.plan_id
+                    AND   d3.stmt_id = d.stmt_id
+                    AND   d3.obj_table IS NOT NULL
+                ),
+            max_table =
+                (
+                    SELECT
+                        MAX(d3.obj_table)
+                    FROM #plan_dml_indexes AS d3
+                    WHERE d3.database_id = d.database_id
+                    AND   d3.plan_id = d.plan_id
+                    AND   d3.stmt_id = d.stmt_id
+                    AND   d3.obj_table IS NOT NULL
+                ),
             index_names =
                 STUFF
                 (
