@@ -51,7 +51,8 @@ each run *executes* what it built:
   1,000,000 row table and one query per rule (0 to 14, 16 and 18), each found
   in Query Store by a marker comment. Each rule must show up for its query
   with its `rule_id` and `rule_name`. A primary key seek, a cheap serial query
-  and a UDF query must stay quiet where the rules say so. Rule 7 must pass its
+  and a UDF query must stay quiet where the rules say so, and rule 3 must not say a UDF forced
+  a serial plan that is serial for MAXDOP 1. Rule 7 must pass its
   executions per day gate with a short `@start_date` and fail it with the
   default window. Rule 14 must fire below compatibility level 150 and stay
   quiet at 150 and up. The column list is pinned, `@plan_parsing = 0` must

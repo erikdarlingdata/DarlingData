@@ -20683,7 +20683,10 @@ BEGIN
 
     /*
     Rule 3: scalar UDF
-    Inlined functions do not appear in the plan, so what shows here was not inlined
+    Inlined functions do not appear in the plan, so what shows here was not inlined.
+    The finding only says the functions force a serial plan when the plan gives the UDF reason:
+    TSQLUserDefinedFunctionsNotParallelizable, or CouldNotGenerateValidParallelPlan on SQL Server 2017
+    and earlier, which is what those versions report for a T-SQL scalar UDF.
     */
     INSERT
         #plan_findings
@@ -20714,8 +20717,17 @@ BEGIN
                          FROM #plan_statements AS ps
                          WHERE ps.database_id = pf.database_id
                          AND   ps.plan_id = pf.plan_id
-                         AND   ps.non_parallel_reason IS NOT NULL
                          AND   (ps.operation_type IS NULL OR ps.operation_type = N'PopulateQuery')
+                         AND
+                         (
+                              ps.non_parallel_reason = N'TSQLUserDefinedFunctionsNotParallelizable'
+                           OR
+                             (
+                                 ps.non_parallel_reason = N'CouldNotGenerateValidParallelPlan'
+                             AND @product_version < 15
+                             AND @azure = 0
+                             )
+                         )
                      )
                 AND  EXISTS
                      (
@@ -20727,7 +20739,7 @@ BEGIN
                          AND   pw.warning_type = 'udf'
                          AND   pw.detail NOT LIKE N'% (CLR)'
                      )
-                THEN N' and force a serial plan (the plan is serial; the reason SQL Server gives varies by version).'
+                THEN N' and force a serial plan (the plan gives that as its NonParallelPlanReason).'
                 ELSE N'.'
             END
     FROM #plan_facts AS pf

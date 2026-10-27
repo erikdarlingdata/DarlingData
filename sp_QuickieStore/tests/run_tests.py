@@ -2099,6 +2099,10 @@ SELECT /*pp_r10tv*/ @i = t.a FROM @tv AS t WHERE ABS(t.k) = 3 OPTION (RECOMPILE)
 /* 8, negative: a catalog view has a has_access filter on its base table */
 SELECT /*pp_r8cat*/ @i = o.object_id FROM sys.objects AS o WHERE o.name LIKE N'pp_x%';
 
+/* 3: the same UDF under MAXDOP 1. The plan gives MaxDOPSetToOne as the reason, so rule 3
+   must not say the function forced the serial plan */
+SELECT /*pp_r3m*/ @i = s.id, @j = dbo.pp_udf(s.a) FROM dbo.pp_small AS s WHERE s.id < 100 OPTION (MAXDOP 1);
+
 /* 1: an eager index spool over a table variable. The finding cannot be CREATE INDEX on it */
 DECLARE @tv1 TABLE (a integer NOT NULL, b integer NOT NULL);
 INSERT @tv1 (a, b) SELECT h.a, h.b FROM dbo.pp_heap AS h;
@@ -2404,7 +2408,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r5nn", "r5ne",
-            "r5c", "r8cat", "r8expr", "r1tv", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2479,6 +2483,11 @@ def plan_parsing_tests(server, password, R):
                 finding_text("r1", 1)[:120])
         R.check(G, "rule 3 finding names the function",
                 "pp_udf" in finding_text("r3", 3), finding_text("r3", 3)[:120])
+        R.check(G, "rule 3 says the UDF forces a serial plan when the plan gives the UDF reason",
+                "force a serial plan" in finding_text("r3", 3), finding_text("r3", 3)[:160])
+        R.check(G, "rule 3 does not blame the UDF when the plan is serial for MAXDOP 1",
+                pp_has(found, ids["r3m"], 3) and "force a serial plan" not in finding_text("r3m", 3),
+                finding_text("r3m", 3)[:160])
         R.check(G, "rule 4 finding names the table",
                 "pp_small" in finding_text("r4", 4), finding_text("r4", 4)[:120])
         R.check(G, "rule 18 finding does not claim a count of executions",
