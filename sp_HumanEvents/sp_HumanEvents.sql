@@ -3866,6 +3866,11 @@ BEGIN
     WHERE b.n = 1
     AND   (b.contentious_object = @object_name
            OR @object_name = N'')
+    /*
+    spids are reused, so one blocking pair can show up again later
+    with the same sort_order. event_time puts those in order, and
+    transaction_id, unique per row with n = 1 above, ends the ties.
+    */
     ORDER BY
         b.sort_order,
         CASE
@@ -3874,7 +3879,9 @@ BEGIN
             ELSE +1
         END,
         b.spid,
-        b.ecid
+        b.ecid,
+        b.event_time,
+        b.transaction_id
     OPTION(RECOMPILE);
 
     SELECT DISTINCT
@@ -4055,6 +4062,7 @@ BEGIN
             ap.*,
             c.statement_start_offset,
             c.statement_end_offset,
+            c.plan_handle,
             c.creation_time,
             c.last_execution_time,
             c.execution_count,
@@ -4097,8 +4105,22 @@ BEGIN
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
+    /*
+    Plans with the same average CPU tie, so the rest of the plan key
+    follows: the statement, its plan, and the report row it came from.
+    */
     ORDER BY
-        ap.avg_worker_time_ms DESC
+        ap.avg_worker_time_ms DESC,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset,
+        ap.plan_handle,
+        ap.database_name,
+        ap.database_id,
+        ap.currentdbname,
+        ap.currentdbid,
+        ap.contentious_object,
+        ap.query_text
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 END;
 

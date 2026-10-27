@@ -1857,6 +1857,13 @@ BEGIN
         b.login_name,
         b.blocked_process_report
     FROM #blocks_sh AS b
+    /*
+    One system_health snapshot can list the same spid and ecid in
+    several reports, so the keys above tie. The rest of the row,
+    ending with the report itself, settles it: only rows that are
+    equal in every column keep an arbitrary order, and those look
+    the same.
+    */
     ORDER BY
         b.event_time DESC,
         CASE
@@ -1865,7 +1872,11 @@ BEGIN
             ELSE +1
         END,
         b.spid,
-        b.ecid
+        b.ecid,
+        b.wait_time_ms DESC,
+        b.status,
+        b.wait_resource,
+        CONVERT(nvarchar(max), b.blocked_process_report)
     OPTION(RECOMPILE);
 
     /*
@@ -2059,6 +2070,7 @@ BEGIN
             ap.*,
             c.statement_start_offset,
             c.statement_end_offset,
+            c.plan_handle,
             c.creation_time,
             c.last_execution_time,
             c.execution_count,
@@ -2102,8 +2114,18 @@ BEGIN
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
+    /*
+    Plans with the same average CPU tie, so the rest of the plan key
+    follows: the statement, its plan, and the report row it came from.
+    */
     ORDER BY
-        ap.avg_worker_time_ms DESC
+        ap.avg_worker_time_ms DESC,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset,
+        ap.plan_handle,
+        ap.currentdbname,
+        ap.query_text
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
     RETURN;
     /*End system health section, skips checks because most of them won't run*/
@@ -3368,7 +3390,8 @@ ORDER BY
         ELSE +1
     END,
     b.spid,
-    b.ecid
+    b.ecid,
+    b.transaction_id /*with n = 1 above, unique per row*/
 OPTION(RECOMPILE);';
 
 /* Handle table logging */
@@ -3661,6 +3684,7 @@ BEGIN
             ap.*,
             c.statement_start_offset,
             c.statement_end_offset,
+            c.plan_handle,
             c.creation_time,
             c.last_execution_time,
             c.execution_count,
@@ -3705,8 +3729,22 @@ BEGIN
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
+    /*
+    Plans with the same average CPU tie, so the rest of the plan key
+    follows: the statement, its plan, and the report row it came from.
+    */
     ORDER BY
-        ap.avg_worker_time_ms DESC
+        ap.avg_worker_time_ms DESC,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset,
+        ap.plan_handle,
+        ap.database_name,
+        ap.database_id,
+        ap.currentdbname,
+        ap.currentdbid,
+        ap.contentious_object,
+        ap.query_text
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 
     BlockingRollup:
