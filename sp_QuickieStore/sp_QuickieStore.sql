@@ -20312,6 +20312,13 @@ BEGIN
                 N''
             );
 
+    IF  @debug = 1
+    AND @pp_sql IS NOT NULL
+    BEGIN
+        PRINT LEN(@pp_sql);
+        PRINT @pp_sql;
+    END;
+
     IF @pp_sql IS NOT NULL
     BEGIN
         INSERT
