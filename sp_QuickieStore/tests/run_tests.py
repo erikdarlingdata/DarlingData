@@ -1793,12 +1793,548 @@ def regression_window_tests(server, password, R, state):
                     "got=%s expected=%s" % (got, expected))
 
 
+# ---------------------------------------------------------------------------
+# @plan_parsing
+#
+# One extra result set of plan findings, opt-in. The fixture is its own scratch
+# database so the 1,000,000 row table does not slow the groups above. Every
+# fixture query carries a /*pp_...*/ marker comment right after its first
+# keyword (Query Store drops comments in front of the statement for
+# sp_executesql and simple-parameterized queries), and the group finds each
+# query_id by that marker, then asks sp_QuickieStore about exactly those ids.
+#
+# Rules not covered here, and why:
+#   15 remote query        needs a linked server; no reliable loopback on a
+#                          Linux container (no OLE DB provider)
+#   17 Standard Edition    needs Standard Edition; CI and the lab run Developer
+#   19 long compile        needs a compile of 1 second or more, which is not
+#                          reproducible across machines
+# ---------------------------------------------------------------------------
+PP_DB = TEST_DB + "_pp"
+
+PP_COLUMNS = ["database_name", "query_id", "plan_id", "rule_id", "rule_name",
+              "finding", "object_name", "node_ids"]
+
+PP_FIXTURE_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db};
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, DATA_FLUSH_INTERVAL_SECONDS = 60,
+     INTERVAL_LENGTH_MINUTES = 1, QUERY_CAPTURE_MODE = ALL);
+""".format(db=PP_DB)
+
+# Objects. Row counts matter: the scan rules (9, 18) read the 1,000,000 row
+# TableCardinality of pp_big; the rest only need enough rows for a real plan.
+PP_OBJECTS_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+
+/* one shared narrow 1,000,000 row table, built set-based */
+CREATE TABLE dbo.pp_big
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    k integer NOT NULL,
+    pad char(20) NOT NULL
+);
+
+INSERT dbo.pp_big WITH (TABLOCK) (id, k, pad)
+SELECT x.n, x.n % 1000, 'x'
+FROM
+(
+    SELECT TOP (1000000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+/* 100,000 rows: nonclustered index on a only, nullable n, b has few values */
+CREATE TABLE dbo.pp_small
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    a integer NOT NULL,
+    b integer NOT NULL,
+    c varchar(100) NOT NULL,
+    n integer NULL
+);
+
+INSERT dbo.pp_small WITH (TABLOCK) (id, a, b, c, n)
+SELECT x.n, x.n % 1000, x.n % 7, REPLICATE('c', 50),
+       CASE WHEN x.n % 10 = 0 THEN NULL ELSE x.n % 500 END
+FROM
+(
+    SELECT TOP (100000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+CREATE INDEX ix_a ON dbo.pp_small (a);
+
+/* a heap with no index at all: the inner side of the eager spool query */
+CREATE TABLE dbo.pp_heap
+(
+    a integer NOT NULL,
+    b integer NOT NULL,
+    c varchar(100) NOT NULL
+);
+
+INSERT dbo.pp_heap WITH (TABLOCK) (a, b, c)
+SELECT x.n % 5000, 1, REPLICATE('h', 50)
+FROM
+(
+    SELECT TOP (50000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+/* a two row outer table: forced nested loops runs the big scan once per row */
+CREATE TABLE dbo.pp_outer (a integer NOT NULL);
+INSERT dbo.pp_outer (a) VALUES (1), (2);
+
+/* varchar column on a SQL collation, indexed: nvarchar parameters convert it */
+CREATE TABLE dbo.pp_str
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    code varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    pad char(100) NOT NULL
+);
+
+INSERT dbo.pp_str WITH (TABLOCK) (id, code, pad)
+SELECT x.n, CONVERT(varchar(20), x.n), 'p'
+FROM
+(
+    SELECT TOP (50000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+CREATE INDEX ix_code ON dbo.pp_str (code);
+
+/* five nonclustered indexes plus the clustered key: one insert maintains six */
+CREATE TABLE dbo.pp_wide
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    c1 integer NOT NULL,
+    c2 integer NOT NULL,
+    c3 integer NOT NULL,
+    c4 integer NOT NULL,
+    c5 integer NOT NULL
+);
+
+CREATE INDEX ix1 ON dbo.pp_wide (c1);
+CREATE INDEX ix2 ON dbo.pp_wide (c2);
+CREATE INDEX ix3 ON dbo.pp_wide (c3);
+CREATE INDEX ix4 ON dbo.pp_wide (c4);
+CREATE INDEX ix5 ON dbo.pp_wide (c5);
+
+/* the missing index query's table: unindexed, selective lookups */
+CREATE TABLE dbo.pp_mi
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    v integer NOT NULL,
+    w integer NOT NULL,
+    pad char(200) NOT NULL
+);
+
+INSERT dbo.pp_mi WITH (TABLOCK) (id, v, w, pad)
+SELECT x.n, x.n, 1, 'm'
+FROM
+(
+    SELECT TOP (20000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+/* a scalar UDF that cannot be inlined (GETDATE), and a multi-statement TVF */
+EXECUTE (N'CREATE FUNCTION dbo.pp_udf (@a integer) RETURNS integer AS BEGIN RETURN @a + DATEPART(SECOND, GETDATE()); END;');
+EXECUTE (N'CREATE FUNCTION dbo.pp_mstvf () RETURNS @t TABLE (a integer NOT NULL) AS BEGIN INSERT @t (a) VALUES (1), (2), (3); RETURN; END;');
+"""
+
+# The workload. Results go into variables so the output stays small. Each
+# statement is its own Query Store query.
+PP_WORKLOAD_SQL = """
+SET NOCOUNT ON;
+DECLARE @i integer, @j integer, @c bigint, @s varchar(100);
+
+/* 4: key lookup that applies its own predicate (b) */
+EXECUTE sys.sp_executesql N'SELECT /*pp_r4*/ s.id, s.c FROM dbo.pp_small AS s WHERE s.a = @p AND s.b = @q;', N'@p integer, @q integer', 5, 3;
+
+/* 5: NOT IN against a nullable column */
+SELECT /*pp_r5*/ @i = s.id FROM dbo.pp_small AS s WHERE s.a NOT IN (SELECT s2.n FROM dbo.pp_small AS s2 WHERE s2.b = 3);
+
+/* 6: nvarchar parameter against an indexed varchar column */
+EXECUTE sys.sp_executesql N'SELECT /*pp_r6*/ s.id, s.pad FROM dbo.pp_str AS s WHERE s.code = @p;', N'@p nvarchar(20)', N'123';
+
+/* 8: filter on a nullable right-side column after an outer join */
+SELECT /*pp_r8*/ @i = s.id FROM dbo.pp_small AS s LEFT JOIN dbo.pp_heap AS h ON h.a = s.a WHERE h.b IS NULL;
+
+/* 3: UDF that blocks inlining on every version */
+SELECT /*pp_r3*/ @i = s.id, @j = dbo.pp_udf(s.a) FROM dbo.pp_small AS s WHERE s.id < 100;
+
+/* 9: residual predicate on a scan of the 1,000,000 row table */
+SELECT /*pp_r9*/ @c = COUNT_BIG(*) FROM dbo.pp_big AS b WHERE b.k = 77 OPTION (RECOMPILE);
+
+/* 10: functions and a leading wildcard around columns */
+SELECT /*pp_r10*/ @i = s.id FROM dbo.pp_small AS s WHERE ABS(s.b) = 5;
+SELECT /*pp_r10b*/ @i = s.id FROM dbo.pp_small AS s WHERE s.c LIKE '%cc';
+
+/* 11: multi-statement table-valued function */
+SELECT /*pp_r11*/ @i = s.id FROM dbo.pp_small AS s JOIN dbo.pp_mstvf() AS f ON f.a = s.b;
+
+/* 12: TopN Sort over a scan */
+SELECT /*pp_r12*/ TOP (10) @s = s.c FROM dbo.pp_small AS s ORDER BY s.c;
+
+/* 13: many-to-many merge join (duplicate a values on both sides) */
+SELECT /*pp_r13*/ @c = SUM(CONVERT(bigint, x.id) * y.id) FROM dbo.pp_small AS x JOIN dbo.pp_small AS y ON y.a = x.a WHERE x.id < 3000 AND y.id < 3000 OPTION (MERGE JOIN);
+
+/* 1: correlated subquery against a heap under forced nested loops */
+SELECT /*pp_r1*/ @i = s.id, @j = (SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a) FROM dbo.pp_small AS s WHERE s.id < 2000 OPTION (LOOP JOIN);
+
+/* 18: the 1,000,000 row scan on the inner side of nested loops */
+SELECT /*pp_r18*/ @c = SUM(CONVERT(bigint, b.id) * o.a) FROM dbo.pp_outer AS o JOIN dbo.pp_big AS b ON b.k = o.a OPTION (LOOP JOIN);
+
+/* 16: one insert into a table with six indexes */
+INSERT /*pp_r16*/ dbo.pp_wide (id, c1, c2, c3, c4, c5) SELECT TOP (1) 2, 1, 1, 1, 1, 1 FROM sys.objects AS o OPTION (RECOMPILE);
+
+/* 2: serial because the text says MAXDOP 1, with well over a second of CPU:
+   about 150 million rows go through a hash join */
+SELECT /*pp_r2*/ @c = SUM(CONVERT(bigint, b1.id) * b2.id) FROM dbo.pp_big AS b1 JOIN dbo.pp_big AS b2 ON b2.k = b1.k WHERE b2.id < 150000 OPTION (MAXDOP 1);
+
+/* 2, negative: serial for the same reason but cheap */
+SELECT /*pp_r2cheap*/ @c = COUNT_BIG(*) FROM dbo.pp_small AS s WHERE s.b = 3 OPTION (MAXDOP 1);
+
+/* clean: a primary key seek, nothing to find */
+EXECUTE sys.sp_executesql N'SELECT /*pp_clean*/ s.c FROM dbo.pp_small AS s WHERE s.id = @i;', N'@i integer', 7;
+
+/* 7: a small query that asks for an index, run 1,100 times. Cheap per run, so
+   only the executions per day gate can let it through. The join keeps the plan
+   from being trivial (trivial plans carry no missing index request). */
+SET @i = 0;
+WHILE @i < 1100
+BEGIN
+    SELECT /*pp_r7*/ @j = m.id FROM dbo.pp_mi AS m JOIN dbo.pp_outer AS o ON o.a = m.w WHERE m.v = @i;
+    SET @i += 1;
+END;
+"""
+
+# Rule 14: a table variable compiled for one row only counts below compat 150,
+# so the "old" query compiles at 140 and the "new" one at the server default.
+PP_TABLEVAR_SQL = """
+SET NOCOUNT ON;
+DECLARE @t TABLE (a integer NOT NULL);
+DECLARE @c bigint;
+INSERT @t (a) VALUES (1);
+SELECT /*pp_{tag}*/ @c = COUNT_BIG(*) FROM dbo.pp_small AS s JOIN @t AS t ON t.a = s.a;
+"""
+
+# Rule 0: 130 joins forced into one left-deep chain nest the plan XML past the
+# 128 level limit, so it will not convert to xml. No row ever matches, so the
+# first join comes back empty and the rest of the chain never runs.
+PP_DEEP_SQL = ("SET NOCOUNT ON; DECLARE @i integer; SELECT /*pp_r0*/ @i = s0.a "
+               "FROM dbo.pp_outer AS s0 %s OPTION (FORCE ORDER, LOOP JOIN);")
+
+# (rule_id, rule_name, marker): each is asserted for its fixture query
+PP_RULE_CASES = [
+    (1, "eager index spool", "r1"),
+    (2, "serial plan", "r2"),
+    (3, "scalar UDF", "r3"),
+    (4, "lookup with predicate", "r4"),
+    (5, "NOT IN on nullable column", "r5"),
+    (6, "implicit conversion prevents seek", "r6"),
+    (7, "missing index request", "r7"),
+    (8, "late filter", "r8"),
+    (9, "scan with residual predicate", "r9"),
+    (10, "non-SARGable predicate", "r10"),
+    (10, "non-SARGable predicate", "r10b"),
+    (11, "multi-statement table-valued function", "r11"),
+    (12, "TOP over scan", "r12"),
+    (13, "many-to-many merge join", "r13"),
+    (16, "wide DML", "r16"),
+    (18, "scan on inner side of nested loops", "r18"),
+]
+
+
+def pp_markers(server, password):
+    """Fixture marker -> query_id, from the scratch database's Query Store."""
+    out, _ = _sqlcmd(
+        server, password,
+        "SET NOCOUNT ON; SELECT q.query_id, "
+        "SUBSTRING(t.query_sql_text, CHARINDEX(N'/*pp_', t.query_sql_text) + 5, "
+        "CHARINDEX(N'*/', t.query_sql_text) - CHARINDEX(N'/*pp_', t.query_sql_text) - 5) "
+        "FROM sys.query_store_query AS q "
+        "JOIN sys.query_store_query_text AS t ON t.query_text_id = q.query_text_id "
+        "WHERE t.query_sql_text LIKE N'%/*pp[_]%*/%' "
+        "AND t.query_sql_text NOT LIKE N'%sys.query_store%' "
+        "AND t.query_sql_text NOT LIKE N'%CREATE %' "
+        "ORDER BY q.query_id;",
+        database=PP_DB)
+    found = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[0].strip().isdigit():
+            found[parts[1].strip()] = int(parts[0])
+    return found
+
+
+def pp_run(server, password, query_ids, extra=""):
+    """Run sp_QuickieStore with @plan_parsing = 1 for exactly these query ids.
+    Returns (stdout, findings), findings being one dict per finding row."""
+    out, combined = run_qs(
+        server, password,
+        ", @plan_parsing = 1, @top = 1000, @include_query_ids = '%s'%s"
+        % (",".join(str(q) for q in sorted(set(query_ids))), extra),
+        timeout=600, database_name=PP_DB)
+    return out, combined, pp_findings(out)
+
+
+def pp_findings(stdout):
+    """Rows of the plan findings result set: everything after its header line
+    that begins with the database name and three integers. A finding can run
+    over several lines, so continuation lines are skipped, not parsed."""
+    header = "\t".join(PP_COLUMNS)
+    lines = stdout.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip() == header), None)
+    if start is None:
+        return None
+    rows = []
+    for line in lines[start + 2:]:
+        parts = line.split("\t")
+        if (len(parts) >= 5 and parts[0] == PP_DB and parts[1].isdigit()
+                and parts[2].isdigit() and parts[3].isdigit()):
+            rows.append(dict(zip(PP_COLUMNS, parts)))
+    return rows
+
+
+def pp_has(findings, query_id, rule_id):
+    return any(f["query_id"] == str(query_id) and f["rule_id"] == str(rule_id)
+               for f in findings or [])
+
+
+def pp_sql_errors(text):
+    """Errors from the fixture and the runs: severity 11 and up, which takes in
+    the syntax errors (level 15) find_sql_errors lets through."""
+    if not text:
+        return []
+    return re.findall(r"Msg (?:\d+, Level 1[1-9]|4060|911)[^\n]*", text)
+
+
+def plan_parsing_tests(server, password, R):
+    """@plan_parsing: one extra result set with plan findings, opt-in, normal
+    mode only. One fixture query per rule; each rule is asserted for its query,
+    clean and below-threshold queries are asserted quiet, the column list is
+    pinned, the off state is asserted silent, and each rejected combination is
+    asserted to raise."""
+    G = "PlanParsing"
+    try:
+        out, err = _sqlcmd(server, password, PP_FIXTURE_SQL)
+        errs = pp_sql_errors(out + "\n" + err)
+        R.check(G, "scratch database created with Query Store on",
+                not errs, str(errs))
+        if errs:
+            return
+        out, err = _sqlcmd(server, password, PP_OBJECTS_SQL, database=PP_DB,
+                           timeout=900)
+        errs = pp_sql_errors(out + "\n" + err)
+        R.check(G, "objects built", not errs, str(errs[:2]))
+        if errs:
+            return
+
+        # Default compat for new databases on this server (model's level)
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'COMPAT:' + CONVERT(varchar(10), "
+                         "d.compatibility_level) FROM sys.databases AS d "
+                         "WHERE d.name = N'model';")
+        m = re.search(r"COMPAT:(\d+)", out)
+        default_compat = int(m.group(1)) if m else 140
+
+        out, err = _sqlcmd(server, password, PP_WORKLOAD_SQL, database=PP_DB,
+                           timeout=900)
+        errs = pp_sql_errors(out + "\n" + err)
+        R.check(G, "workload ran", not errs, str(errs[:2]))
+        if errs:
+            return
+
+        # Rule 14 needs a plan compiled below compat 150. Compile the "old"
+        # query at 140; compile a "new" one at the server default too, when the
+        # default is 150 or higher, for the negative case.
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = 140;" % PP_DB)
+        out, err = _sqlcmd(server, password,
+                           PP_TABLEVAR_SQL.format(tag="r14old"), database=PP_DB)
+        errs = pp_sql_errors(out + "\n" + err)
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;"
+                % (PP_DB, default_compat))
+        if default_compat >= 150:
+            out, err = _sqlcmd(server, password,
+                               PP_TABLEVAR_SQL.format(tag="r14new"), database=PP_DB)
+            errs += pp_sql_errors(out + "\n" + err)
+        R.check(G, "table variable queries ran", not errs, str(errs[:2]))
+
+        # Rule 0, first form: a plan too deeply nested to convert to xml.
+        joins = " ".join("JOIN dbo.pp_outer AS s%d ON s%d.a = s%d.a + 100"
+                         % (n, n, n - 1) for n in range(1, 131))
+        out, err = _sqlcmd(server, password, PP_DEEP_SQL % joins,
+                           database=PP_DB, timeout=600)
+        R.check(G, "too-deep plan query ran",
+                not pp_sql_errors(out + "\n" + err),
+                str(pp_sql_errors(out + "\n" + err)[:2]))
+
+        _sqlcmd(server, password, "EXECUTE sys.sp_query_store_flush_db;",
+                database=PP_DB)
+        ids = pp_markers(server, password)
+        want = {c[2] for c in PP_RULE_CASES} | {
+            "r2cheap", "clean", "r14old", "r0"}
+        missing = sorted(want - set(ids))
+        R.check(G, "every fixture query is in Query Store", not missing,
+                "missing markers: %s" % missing)
+        if missing:
+            return
+
+        # A short window so executions per day clears the rule 7 gate.
+        # An explicit offset: no offset means server local time.
+        import datetime
+        window = ((datetime.datetime.now(datetime.timezone.utc)
+                   - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
+                  + "+00:00")
+        all_ids = [ids[k] for k in want] + ([ids["r14new"]] if "r14new" in ids else [])
+
+        out, combined, found = pp_run(server, password, all_ids,
+                                      ", @start_date = '%s'" % window)
+        errs = pp_sql_errors(combined)
+        R.check(G, "@plan_parsing = 1 executes cleanly", not errs, str(errs[:2]))
+        R.check(G, "@plan_parsing = 1 reaches completion", completed(out),
+                "footer result set missing")
+        R.check(G, "findings result set has the contracted columns, in order",
+                found is not None,
+                "no result set headed %s" % ", ".join(PP_COLUMNS))
+        found = found or []
+        R.check(G, "findings result set has rows", len(found) > 0,
+                "no finding rows")
+
+        for rule_id, rule_name, marker in PP_RULE_CASES:
+            hits = [f for f in found if f["query_id"] == str(ids[marker])
+                    and f["rule_id"] == str(rule_id)]
+            R.check(G, "rule %d (%s) fires for %s" % (rule_id, rule_name, marker),
+                    len(hits) > 0 and all(h["rule_name"] == rule_name for h in hits),
+                    "no row" if not hits else "rule_name was %r" % hits[0]["rule_name"])
+
+        # One row per (plan, rule)
+        keys = [(f["plan_id"], f["rule_id"]) for f in found]
+        R.check(G, "one row per plan and rule", len(found) > 0 and len(keys) == len(set(keys)),
+                "duplicate (plan_id, rule_id) rows")
+
+        # Quiet cases
+        R.check(G, "clean primary key seek has no findings",
+                len(found) > 0
+                and not any(f["query_id"] == str(ids["clean"]) for f in found),
+                "findings for the clean query")
+        R.check(G, "rule 2 stays quiet below 1,000 ms of CPU (MAXDOP 1, cheap)",
+                len(found) > 0 and not pp_has(found, ids["r2cheap"], 2),
+                "rule 2 fired")
+        R.check(G, "rule 2 leaves the scalar UDF reason to rule 3",
+                len(found) > 0 and not pp_has(found, ids["r3"], 2),
+                "rule 2 fired for the UDF query")
+
+        # The text of a few findings
+        def finding_text(marker, rule_id):
+            return next((f["finding"] for f in found
+                         if f["query_id"] == str(ids[marker])
+                         and f["rule_id"] == str(rule_id)), "")
+        R.check(G, "rule 1 finding scripts a CREATE INDEX on the heap",
+                "CREATE" in finding_text("r1", 1).upper()
+                and "pp_heap" in finding_text("r1", 1),
+                finding_text("r1", 1)[:120])
+        R.check(G, "rule 3 finding names the function",
+                "pp_udf" in finding_text("r3", 3), finding_text("r3", 3)[:120])
+        R.check(G, "rule 4 finding names the table",
+                "pp_small" in finding_text("r4", 4), finding_text("r4", 4)[:120])
+
+        # Rule 7 gate: the same query with the default 7 day window runs about
+        # 157 times a day, and costs almost nothing, so it should not fire.
+        out, combined, found7 = pp_run(server, password, [ids["r7"]])
+        R.check(G, "rule 7 stays quiet under 1,000 executions a day",
+                found7 is not None and not pp_has(found7, ids["r7"], 7),
+                "rule 7 fired on the default window")
+
+        # Rule 14: compat gate. Fires for the plan compiled at 140 while the
+        # database is at 140; silent for the plan compiled at the default
+        # level when that is 150 or higher.
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = 140;" % PP_DB)
+        out, combined, found14 = pp_run(server, password, [ids["r14old"]])
+        R.check(G, "rule 14 (table variable) fires for a plan compiled below compat 150",
+                pp_has(found14, ids["r14old"], 14)
+                and all(f["rule_name"] == "table variable" for f in found14
+                        if f["rule_id"] == "14"),
+                "no rule 14 row")
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;"
+                % (PP_DB, default_compat))
+        if default_compat >= 150 and "r14new" in ids:
+            out, combined, found14 = pp_run(server, password, [ids["r14new"]])
+            R.check(G, "rule 14 stays quiet at compat 150 and up",
+                    found14 is not None and not pp_has(found14, ids["r14new"], 14),
+                    "rule 14 fired for a plan compiled at compat %d" % default_compat)
+
+        # Rule 0: a plan too deeply nested to convert
+        if True:
+            out, combined, found0 = pp_run(server, password, [ids["r0"]])
+            R.check(G, "rule 0 (plan not checked) fires for a plan too deep to convert",
+                    pp_has(found0, ids["r0"], 0)
+                    and all(f["rule_name"] == "plan not checked" for f in found0
+                            if f["rule_id"] == "0"),
+                    "no rule 0 row")
+
+        # Off by default: no findings result set, and nothing else changes
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 0, @top = 1000, "
+                               "@include_query_ids = '%s'" % ids["r4"],
+                               database_name=PP_DB)
+        R.check(G, "@plan_parsing = 0 returns no findings result set",
+                not pp_sql_errors(combined) and completed(out)
+                and "rule_id" not in out and "node_ids" not in out,
+                "findings columns present or run failed")
+        out, combined = run_qs(server, password,
+                               ", @top = 1000, @include_query_ids = '%s'" % ids["r4"],
+                               database_name=PP_DB)
+        R.check(G, "default run (no @plan_parsing) returns no findings result set",
+                not pp_sql_errors(combined) and completed(out)
+                and "rule_id" not in out and "node_ids" not in out,
+                "findings columns present or run failed")
+
+        # Rejected combinations: severity 11 error that names @plan_parsing,
+        # and the run does not reach the footer.
+        rejected = [
+            ("@find_high_impact = 1", ", @find_high_impact = 1"),
+            ("@find_parameter_sensitive = 1", ", @find_parameter_sensitive = 1"),
+            ("regression mode", ", @regression_baseline_start_date = '2020-01-01'"),
+            ("@log_to_table = 1", ", @log_to_table = 1, @log_database_name = '%s'" % PP_DB),
+        ]
+        for label, extra in rejected:
+            out, combined = run_qs(server, password,
+                                   ", @plan_parsing = 1" + extra,
+                                   database_name=PP_DB)
+            R.check(G, "@plan_parsing = 1 with %s is rejected" % label,
+                    re.search(r"Level 11", combined) is not None
+                    and "plan_parsing" in combined and not completed(out),
+                    combined.replace("\n", " ")[:160])
+    finally:
+        _sqlcmd(server, password, CLEANUP_SQL.replace(TEST_DB, PP_DB))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="SQL2022")
     ap.add_argument("--password", default="L!nt0044")
-    ap.add_argument("--only", choices=["multidb"],
-                    help="run one group by itself (multidb: the MultiDb group)")
+    ap.add_argument("--only", choices=["multidb", "plan_parsing"],
+                    help="run one group by itself (multidb: the MultiDb group, "
+                         "plan_parsing: the PlanParsing group)")
     args = ap.parse_args()
 
     print("Running sp_QuickieStore assertion tests against %s..." % args.server)
@@ -1814,6 +2350,13 @@ def main():
         sys.exit(1)
 
     R = Results()
+    if args.only == "plan_parsing":
+        plan_parsing_tests(args.server, args.password, R)
+        for item in R.items:
+            print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",
+                                           item["group"], item["name"], item["detail"]))
+        print("Total: %d passed, %d failed" % (R.passed, R.failed))
+        sys.exit(1 if R.failed else 0)
     if args.only == "multidb":
         try:
             multi_database_tests(args.server, args.password, R)
@@ -1846,6 +2389,7 @@ def main():
         if build_ok:
             multi_database_tests(args.server, args.password, R)
             id_list_tests(args.server, args.password, R)
+        plan_parsing_tests(args.server, args.password, R)
     finally:
         out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL + RM_CLEANUP_SQL)
         R.check("Fixture", "scratch databases dropped",
