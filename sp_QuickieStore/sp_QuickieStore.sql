@@ -2083,10 +2083,8 @@ CREATE TABLE
     node_id integer NOT NULL,
     parent_node_id integer NULL,
     parent_op nvarchar(60) NULL,
-    second_sibling_id integer NULL,
     gp_node_id integer NULL,
     gp_op nvarchar(60) NULL,
-    parent_second_sibling_id integer NULL,
     child_1_id integer NULL,
     child_1_op nvarchar(60) NULL,
     gchild_1_id integer NULL
@@ -19918,7 +19916,7 @@ BEGIN
     OPTION(RECOMPILE);
 
     /*
-    Relations: where a scan sits (its parent, whether it is the second child, its grandparent)
+    Relations: where a scan sits (its parent and its grandparent)
     and what sits under a Top or TopN Sort. Only the scans and Top operators the rules can use
     are listed, and the parents and children come from the edges.
     */
@@ -19934,10 +19932,8 @@ BEGIN
         node_id,
         parent_node_id,
         parent_op,
-        second_sibling_id,
         gp_node_id,
         gp_op,
-        parent_second_sibling_id,
         child_1_id,
         child_1_op,
         gchild_1_id
@@ -19950,10 +19946,8 @@ BEGIN
         po.node_id,
         parent_node_id = e1.parent_node_id,
         parent_op = pa.physical_op,
-        second_sibling_id = e2.child_node_id,
         gp_node_id = e3.parent_node_id,
         gp_op = gp.physical_op,
-        parent_second_sibling_id = e4.child_node_id,
         child_1_id = c1.child_node_id,
         child_1_op = co.physical_op,
         gchild_1_id = g1.child_node_id
@@ -19970,13 +19964,6 @@ BEGIN
       AND pa.stmt_id = e1.stmt_id
       AND pa.qp_id = e1.qp_id
       AND pa.node_id = e1.parent_node_id
-    LEFT JOIN #plan_edges AS e2
-      ON  e2.database_id = e1.database_id
-      AND e2.plan_id = e1.plan_id
-      AND e2.stmt_id = e1.stmt_id
-      AND e2.qp_id = e1.qp_id
-      AND e2.parent_node_id = e1.parent_node_id
-      AND e2.child_ordinal = 2
     LEFT JOIN #plan_edges AS e3
       ON  e3.database_id = e1.database_id
       AND e3.plan_id = e1.plan_id
@@ -19989,13 +19976,6 @@ BEGIN
       AND gp.stmt_id = e3.stmt_id
       AND gp.qp_id = e3.qp_id
       AND gp.node_id = e3.parent_node_id
-    LEFT JOIN #plan_edges AS e4
-      ON  e4.database_id = e3.database_id
-      AND e4.plan_id = e3.plan_id
-      AND e4.stmt_id = e3.stmt_id
-      AND e4.qp_id = e3.qp_id
-      AND e4.parent_node_id = e3.parent_node_id
-      AND e4.child_ordinal = 2
     LEFT JOIN #plan_edges AS c1
       ON  c1.database_id = po.database_id
       AND c1.plan_id = po.plan_id
