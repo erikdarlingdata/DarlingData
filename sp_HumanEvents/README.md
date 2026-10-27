@@ -122,6 +122,8 @@ EXECUTE dbo.sp_HumanEvents
     @output_schema_name = 'dbo';
 ```
 
+When logging blocking to a table, each blocking episode gets one row per process: the same spid, ecid, transaction and side (blocked or blocking). The row holds the first report of the episode, and later reports raise its wait_time to the longest wait seen.
+
 ## Resources
 * [YouTube playlist](https://www.youtube.com/playlist?list=PLt4QZ-7lfQifgpvqsa21WLt-u2tZlyoC_)
 * [Blog post](https://www.erikdarling.com/sp_humanevents/)

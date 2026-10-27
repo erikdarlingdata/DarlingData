@@ -380,6 +380,7 @@ CREATE TABLE
 CREATE TABLE
     #human_events_xml_internal
 (
+    id bigint IDENTITY NOT NULL, /*a per-report key, the last tie-breaker when the blocking logger keeps one report per episode*/
     human_events_xml xml
 );
 
@@ -4938,6 +4939,11 @@ SELECT server_name, event_time, activity, database_name, database_id, object_id,
        trancount, clientapp, hostname, loginname, isolationlevel, sqlhandle, process_report
 FROM
 (
+    /*
+    Keep the first report of each episode. ORDER BY the partition
+    columns themselves kept an arbitrary one; event_time, then the
+    staging row id, picks the same row every time.
+    */
     SELECT
         x.*,
         x =
@@ -4950,15 +4956,14 @@ FROM
                         x.transaction_id,
                         x.activity
                     ORDER BY
-                        x.spid,
-                        x.ecid,
-                        x.transaction_id,
-                        x.activity
+                        x.event_time,
+                        x.report_id
                 )
     FROM
     (
         SELECT
             server_name = @@SERVERNAME,
+            report_id = xet.id,
             event_time =
                 DATEADD
                 (
@@ -5068,6 +5073,7 @@ FROM
 
         SELECT
             server_name = @@SERVERNAME,
+            report_id = xet.id,
             event_time =
                 DATEADD
                 (
@@ -5169,12 +5175,22 @@ WHERE NOT EXISTS
     AND   x.transaction_id = x2.transaction_id
     AND   x.spid = x2.spid
     AND   x.ecid = x2.ecid
-    AND   x.clientapp = x2.client_app
-    AND   x.hostname = x2.host_name
-    AND   x.loginname = x2.login_name
+    /*
+    NULL-safe: parallel workers (ecid > 0) carry no loginname, so =
+    never matched them, and every later report of the same worker
+    was inserted again as a new row.
+    */
+    AND   (x.clientapp = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
 )
 AND x.x = 1;
 
+/*
+One row per episode with its largest wait, so a join that matched
+several reports no longer set wait_time from whichever came last.
+The same NULL-safe compare as the insert, and wait_time only grows.
+*/
 UPDATE x2
     SET
         x2.wait_time = x.waittime
@@ -5182,31 +5198,52 @@ FROM ' + @object_name_check + N' AS x2
 JOIN
 (
     SELECT
-        server_name = @@SERVERNAME,
-        activity = ''blocked'',
-        database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-        object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-        transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
-        spid = bd.value(''(process/@spid)[1]'', ''integer''),
-        ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
-        waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
-        clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
-        hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
-        loginname = bd.value(''(process/@loginname)[1]'', ''sysname'')
-    FROM #human_events_xml_internal AS xet
-    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
-    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+        b.database_id,
+        b.object_id,
+        b.transaction_id,
+        b.spid,
+        b.ecid,
+        b.clientapp,
+        b.hostname,
+        b.loginname,
+        waittime = MAX(b.waittime)
+    FROM
+    (
+        SELECT
+            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
+            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
+            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
+            spid = bd.value(''(process/@spid)[1]'', ''integer''),
+            ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
+            waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
+            clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
+            hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
+            loginname = bd.value(''(process/@loginname)[1]'', ''sysname'')
+        FROM #human_events_xml_internal AS xet
+        OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+        OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+        WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+    ) AS b
+    GROUP BY
+        b.database_id,
+        b.object_id,
+        b.transaction_id,
+        b.spid,
+        b.ecid,
+        b.clientapp,
+        b.hostname,
+        b.loginname
 ) AS x
     ON    x.database_id = x2.database_id
     AND   x.object_id = x2.object_id
     AND   x.transaction_id = x2.transaction_id
     AND   x.spid = x2.spid
     AND   x.ecid = x2.ecid
-    AND   x.clientapp = x2.client_app
-    AND   x.hostname = x2.host_name
-    AND   x.loginname = x2.login_name;
+    AND   (x.clientapp = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
+WHERE x.waittime > x2.wait_time
+OR    (x.waittime IS NOT NULL AND x2.wait_time IS NULL);
 '                                ))
                        WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]quer%' /*Queries!*/
                        THEN
