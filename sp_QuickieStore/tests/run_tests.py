@@ -2197,11 +2197,12 @@ def plan_parsing_tests(server, password, R):
             return
 
         # A short window so executions per day clears the rule 7 gate.
-        # An explicit offset: no offset means server local time.
-        import datetime
-        window = ((datetime.datetime.now(datetime.timezone.utc)
-                   - datetime.timedelta(hours=2)).strftime("%Y-%m-%d %H:%M:%S")
-                  + "+00:00")
+        # A date without an offset is read as server local time, so ask the
+        # server for its own local time two hours ago.
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'WIN:' + CONVERT(varchar(19), "
+                         "DATEADD(HOUR, -2, SYSDATETIME()), 120);")
+        window = re.search(r"WIN:(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)", out).group(1)
         all_ids = [ids[k] for k in want] + ([ids["r14new"]] if "r14new" in ids else [])
 
         out, combined, found = pp_run(server, password, all_ids,

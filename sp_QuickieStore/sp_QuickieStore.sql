@@ -19351,7 +19351,9 @@ BEGIN
 
     /*
     Rule 5: NOT IN on nullable column
-    The optimizer only adds the IS NULL handling to the anti join when it cannot prove the column is NOT NULL
+    The optimizer only adds the IS NULL handling when it cannot prove the column is NOT NULL.
+    The handling is a Left Anti Semi Join; the IS NULL test is in its own predicate or in the
+    predicate of a scan in the Top / Row Count Spool branch next to it.
     */
     INSERT
         #plan_findings
@@ -19372,15 +19374,26 @@ BEGIN
         rule_name = 'NOT IN on nullable column',
         po.node_id,
         finding =
-            N'The query uses NOT IN, and the anti join has to handle NULLs: ' +
-            LEFT(po.pred_text, @pp_text_chars) + CASE WHEN LEN(po.pred_text) > @pp_text_chars THEN N'...' ELSE N'' END +
+            N'The query uses NOT IN, and the plan has an anti join that handles NULLs: ' +
+            LEFT(np.pred_text, @pp_text_chars) + CASE WHEN LEN(np.pred_text) > @pp_text_chars THEN N'...' ELSE N'' END +
             N'. The column in the IS NULL test is nullable. Rewrite with NOT EXISTS, or make the column NOT NULL.'
     FROM #plan_operators AS po
     JOIN #plan_facts AS pf
       ON  pf.database_id = po.database_id
       AND pf.plan_id = po.plan_id
+    CROSS APPLY
+    (
+        SELECT TOP (1)
+            n.pred_text
+        FROM #plan_operators AS n
+        WHERE n.database_id = po.database_id
+        AND   n.plan_id = po.plan_id
+        AND   n.stmt_id = po.stmt_id
+        AND   n.pred_text LIKE N'%IS NULL%'
+        ORDER BY
+            n.node_id
+    ) AS np
     WHERE po.logical_op = N'Left Anti Semi Join'
-    AND   po.pred_text LIKE N'%IS NULL%'
     AND   pf.has_not_in = 1
     OPTION(RECOMPILE);
 
