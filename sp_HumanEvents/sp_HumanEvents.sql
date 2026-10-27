@@ -5335,7 +5335,9 @@ FROM
     /*
     Keep the first report of each episode. ORDER BY the partition
     columns themselves kept an arbitrary one; event_time, then the
-    staging row id, picks the same row every time.
+    staging row id, picks the same row every time. The partition
+    includes the database and object, the same key as the NOT EXISTS
+    below, so a transaction blocked on two objects in one pass logs both.
     */
     SELECT
         x.*,
@@ -5344,6 +5346,8 @@ FROM
                 OVER
                 (
                     PARTITION BY
+                        x.database_id,
+                        x.object_id,
                         x.spid,
                         x.ecid,
                         x.transaction_id,

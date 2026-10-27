@@ -939,6 +939,9 @@ def group_collector_blocking(server, password, R, caps):
         v = dict((a, b) for a, b in re.findall(r"RESULT\|(\w+)\|(\d+)", chk))
         R.check("CollectorBlocking", "blocking rows were logged",
                 int(v.get("rows", 0)) > 0, "rows=%s" % v.get("rows"))
+        R.check("CollectorBlocking",
+                "one transaction blocked on two objects: both logged (blocked rows, distinct object_id = 2)",
+                v.get("objects") == "2", "distinct objects=%s" % v.get("objects"))
         R.check("CollectorBlocking", "a second pass over the same reports adds no duplicate episode rows",
                 v.get("dupes") == "0", "duplicate groups=%s" % v.get("dupes"))
         R.check("CollectorBlocking", "blocked wait_time reached the blocked process threshold",
