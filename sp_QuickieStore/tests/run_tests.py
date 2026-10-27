@@ -2144,6 +2144,12 @@ SELECT /*pp_r8mix*/ @i = d.id FROM (SELECT s.id, s.b, cnt = COUNT_BIG(*) OVER (P
    reads the Split's spool) to test whether the index key changed; there is no earlier place for it */
 UPDATE /*pp_r8upd*/ dbo.pp_upd SET b = 1 WHERE a < 800 AND n IS NULL OPTION (QUERYTRACEON 8790);
 
+/* 8, negative: the Filter reads the probe result of a semi join (EXISTS inside a CASE), which only the join makes.
+   The default plan is a Merge Join (the probe Expr is only in its OutputList); LOOP JOIN gives a Nested Loops
+   (ProbeColumn) */
+SELECT /*pp_r8semi*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3;
+SELECT /*pp_r8semiL*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3 OPTION (LOOP JOIN);
+
 /* 0, negative: a plan that is only an IF condition */
 EXECUTE dbo.pp_ifproc;
 """
@@ -2440,7 +2446,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r4self", "r5nn", "r5ne",
-            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r8semi", "r8semiL", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2685,6 +2691,8 @@ def plan_parsing_tests(server, password, R):
         R.check(G, "wide UPDATE fixture has a Filter over a Split or Table Spool",
                 "SPLITFILTER:1" in out, out[:200])
         quiet("r8upd", 8, "rule 8 stays quiet for the index key change Filter over a Split in a wide UPDATE")
+        quiet("r8semi", 8, "rule 8 stays quiet for a filter on a Merge Join semi join probe result")
+        quiet("r8semiL", 8, "rule 8 stays quiet for a filter on a Nested Loops semi join probe result")
         mix_text = full_text("r8mix", 8)
         R.check(G, "rule 8 fires for a mixed predicate and says part of it reads a window result",
                 pp_has(found, ids["r8mix"], 8) and "[b]=(3)" in mix_text

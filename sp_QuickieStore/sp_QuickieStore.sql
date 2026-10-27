@@ -19292,6 +19292,86 @@ BEGIN
         WHERE xd.expr_name IS NULL
         OPTION(RECOMPILE);
 
+        /*
+        A join can output an Expr that no DefinedValue defines: the probe result of a semi join (Nested Loops
+        names it in ProbeColumn and an empty DefinedValue; Merge Join only lists it in its OutputList).
+        Only the join can make it, so it counts as a result of the join, like an aggregate: a Filter on it
+        cannot run earlier.
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_expr_defs
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            is_agg,
+            has_base,
+            def_xml
+        )
+        SELECT DISTINCT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            cn.expr_name,
+            is_agg = 1,
+            has_base = 0,
+            def_xml = NULL
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_filter_parts AS fp
+                      WHERE fp.database_id = ps0.database_id
+                      AND   fp.plan_id = ps0.plan_id
+                      AND   fp.stmt_id = ps0.stmt_id
+                      AND   fp.qp_id = ps0.qp_id
+                  )
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS jo
+                      WHERE jo.database_id = ps0.database_id
+                      AND   jo.plan_id = ps0.plan_id
+                      AND   jo.stmt_id = ps0.stmt_id
+                      AND   jo.qp_id = ps0.qp_id
+                      AND   jo.physical_op IN (N'Nested Loops', N'Merge Join', N'Hash Match', N'Adaptive Join')
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Nested Loops" or @PhysicalOp = "Merge Join" or @PhysicalOp = "Hash Match" or @PhysicalOp = "Adaptive Join"]/OutputList/ColumnReference[not(@Table)]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                expr_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cn
+        WHERE NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_expr_defs AS xd
+                  WHERE xd.database_id = ps.database_id
+                  AND   xd.plan_id = ps.plan_id
+                  AND   xd.stmt_id = ps.stmt_id
+                  AND   xd.qp_id = ps.qp_id
+                  AND   xd.expr_name = cn.expr_name
+              )
+        OPTION(RECOMPILE, MAXDOP 1);
+
         WITH XMLNAMESPACES
         (
             DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
