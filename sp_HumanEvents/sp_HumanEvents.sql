@@ -5368,10 +5368,13 @@ WHERE NOT EXISTS
     NULL-safe: parallel workers (ecid > 0) carry no loginname, so =
     never matched them, and every later report of the same worker
     was inserted again as a new row.
+    The staged names take the collation of this database, so they get
+    COLLATE DATABASE_DEFAULT: without it, an output database with a
+    different collation fails here with Msg 468.
     */
-    AND   (x.clientapp = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
-    AND   (x.hostname = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
-    AND   (x.loginname = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
+    AND   (x.clientapp COLLATE DATABASE_DEFAULT = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname COLLATE DATABASE_DEFAULT = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname COLLATE DATABASE_DEFAULT = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
 )
 AND x.x = 1;
 
@@ -5415,9 +5418,9 @@ JOIN
     AND   x.transaction_id = x2.transaction_id
     AND   x.spid = x2.spid
     AND   x.ecid = x2.ecid
-    AND   (x.clientapp = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
-    AND   (x.hostname = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
-    AND   (x.loginname = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
+    AND   (x.clientapp COLLATE DATABASE_DEFAULT = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname COLLATE DATABASE_DEFAULT = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname COLLATE DATABASE_DEFAULT = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
 WHERE x.waittime > x2.wait_time
 OR    (x.waittime IS NOT NULL AND x2.wait_time IS NULL);
 '                                )
