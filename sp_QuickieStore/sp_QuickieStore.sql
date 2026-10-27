@@ -18188,6 +18188,13 @@ BEGIN
         @pp_engine_edition integer = CONVERT(integer, SERVERPROPERTY('EngineEdition')),
         @pp_server_maxdop integer,
         @pp_rg_maxdop_1 bit = 0,
+        @pp_has_anti_join bit = 0,
+        @pp_has_lasj bit = 0,
+        @pp_has_merge_join bit = 0,
+        @pp_has_top bit = 0,
+        @pp_has_lookup bit = 0,
+        @pp_has_eager_index_spool bit = 0,
+        @pp_has_nested_loops bit = 0,
         @pp_sql nvarchar(max) = N'';
 
     SELECT
@@ -18692,6 +18699,27 @@ BEGIN
     OPTION(RECOMPILE);
 
     /*
+    Which operators the plans have at all. The procedure is WITH RECOMPILE, so every statement
+    below compiles on every call, and the xml statements take 20 to 120 ms each to compile.
+    A pass or a rule that reads an operator no plan has cannot return a row, so it is skipped.
+    */
+    SELECT
+        @pp_has_anti_join =
+            ISNULL(MAX(CASE WHEN po.logical_op IN (N'Left Anti Semi Join', N'Right Anti Semi Join') THEN 1 ELSE 0 END), 0),
+        @pp_has_lasj =
+            ISNULL(MAX(CASE WHEN po.logical_op = N'Left Anti Semi Join' THEN 1 ELSE 0 END), 0),
+        @pp_has_merge_join =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Merge Join' THEN 1 ELSE 0 END), 0),
+        @pp_has_top =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Top' OR po.logical_op = N'TopN Sort' THEN 1 ELSE 0 END), 0),
+        @pp_has_eager_index_spool =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Index Spool' AND po.logical_op = N'Eager Spool' THEN 1 ELSE 0 END), 0),
+        @pp_has_nested_loops =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Nested Loops' THEN 1 ELSE 0 END), 0)
+    FROM #plan_operators AS po
+    OPTION(RECOMPILE);
+
+    /*
     Predicates: only for the operators the rules look at (scans, filters, anti semi joins) that have one.
     The operator is picked with attribute tests, which are cheap. Each predicate is copied out once into
     a small xml column; the text and the flags are then read from that copy, not from the whole plan.
@@ -18847,71 +18875,74 @@ BEGIN
     AND   cv.col_ref IS NOT NULL
     OPTION(RECOMPILE, MAXDOP 1);
 
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_anti_cols
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        col_kind,
-        col_ref
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        av.node_id,
-        col_kind = 'eq',
-        cv.col_ref
-    FROM
-    (
+    IF @pp_has_anti_join = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_anti_cols
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_kind,
+            col_ref
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS aj
-                  WHERE aj.database_id = ps0.database_id
-                  AND   aj.plan_id = ps0.plan_id
-                  AND   aj.stmt_id = ps0.stmt_id
-                  AND   aj.qp_id = ps0.qp_id
-                  AND   aj.logical_op IN (N'Left Anti Semi Join', N'Right Anti Semi Join')
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@LogicalOp = "Left Anti Semi Join" or @LogicalOp = "Right Anti Semi Join"]') AS r (rel)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                r.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS av
-    CROSS APPLY r.rel.nodes
-    (
-        N'(*/*[self::HashKeysBuild or self::HashKeysProbe or self::InnerSideJoinColumns or self::OuterSideJoinColumns]//ColumnReference[@Column],
-           */*[self::Predicate or self::ProbeResidual or self::Residual]//Compare[@CompareOp = "EQ"]/ScalarOperator//ColumnReference[@Column])'
-    ) AS c (col)
-    CROSS APPLY
-    (
-        SELECT
-            col_ref =
-                ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
-                ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
-                ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
-                QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
-    ) AS cv
-    WHERE cv.col_ref IS NOT NULL
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            av.node_id,
+            col_kind = 'eq',
+            cv.col_ref
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS aj
+                      WHERE aj.database_id = ps0.database_id
+                      AND   aj.plan_id = ps0.plan_id
+                      AND   aj.stmt_id = ps0.stmt_id
+                      AND   aj.qp_id = ps0.qp_id
+                      AND   aj.logical_op IN (N'Left Anti Semi Join', N'Right Anti Semi Join')
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@LogicalOp = "Left Anti Semi Join" or @LogicalOp = "Right Anti Semi Join"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS av
+        CROSS APPLY r.rel.nodes
+        (
+            N'(*/*[self::HashKeysBuild or self::HashKeysProbe or self::InnerSideJoinColumns or self::OuterSideJoinColumns]//ColumnReference[@Column],
+               */*[self::Predicate or self::ProbeResidual or self::Residual]//Compare[@CompareOp = "EQ"]/ScalarOperator//ColumnReference[@Column])'
+        ) AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_ref =
+                    ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
+                    QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
+        ) AS cv
+        WHERE cv.col_ref IS NOT NULL
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*
     The IS NULL test of a NOT IN is often an index seek: the seek's residual Predicate, or a seek key
@@ -18919,137 +18950,143 @@ BEGIN
     equality of a correlated NOT IN can also sit in a seek's Predicate. Only plans with an anti semi
     join are read, so most plans are never opened for this.
     */
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_anti_cols
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        col_kind,
-        col_ref
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        sv.node_id,
-        col_kind = 'isnull',
-        cv.col_ref
-    FROM
-    (
+    IF @pp_has_lasj = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_anti_cols
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_kind,
+            col_ref
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS aj
-                  WHERE aj.database_id = ps0.database_id
-                  AND   aj.plan_id = ps0.plan_id
-                  AND   aj.stmt_id = ps0.stmt_id
-                  AND   aj.qp_id = ps0.qp_id
-                  AND   aj.logical_op = N'Left Anti Semi Join'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek" or @LogicalOp = "Left Anti Semi Join"]') AS r (rel)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                r.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS sv
-    CROSS APPLY r.rel.nodes
-    (
-        N'(*/*[self::Predicate or self::Residual]//Compare[@CompareOp = "IS"][ScalarOperator[2]/Const[@ConstValue = "NULL"]]/ScalarOperator[1]/Identifier/ColumnReference[@Column],
-           */SeekPredicates//Prefix[@ScanType = "EQ"][RangeExpressions/ScalarOperator[1]/Const[@ConstValue = "NULL"]]/RangeColumns/ColumnReference[1][@Column],
-           */SeekPredicates//Prefix[@ScanType = "EQ"][RangeExpressions/ScalarOperator[2]/Const[@ConstValue = "NULL"]]/RangeColumns/ColumnReference[2][@Column])'
-    ) AS c (col)
-    CROSS APPLY
-    (
-        SELECT
-            col_ref =
-                ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
-                ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
-                ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
-                QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
-    ) AS cv
-    WHERE cv.col_ref IS NOT NULL
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_kind = 'isnull',
+            cv.col_ref
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS aj
+                      WHERE aj.database_id = ps0.database_id
+                      AND   aj.plan_id = ps0.plan_id
+                      AND   aj.stmt_id = ps0.stmt_id
+                      AND   aj.qp_id = ps0.qp_id
+                      AND   aj.logical_op = N'Left Anti Semi Join'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek" or @LogicalOp = "Left Anti Semi Join"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes
+        (
+            N'(*/*[self::Predicate or self::Residual]//Compare[@CompareOp = "IS"][ScalarOperator[2]/Const[@ConstValue = "NULL"]]/ScalarOperator[1]/Identifier/ColumnReference[@Column],
+               */SeekPredicates//Prefix[@ScanType = "EQ"][RangeExpressions/ScalarOperator[1]/Const[@ConstValue = "NULL"]]/RangeColumns/ColumnReference[1][@Column],
+               */SeekPredicates//Prefix[@ScanType = "EQ"][RangeExpressions/ScalarOperator[2]/Const[@ConstValue = "NULL"]]/RangeColumns/ColumnReference[2][@Column])'
+        ) AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_ref =
+                    ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
+                    QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
+        ) AS cv
+        WHERE cv.col_ref IS NOT NULL
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_anti_cols
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        col_kind,
-        col_ref
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        sv.node_id,
-        col_kind = 'eq',
-        cv.col_ref
-    FROM
-    (
+    IF @pp_has_lasj = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_anti_cols
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_kind,
+            col_ref
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS aj
-                  WHERE aj.database_id = ps0.database_id
-                  AND   aj.plan_id = ps0.plan_id
-                  AND   aj.stmt_id = ps0.stmt_id
-                  AND   aj.qp_id = ps0.qp_id
-                  AND   aj.logical_op = N'Left Anti Semi Join'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek"][*/Predicate]') AS r (rel)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                r.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS sv
-    CROSS APPLY r.rel.nodes
-    (
-        N'*/Predicate//Compare[@CompareOp = "EQ"]/ScalarOperator//ColumnReference[@Column]'
-    ) AS c (col)
-    CROSS APPLY
-    (
-        SELECT
-            col_ref =
-                ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
-                ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
-                ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
-                QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
-    ) AS cv
-    WHERE cv.col_ref IS NOT NULL
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_kind = 'eq',
+            cv.col_ref
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS aj
+                      WHERE aj.database_id = ps0.database_id
+                      AND   aj.plan_id = ps0.plan_id
+                      AND   aj.stmt_id = ps0.stmt_id
+                      AND   aj.qp_id = ps0.qp_id
+                      AND   aj.logical_op = N'Left Anti Semi Join'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek"][*/Predicate]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes
+        (
+            N'*/Predicate//Compare[@CompareOp = "EQ"]/ScalarOperator//ColumnReference[@Column]'
+        ) AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_ref =
+                    ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
+                    QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
+        ) AS cv
+        WHERE cv.col_ref IS NOT NULL
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*
     Lookups, many-to-many merge joins, Top (1) operators and eager index spools:
@@ -19094,103 +19131,123 @@ BEGIN
     ) AS lv
     OPTION(RECOMPILE, MAXDOP 1);
 
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_specials
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        special
-    )
     SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        mv.node_id,
-        special = 'm2m'
-    FROM
-    (
-        SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS mj
-                  WHERE mj.database_id = ps0.database_id
-                  AND   mj.plan_id = ps0.plan_id
-                  AND   mj.stmt_id = ps0.stmt_id
-                  AND   mj.qp_id = ps0.qp_id
-                  AND   mj.physical_op = N'Merge Join'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//Merge[@ManyToMany = "1"]') AS m (mg)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                m.mg.value(N'(../@NodeId)[1]', N'integer')
-    ) AS mv
-    OPTION(RECOMPILE, MAXDOP 1);
+        @pp_has_lookup =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #plan_specials AS psp
+                         WHERE psp.special = 'lookup'
+                     )
+                THEN 1
+                ELSE 0
+            END;
 
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_specials
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        special
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        tv.node_id,
-        special = 'top1'
-    FROM
-    (
+    IF @pp_has_merge_join = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_specials
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            special
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS tp
-                  WHERE tp.database_id = ps0.database_id
-                  AND   tp.plan_id = ps0.plan_id
-                  AND   tp.stmt_id = ps0.stmt_id
-                  AND   tp.qp_id = ps0.qp_id
-                  AND   tp.physical_op = N'Top'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Top"][Top/TopExpression/ScalarOperator/Const[@ConstValue = "(1)" or @ConstValue = "1"]]') AS t (rel)
-    CROSS APPLY
-    (
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            mv.node_id,
+            special = 'm2m'
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS mj
+                      WHERE mj.database_id = ps0.database_id
+                      AND   mj.plan_id = ps0.plan_id
+                      AND   mj.stmt_id = ps0.stmt_id
+                      AND   mj.qp_id = ps0.qp_id
+                      AND   mj.physical_op = N'Merge Join'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//Merge[@ManyToMany = "1"]') AS m (mg)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    m.mg.value(N'(../@NodeId)[1]', N'integer')
+        ) AS mv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    IF @pp_has_top = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_specials
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            special
+        )
         SELECT
-            node_id =
-                t.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS tv
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            tv.node_id,
+            special = 'top1'
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS tp
+                      WHERE tp.database_id = ps0.database_id
+                      AND   tp.plan_id = ps0.plan_id
+                      AND   tp.stmt_id = ps0.stmt_id
+                      AND   tp.qp_id = ps0.qp_id
+                      AND   tp.physical_op = N'Top'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Top"][Top/TopExpression/ScalarOperator/Const[@ConstValue = "(1)" or @ConstValue = "1"]]') AS t (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    t.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS tv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*
     Columns, one row each, so the lists are built from rows and not from the text of an xml value:
@@ -19198,354 +19255,366 @@ BEGIN
     The order of the rows (col_ord) is the order in the plan.
     Each pass only opens the statements that have a lookup (found above) or an eager index spool.
     */
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_columns
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        col_role,
-        is_equality,
-        col_ord,
-        col_database,
-        col_schema,
-        col_table,
-        col_name
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        lv.node_id,
-        col_role = 'fetch',
-        is_equality = 0,
-        col_ord =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    ps.database_id,
-                    ps.plan_id,
-                    ps.stmt_id,
-                    ps.qp_id,
-                    lv.node_id
-                ORDER BY
-                    (SELECT NULL)
-            ),
-        cv.col_database,
-        cv.col_schema,
-        cv.col_table,
-        cv.col_name
-    FROM
-    (
+    IF @pp_has_lookup = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_specials AS lk
-                  WHERE lk.database_id = ps0.database_id
-                  AND   lk.plan_id = ps0.plan_id
-                  AND   lk.stmt_id = ps0.stmt_id
-                  AND   lk.qp_id = ps0.qp_id
-                  AND   lk.special = 'lookup'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//IndexScan[@Lookup = "1"]') AS l (lk)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                l.lk.value(N'(../@NodeId)[1]', N'integer')
-    ) AS lv
-    CROSS APPLY l.lk.nodes(N'DefinedValues/DefinedValue/ColumnReference[@Table][@Column]') AS c (col)
-    CROSS APPLY
-    (
-        SELECT
-            col_database =
-                c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
-            col_schema =
-                c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
-            col_table =
-                c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
-            col_name =
-                c.col.value(N'(@Column)[1]', N'sysname')
-    ) AS cv
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            lv.node_id,
+            col_role = 'fetch',
+            is_equality = 0,
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ps.database_id,
+                        ps.plan_id,
+                        ps.stmt_id,
+                        ps.qp_id,
+                        lv.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_specials AS lk
+                      WHERE lk.database_id = ps0.database_id
+                      AND   lk.plan_id = ps0.plan_id
+                      AND   lk.stmt_id = ps0.stmt_id
+                      AND   lk.qp_id = ps0.qp_id
+                      AND   lk.special = 'lookup'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//IndexScan[@Lookup = "1"]') AS l (lk)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    l.lk.value(N'(../@NodeId)[1]', N'integer')
+        ) AS lv
+        CROSS APPLY l.lk.nodes(N'DefinedValues/DefinedValue/ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_columns
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        col_role,
-        is_equality,
-        col_ord,
-        col_database,
-        col_schema,
-        col_table,
-        col_name
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        sv.node_id,
-        col_role = 'seek',
-        is_equality =
-            c.col.exist(N'../../self::Prefix'),
-        col_ord =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    ps.database_id,
-                    ps.plan_id,
-                    ps.stmt_id,
-                    ps.qp_id,
-                    sv.node_id
-                ORDER BY
-                    (SELECT NULL)
-            ),
-        cv.col_database,
-        cv.col_schema,
-        cv.col_table,
-        cv.col_name
-    FROM
-    (
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS sp
-                  WHERE sp.database_id = ps0.database_id
-                  AND   sp.plan_id = ps0.plan_id
-                  AND   sp.stmt_id = ps0.stmt_id
-                  AND   sp.qp_id = ps0.qp_id
-                  AND   sp.physical_op = N'Index Spool'
-                  AND   sp.logical_op = N'Eager Spool'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                r.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS sv
-    CROSS APPLY r.rel.nodes(N'Spool/SeekPredicateNew/SeekKeys/*/RangeColumns/ColumnReference[@Table][@Column]') AS c (col)
-    CROSS APPLY
-    (
-        SELECT
-            col_database =
-                c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
-            col_schema =
-                c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
-            col_table =
-                c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
-            col_name =
-                c.col.value(N'(@Column)[1]', N'sysname')
-    ) AS cv
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_role = 'seek',
+            is_equality =
+                c.col.exist(N'../../self::Prefix'),
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ps.database_id,
+                        ps.plan_id,
+                        ps.stmt_id,
+                        ps.qp_id,
+                        sv.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS sp
+                      WHERE sp.database_id = ps0.database_id
+                      AND   sp.plan_id = ps0.plan_id
+                      AND   sp.stmt_id = ps0.stmt_id
+                      AND   sp.qp_id = ps0.qp_id
+                      AND   sp.physical_op = N'Index Spool'
+                      AND   sp.logical_op = N'Eager Spool'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes(N'Spool/SeekPredicateNew/SeekKeys/*/RangeColumns/ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_columns
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        col_role,
-        is_equality,
-        col_ord,
-        col_database,
-        col_schema,
-        col_table,
-        col_name
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        sv.node_id,
-        col_role = 'output',
-        is_equality = 0,
-        col_ord =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    ps.database_id,
-                    ps.plan_id,
-                    ps.stmt_id,
-                    ps.qp_id,
-                    sv.node_id
-                ORDER BY
-                    (SELECT NULL)
-            ),
-        cv.col_database,
-        cv.col_schema,
-        cv.col_table,
-        cv.col_name
-    FROM
-    (
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS sp
-                  WHERE sp.database_id = ps0.database_id
-                  AND   sp.plan_id = ps0.plan_id
-                  AND   sp.stmt_id = ps0.stmt_id
-                  AND   sp.qp_id = ps0.qp_id
-                  AND   sp.physical_op = N'Index Spool'
-                  AND   sp.logical_op = N'Eager Spool'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                r.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS sv
-    CROSS APPLY r.rel.nodes(N'OutputList/ColumnReference[@Table][@Column]') AS c (col)
-    CROSS APPLY
-    (
-        SELECT
-            col_database =
-                c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
-            col_schema =
-                c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
-            col_table =
-                c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
-            col_name =
-                c.col.value(N'(@Column)[1]', N'sysname')
-    ) AS cv
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_role = 'output',
+            is_equality = 0,
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ps.database_id,
+                        ps.plan_id,
+                        ps.stmt_id,
+                        ps.qp_id,
+                        sv.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS sp
+                      WHERE sp.database_id = ps0.database_id
+                      AND   sp.plan_id = ps0.plan_id
+                      AND   sp.stmt_id = ps0.stmt_id
+                      AND   sp.qp_id = ps0.qp_id
+                      AND   sp.physical_op = N'Index Spool'
+                      AND   sp.logical_op = N'Eager Spool'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes(N'OutputList/ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*
     A computed column in the spool's output (Expr1004 = LEN(w)) has no table. The columns it is computed
     from are read below the spool, so the index covers them. They are listed after the plain output columns.
     */
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_columns
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        node_id,
-        col_role,
-        is_equality,
-        col_ord,
-        col_database,
-        col_schema,
-        col_table,
-        col_name
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        sv.node_id,
-        col_role = 'output',
-        is_equality = 0,
-        col_ord =
-            1000 +
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    ps.database_id,
-                    ps.plan_id,
-                    ps.stmt_id,
-                    ps.qp_id,
-                    sv.node_id
-                ORDER BY
-                    (SELECT NULL)
-            ),
-        cv.col_database,
-        cv.col_schema,
-        cv.col_table,
-        cv.col_name
-    FROM
-    (
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
         SELECT
-            ps0.*
-        FROM #plan_statements AS ps0
-        WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #plan_operators AS sp
-                  WHERE sp.database_id = ps0.database_id
-                  AND   sp.plan_id = ps0.plan_id
-                  AND   sp.stmt_id = ps0.stmt_id
-                  AND   sp.qp_id = ps0.qp_id
-                  AND   sp.physical_op = N'Index Spool'
-                  AND   sp.logical_op = N'Eager Spool'
-              )
-    ) AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"][OutputList/ColumnReference[not(@Table)]]') AS r (rel)
-    CROSS APPLY
-    (
-        SELECT
-            node_id =
-                r.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS sv
-    CROSS APPLY r.rel.nodes(N'.//RelOp[@PhysicalOp = "Compute Scalar"]/ComputeScalar/DefinedValues/DefinedValue/ScalarOperator//ColumnReference[@Table][@Column]') AS c (col)
-    CROSS APPLY
-    (
-        SELECT
-            col_database =
-                c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
-            col_schema =
-                c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
-            col_table =
-                c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
-            col_name =
-                c.col.value(N'(@Column)[1]', N'sysname')
-    ) AS cv
-    OPTION(RECOMPILE, MAXDOP 1);
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_role = 'output',
+            is_equality = 0,
+            col_ord =
+                1000 +
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ps.database_id,
+                        ps.plan_id,
+                        ps.stmt_id,
+                        ps.qp_id,
+                        sv.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS sp
+                      WHERE sp.database_id = ps0.database_id
+                      AND   sp.plan_id = ps0.plan_id
+                      AND   sp.stmt_id = ps0.stmt_id
+                      AND   sp.qp_id = ps0.qp_id
+                      AND   sp.physical_op = N'Index Spool'
+                      AND   sp.logical_op = N'Eager Spool'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"][OutputList/ColumnReference[not(@Table)]]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes(N'.//RelOp[@PhysicalOp = "Compute Scalar"]/ComputeScalar/DefinedValues/DefinedValue/ScalarOperator//ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     UPDATE
         po
@@ -20023,172 +20092,175 @@ BEGIN
     The key is the spool's seek columns (equality first, each column once) and the
     INCLUDE is its other output columns of the same table; computed columns are left out.
     */
-    INSERT
-        #plan_findings
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        query_id,
-        rule_id,
-        rule_name,
-        stmt_id,
-        qp_id,
-        node_id,
-        object_name,
-        finding
-    )
-    SELECT
-        pf.database_id,
-        pf.plan_id,
-        pf.query_id,
-        rule_id = 1,
-        rule_name = 'eager index spool',
-        po.stmt_id,
-        po.qp_id,
-        po.node_id,
-        object_name = st.table_name,
-        finding =
-            N'The optimizer builds a temporary index on ' + ISNULL(st.table_name, N'a table') +
-            N' every time this runs. Create the index instead: CREATE INDEX ' +
-            QUOTENAME(N'ix_' + REPLACE(REPLACE(ISNULL(sk.col_table, N'[table]'), N'[', N''), N']', N'') + N'_spool') +
-            N' ON ' + ISNULL(st.table_name, N'<table>') + N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
-            CASE
-                WHEN il.include_list IS NOT NULL
-                THEN N' INCLUDE (' + il.include_list + N')'
-                ELSE N''
-            END + N';'
-    FROM #plan_operators AS po
-    JOIN #plan_facts AS pf
-      ON  pf.database_id = po.database_id
-      AND pf.plan_id = po.plan_id
-    OUTER APPLY
-    (
-        SELECT TOP (1)
-            pc.col_database,
-            pc.col_schema,
-            pc.col_table
-        FROM #plan_columns AS pc
-        WHERE pc.database_id = po.database_id
-        AND   pc.plan_id = po.plan_id
-        AND   pc.stmt_id = po.stmt_id
-        AND   pc.qp_id = po.qp_id
-        AND   pc.node_id = po.node_id
-        AND   pc.col_role = 'seek'
-        ORDER BY
-            pc.col_ord
-    ) AS sk
-    CROSS APPLY
-    (
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        INSERT
+            #plan_findings
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            object_name,
+            finding
+        )
         SELECT
-            table_name =
-                ISNULL(sk.col_database + N'.', N'') +
-                ISNULL(sk.col_schema + N'.', N'') +
-                sk.col_table
-    ) AS st
-    CROSS APPLY
-    (
-        SELECT
-            key_list =
-                STUFF
-                (
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 1,
+            rule_name = 'eager index spool',
+            po.stmt_id,
+            po.qp_id,
+            po.node_id,
+            object_name = st.table_name,
+            finding =
+                N'The optimizer builds a temporary index on ' + ISNULL(st.table_name, N'a table') +
+                N' every time this runs. Create the index instead: CREATE INDEX ' +
+                QUOTENAME(N'ix_' + REPLACE(REPLACE(ISNULL(sk.col_table, N'[table]'), N'[', N''), N']', N'') + N'_spool') +
+                N' ON ' + ISNULL(st.table_name, N'<table>') + N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
+                CASE
+                    WHEN il.include_list IS NOT NULL
+                    THEN N' INCLUDE (' + il.include_list + N')'
+                    ELSE N''
+                END + N';'
+        FROM #plan_operators AS po
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = po.database_id
+          AND pf.plan_id = po.plan_id
+        OUTER APPLY
+        (
+            SELECT TOP (1)
+                pc.col_database,
+                pc.col_schema,
+                pc.col_table
+            FROM #plan_columns AS pc
+            WHERE pc.database_id = po.database_id
+            AND   pc.plan_id = po.plan_id
+            AND   pc.stmt_id = po.stmt_id
+            AND   pc.qp_id = po.qp_id
+            AND   pc.node_id = po.node_id
+            AND   pc.col_role = 'seek'
+            ORDER BY
+                pc.col_ord
+        ) AS sk
+        CROSS APPLY
+        (
+            SELECT
+                table_name =
+                    ISNULL(sk.col_database + N'.', N'') +
+                    ISNULL(sk.col_schema + N'.', N'') +
+                    sk.col_table
+        ) AS st
+        CROSS APPLY
+        (
+            SELECT
+                key_list =
+                    STUFF
                     (
-                        SELECT
-                            N', ' + QUOTENAME(k.col_name)
-                        FROM
                         (
                             SELECT
-                                pc.col_name,
-                                key_rank =
-                                    MIN
-                                    (
-                                        CASE
-                                            WHEN pc.is_equality = 1
-                                            THEN 0
-                                            ELSE 1
-                                        END
-                                    ),
-                                key_ord =
-                                    MIN(pc.col_ord)
-                            FROM #plan_columns AS pc
-                            WHERE pc.database_id = po.database_id
-                            AND   pc.plan_id = po.plan_id
-                            AND   pc.stmt_id = po.stmt_id
-                            AND   pc.qp_id = po.qp_id
-                            AND   pc.node_id = po.node_id
-                            AND   pc.col_role = 'seek'
-                            GROUP BY
-                                pc.col_name
-                        ) AS k
-                        ORDER BY
-                            k.key_rank,
-                            k.key_ord
-                        FOR
-                            XML
-                            PATH(N''),
-                            TYPE
-                    ).value(N'./text()[1]', N'nvarchar(max)'),
-                    1,
-                    2,
-                    N''
-                )
-    ) AS kl
-    CROSS APPLY
-    (
-        SELECT
-            include_list =
-                STUFF
-                (
+                                N', ' + QUOTENAME(k.col_name)
+                            FROM
+                            (
+                                SELECT
+                                    pc.col_name,
+                                    key_rank =
+                                        MIN
+                                        (
+                                            CASE
+                                                WHEN pc.is_equality = 1
+                                                THEN 0
+                                                ELSE 1
+                                            END
+                                        ),
+                                    key_ord =
+                                        MIN(pc.col_ord)
+                                FROM #plan_columns AS pc
+                                WHERE pc.database_id = po.database_id
+                                AND   pc.plan_id = po.plan_id
+                                AND   pc.stmt_id = po.stmt_id
+                                AND   pc.qp_id = po.qp_id
+                                AND   pc.node_id = po.node_id
+                                AND   pc.col_role = 'seek'
+                                GROUP BY
+                                    pc.col_name
+                            ) AS k
+                            ORDER BY
+                                k.key_rank,
+                                k.key_ord
+                            FOR
+                                XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        2,
+                        N''
+                    )
+        ) AS kl
+        CROSS APPLY
+        (
+            SELECT
+                include_list =
+                    STUFF
                     (
-                        SELECT
-                            N', ' + QUOTENAME(i.col_name)
-                        FROM
                         (
                             SELECT
-                                pc.col_name,
-                                include_ord =
-                                    MIN(pc.col_ord)
-                            FROM #plan_columns AS pc
-                            WHERE pc.database_id = po.database_id
-                            AND   pc.plan_id = po.plan_id
-                            AND   pc.stmt_id = po.stmt_id
-                            AND   pc.qp_id = po.qp_id
-                            AND   pc.node_id = po.node_id
-                            AND   pc.col_role = 'output'
-                            AND   pc.col_table = sk.col_table
-                            AND   ISNULL(pc.col_schema, N'') = ISNULL(sk.col_schema, N'')
-                            AND   NOT EXISTS
-                                  (
-                                      SELECT
-                                          1/0
-                                      FROM #plan_columns AS pk
-                                      WHERE pk.database_id = pc.database_id
-                                      AND   pk.plan_id = pc.plan_id
-                                      AND   pk.stmt_id = pc.stmt_id
-                                      AND   pk.qp_id = pc.qp_id
-                                      AND   pk.node_id = pc.node_id
-                                      AND   pk.col_role = 'seek'
-                                      AND   pk.col_name = pc.col_name
-                                  )
-                            GROUP BY
-                                pc.col_name
-                        ) AS i
-                        ORDER BY
-                            i.include_ord
-                        FOR
-                            XML
-                            PATH(N''),
-                            TYPE
-                    ).value(N'./text()[1]', N'nvarchar(max)'),
-                    1,
-                    2,
-                    N''
-                )
-    ) AS il
-    WHERE po.physical_op = N'Index Spool'
-    AND   po.logical_op = N'Eager Spool'
-    OPTION(RECOMPILE, MAXDOP 1);
+                                N', ' + QUOTENAME(i.col_name)
+                            FROM
+                            (
+                                SELECT
+                                    pc.col_name,
+                                    include_ord =
+                                        MIN(pc.col_ord)
+                                FROM #plan_columns AS pc
+                                WHERE pc.database_id = po.database_id
+                                AND   pc.plan_id = po.plan_id
+                                AND   pc.stmt_id = po.stmt_id
+                                AND   pc.qp_id = po.qp_id
+                                AND   pc.node_id = po.node_id
+                                AND   pc.col_role = 'output'
+                                AND   pc.col_table = sk.col_table
+                                AND   ISNULL(pc.col_schema, N'') = ISNULL(sk.col_schema, N'')
+                                AND   NOT EXISTS
+                                      (
+                                          SELECT
+                                              1/0
+                                          FROM #plan_columns AS pk
+                                          WHERE pk.database_id = pc.database_id
+                                          AND   pk.plan_id = pc.plan_id
+                                          AND   pk.stmt_id = pc.stmt_id
+                                          AND   pk.qp_id = pc.qp_id
+                                          AND   pk.node_id = pc.node_id
+                                          AND   pk.col_role = 'seek'
+                                          AND   pk.col_name = pc.col_name
+                                      )
+                                GROUP BY
+                                    pc.col_name
+                            ) AS i
+                            ORDER BY
+                                i.include_ord
+                            FOR
+                                XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        2,
+                        N''
+                    )
+        ) AS il
+        WHERE po.physical_op = N'Index Spool'
+        AND   po.logical_op = N'Eager Spool'
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*
     Rule 2: serial plan
@@ -20453,119 +20525,122 @@ BEGIN
     correlated NOT IN, so the shape alone cannot tell them apart. The text test is a gate on the
     shape, not the proof: it can match a comment, but only a plan that already has the shape gets there.
     */
-    WITH inner_nodes AS
-    (
+    IF @pp_has_lasj = 1
+    BEGIN
+        WITH inner_nodes AS
+        (
+            SELECT
+                lj.database_id,
+                lj.plan_id,
+                lj.stmt_id,
+                lj.qp_id,
+                lasj_node_id = lj.node_id,
+                node_id = lj.node_id,
+                is_inner = CONVERT(bit, 0)
+            FROM #plan_operators AS lj
+            WHERE lj.logical_op = N'Left Anti Semi Join'
+
+            UNION ALL
+
+            SELECT
+                lj.database_id,
+                lj.plan_id,
+                lj.stmt_id,
+                lj.qp_id,
+                lasj_node_id = lj.node_id,
+                node_id = e.child_node_id,
+                is_inner = CONVERT(bit, 1)
+            FROM #plan_operators AS lj
+            JOIN #plan_edges AS e
+              ON  e.database_id = lj.database_id
+              AND e.plan_id = lj.plan_id
+              AND e.stmt_id = lj.stmt_id
+              AND e.qp_id = lj.qp_id
+              AND e.parent_node_id = lj.node_id
+              AND e.child_ordinal = 2
+            WHERE lj.logical_op = N'Left Anti Semi Join'
+
+            UNION ALL
+
+            SELECT
+                i.database_id,
+                i.plan_id,
+                i.stmt_id,
+                i.qp_id,
+                i.lasj_node_id,
+                node_id = e.child_node_id,
+                is_inner = CONVERT(bit, 1)
+            FROM inner_nodes AS i
+            JOIN #plan_edges AS e
+              ON  e.database_id = i.database_id
+              AND e.plan_id = i.plan_id
+              AND e.stmt_id = i.stmt_id
+              AND e.qp_id = i.qp_id
+              AND e.parent_node_id = i.node_id
+            WHERE i.is_inner = 1
+        )
+        INSERT
+            #plan_findings
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            finding
+        )
         SELECT
-            lj.database_id,
-            lj.plan_id,
-            lj.stmt_id,
-            lj.qp_id,
-            lasj_node_id = lj.node_id,
-            node_id = lj.node_id,
-            is_inner = CONVERT(bit, 0)
-        FROM #plan_operators AS lj
-        WHERE lj.logical_op = N'Left Anti Semi Join'
-
-        UNION ALL
-
-        SELECT
-            lj.database_id,
-            lj.plan_id,
-            lj.stmt_id,
-            lj.qp_id,
-            lasj_node_id = lj.node_id,
-            node_id = e.child_node_id,
-            is_inner = CONVERT(bit, 1)
-        FROM #plan_operators AS lj
-        JOIN #plan_edges AS e
-          ON  e.database_id = lj.database_id
-          AND e.plan_id = lj.plan_id
-          AND e.stmt_id = lj.stmt_id
-          AND e.qp_id = lj.qp_id
-          AND e.parent_node_id = lj.node_id
-          AND e.child_ordinal = 2
-        WHERE lj.logical_op = N'Left Anti Semi Join'
-
-        UNION ALL
-
-        SELECT
-            i.database_id,
-            i.plan_id,
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 5,
+            rule_name = 'NOT IN on nullable column',
+            stmt_id = i.stmt_id,
+            qp_id = i.qp_id,
+            node_id =
+                MIN(i.lasj_node_id),
+            finding =
+                N'The plan has an anti join that handles NULLs: it tests ' + nl.col_ref +
+                N' IS NULL, and that column is one the anti join compares. The optimizer only adds that handling when it cannot prove ' +
+                N'the column is NOT NULL, as with NOT IN over a nullable column. Rewrite with NOT EXISTS, or make the column NOT NULL.'
+        FROM inner_nodes AS i
+        JOIN #plan_anti_cols AS nl
+          ON  nl.database_id = i.database_id
+          AND nl.plan_id = i.plan_id
+          AND nl.stmt_id = i.stmt_id
+          AND nl.qp_id = i.qp_id
+          AND nl.node_id = i.node_id
+          AND nl.col_kind = 'isnull'
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = i.database_id
+          AND pf.plan_id = i.plan_id
+        WHERE pf.not_in_text = 1
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_anti_cols AS eq
+                  WHERE eq.database_id = nl.database_id
+                  AND   eq.plan_id = nl.plan_id
+                  AND   eq.stmt_id = nl.stmt_id
+                  AND   eq.qp_id = nl.qp_id
+                  AND   eq.col_kind = 'eq'
+                  AND   eq.col_ref = nl.col_ref
+              )
+        GROUP BY
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
             i.stmt_id,
             i.qp_id,
-            i.lasj_node_id,
-            node_id = e.child_node_id,
-            is_inner = CONVERT(bit, 1)
-        FROM inner_nodes AS i
-        JOIN #plan_edges AS e
-          ON  e.database_id = i.database_id
-          AND e.plan_id = i.plan_id
-          AND e.stmt_id = i.stmt_id
-          AND e.qp_id = i.qp_id
-          AND e.parent_node_id = i.node_id
-        WHERE i.is_inner = 1
-    )
-    INSERT
-        #plan_findings
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        query_id,
-        rule_id,
-        rule_name,
-        stmt_id,
-        qp_id,
-        node_id,
-        finding
-    )
-    SELECT
-        pf.database_id,
-        pf.plan_id,
-        pf.query_id,
-        rule_id = 5,
-        rule_name = 'NOT IN on nullable column',
-        stmt_id = i.stmt_id,
-        qp_id = i.qp_id,
-        node_id =
-            MIN(i.lasj_node_id),
-        finding =
-            N'The plan has an anti join that handles NULLs: it tests ' + nl.col_ref +
-            N' IS NULL, and that column is one the anti join compares. The optimizer only adds that handling when it cannot prove ' +
-            N'the column is NOT NULL, as with NOT IN over a nullable column. Rewrite with NOT EXISTS, or make the column NOT NULL.'
-    FROM inner_nodes AS i
-    JOIN #plan_anti_cols AS nl
-      ON  nl.database_id = i.database_id
-      AND nl.plan_id = i.plan_id
-      AND nl.stmt_id = i.stmt_id
-      AND nl.qp_id = i.qp_id
-      AND nl.node_id = i.node_id
-      AND nl.col_kind = 'isnull'
-    JOIN #plan_facts AS pf
-      ON  pf.database_id = i.database_id
-      AND pf.plan_id = i.plan_id
-    WHERE pf.not_in_text = 1
-    AND   EXISTS
-          (
-              SELECT
-                  1/0
-              FROM #plan_anti_cols AS eq
-              WHERE eq.database_id = nl.database_id
-              AND   eq.plan_id = nl.plan_id
-              AND   eq.stmt_id = nl.stmt_id
-              AND   eq.qp_id = nl.qp_id
-              AND   eq.col_kind = 'eq'
-              AND   eq.col_ref = nl.col_ref
-          )
-    GROUP BY
-        pf.database_id,
-        pf.plan_id,
-        pf.query_id,
-        i.stmt_id,
-        i.qp_id,
-        nl.col_ref
-    OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+            nl.col_ref
+        OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+    END;
 
     /*
     Rule 6: implicit conversion prevents seek
@@ -20965,169 +21040,175 @@ BEGIN
     A TopN Sort over a scan, or a Top over a scan that filters; the scan may sit under a Compute Scalar or Parallelism.
     A Top (1) is skipped: the optimizer adds one for EXISTS and for the NOT IN null check, and a plain unordered TOP (1) does not count.
     */
-    INSERT
-        #plan_findings
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        query_id,
-        rule_id,
-        rule_name,
-        stmt_id,
-        qp_id,
-        node_id,
-        object_name,
-        finding
-    )
-    SELECT
-        pf.database_id,
-        pf.plan_id,
-        pf.query_id,
-        rule_id = 12,
-        rule_name = 'TOP over scan',
-        top_op.stmt_id,
-        top_op.qp_id,
-        top_op.node_id,
-        object_name = tn.table_name,
-        finding =
-            N'A ' +
-            CASE
-                WHEN top_op.logical_op = N'TopN Sort'
-                THEN N'TopN Sort'
-                ELSE N'Top'
-            END +
-            N' sits over a scan of ' + ISNULL(tn.table_name, N'a table') +
-            CASE
-                WHEN top_op.logical_op = N'TopN Sort'
-                THEN N': the whole table is read and sorted to find the top rows. An index in the ORDER BY order lets it read only the rows it needs.'
-                ELSE N' that filters rows (' + LEFT(sc.pred_text, @pp_text_chars) +
-                     CASE
-                         WHEN LEN(sc.pred_text) > @pp_text_chars
-                         THEN N'...'
-                         ELSE N''
-                     END +
-                     N'): the scan can read a lot of the table before it finds enough matching rows. An index on the filter columns helps.'
-            END
-    FROM #plan_operators AS top_op
-    JOIN #plan_facts AS pf
-      ON  pf.database_id = top_op.database_id
-      AND pf.plan_id = top_op.plan_id
-    JOIN #plan_relations AS rl
-      ON  rl.database_id = top_op.database_id
-      AND rl.plan_id = top_op.plan_id
-      AND rl.stmt_id = top_op.stmt_id
-      AND rl.qp_id = top_op.qp_id
-      AND rl.node_id = top_op.node_id
-    JOIN #plan_operators AS c1
-      ON  c1.database_id = top_op.database_id
-      AND c1.plan_id = top_op.plan_id
-      AND c1.stmt_id = top_op.stmt_id
-      AND c1.qp_id = top_op.qp_id
-      AND c1.node_id = rl.child_1_id
-    LEFT JOIN #plan_operators AS c2
-      ON  c2.database_id = c1.database_id
-      AND c2.plan_id = c1.plan_id
-      AND c2.stmt_id = c1.stmt_id
-      AND c2.qp_id = c1.qp_id
-      AND c2.node_id = rl.gchild_1_id
-      AND c1.physical_op IN (N'Compute Scalar', N'Parallelism')
-    CROSS APPLY
-    (
-        SELECT
-            is_scan =
-                CASE
-                    WHEN c1.is_scan = 1
-                    THEN c1.is_scan
-                    ELSE c2.is_scan
-                END,
-            pred_text =
-                CASE
-                    WHEN c1.is_scan = 1
-                    THEN c1.pred_text
-                    ELSE c2.pred_text
-                END,
-            obj_database =
-                CASE
-                    WHEN c1.is_scan = 1
-                    THEN c1.obj_database
-                    ELSE c2.obj_database
-                END,
-            obj_schema =
-                CASE
-                    WHEN c1.is_scan = 1
-                    THEN c1.obj_schema
-                    ELSE c2.obj_schema
-                END,
-            obj_table =
-                CASE
-                    WHEN c1.is_scan = 1
-                    THEN c1.obj_table
-                    ELSE c2.obj_table
-                END
-    ) AS sc
-    CROSS APPLY
-    (
-        SELECT
-            table_name =
-                ISNULL(sc.obj_database + N'.', N'') +
-                ISNULL(sc.obj_schema + N'.', N'') +
-                sc.obj_table
-    ) AS tn
-    WHERE
-    (
-         top_op.logical_op = N'TopN Sort'
-      OR
+    IF @pp_has_top = 1
+    BEGIN
+        INSERT
+            #plan_findings
+            WITH
+                (TABLOCK)
         (
-            top_op.physical_op = N'Top'
-        AND ISNULL(top_op.top_one, 0) = 0
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            object_name,
+            finding
         )
-    )
-    AND   sc.is_scan = 1
-    AND
-    (
-         top_op.logical_op = N'TopN Sort'
-      OR sc.pred_text IS NOT NULL
-    )
-    OPTION(RECOMPILE, MAXDOP 1);
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 12,
+            rule_name = 'TOP over scan',
+            top_op.stmt_id,
+            top_op.qp_id,
+            top_op.node_id,
+            object_name = tn.table_name,
+            finding =
+                N'A ' +
+                CASE
+                    WHEN top_op.logical_op = N'TopN Sort'
+                    THEN N'TopN Sort'
+                    ELSE N'Top'
+                END +
+                N' sits over a scan of ' + ISNULL(tn.table_name, N'a table') +
+                CASE
+                    WHEN top_op.logical_op = N'TopN Sort'
+                    THEN N': the whole table is read and sorted to find the top rows. An index in the ORDER BY order lets it read only the rows it needs.'
+                    ELSE N' that filters rows (' + LEFT(sc.pred_text, @pp_text_chars) +
+                         CASE
+                             WHEN LEN(sc.pred_text) > @pp_text_chars
+                             THEN N'...'
+                             ELSE N''
+                         END +
+                         N'): the scan can read a lot of the table before it finds enough matching rows. An index on the filter columns helps.'
+                END
+        FROM #plan_operators AS top_op
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = top_op.database_id
+          AND pf.plan_id = top_op.plan_id
+        JOIN #plan_relations AS rl
+          ON  rl.database_id = top_op.database_id
+          AND rl.plan_id = top_op.plan_id
+          AND rl.stmt_id = top_op.stmt_id
+          AND rl.qp_id = top_op.qp_id
+          AND rl.node_id = top_op.node_id
+        JOIN #plan_operators AS c1
+          ON  c1.database_id = top_op.database_id
+          AND c1.plan_id = top_op.plan_id
+          AND c1.stmt_id = top_op.stmt_id
+          AND c1.qp_id = top_op.qp_id
+          AND c1.node_id = rl.child_1_id
+        LEFT JOIN #plan_operators AS c2
+          ON  c2.database_id = c1.database_id
+          AND c2.plan_id = c1.plan_id
+          AND c2.stmt_id = c1.stmt_id
+          AND c2.qp_id = c1.qp_id
+          AND c2.node_id = rl.gchild_1_id
+          AND c1.physical_op IN (N'Compute Scalar', N'Parallelism')
+        CROSS APPLY
+        (
+            SELECT
+                is_scan =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.is_scan
+                        ELSE c2.is_scan
+                    END,
+                pred_text =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.pred_text
+                        ELSE c2.pred_text
+                    END,
+                obj_database =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.obj_database
+                        ELSE c2.obj_database
+                    END,
+                obj_schema =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.obj_schema
+                        ELSE c2.obj_schema
+                    END,
+                obj_table =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.obj_table
+                        ELSE c2.obj_table
+                    END
+        ) AS sc
+        CROSS APPLY
+        (
+            SELECT
+                table_name =
+                    ISNULL(sc.obj_database + N'.', N'') +
+                    ISNULL(sc.obj_schema + N'.', N'') +
+                    sc.obj_table
+        ) AS tn
+        WHERE
+        (
+             top_op.logical_op = N'TopN Sort'
+          OR
+            (
+                top_op.physical_op = N'Top'
+            AND ISNULL(top_op.top_one, 0) = 0
+            )
+        )
+        AND   sc.is_scan = 1
+        AND
+        (
+             top_op.logical_op = N'TopN Sort'
+          OR sc.pred_text IS NOT NULL
+        )
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*
     Rule 13: many-to-many merge join
     */
-    INSERT
-        #plan_findings
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        query_id,
-        rule_id,
-        rule_name,
-        stmt_id,
-        qp_id,
-        node_id,
-        finding
-    )
-    SELECT
-        pf.database_id,
-        pf.plan_id,
-        pf.query_id,
-        rule_id = 13,
-        rule_name = 'many-to-many merge join',
-        po.stmt_id,
-        po.qp_id,
-        po.node_id,
-        finding =
-            N'A Merge Join is many-to-many: neither input is unique on the join columns, so SQL Server keeps the duplicate rows in a worktable in tempdb. Unique indexes or a different join may avoid it.'
-    FROM #plan_operators AS po
-    JOIN #plan_facts AS pf
-      ON  pf.database_id = po.database_id
-      AND pf.plan_id = po.plan_id
-    WHERE po.physical_op = N'Merge Join'
-    AND   po.many_to_many = 1
-    OPTION(RECOMPILE, MAXDOP 1);
+    IF @pp_has_merge_join = 1
+    BEGIN
+        INSERT
+            #plan_findings
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            finding
+        )
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 13,
+            rule_name = 'many-to-many merge join',
+            po.stmt_id,
+            po.qp_id,
+            po.node_id,
+            finding =
+                N'A Merge Join is many-to-many: neither input is unique on the join columns, so SQL Server keeps the duplicate rows in a worktable in tempdb. Unique indexes or a different join may avoid it.'
+        FROM #plan_operators AS po
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = po.database_id
+          AND pf.plan_id = po.plan_id
+        WHERE po.physical_op = N'Merge Join'
+        AND   po.many_to_many = 1
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*
     Rule 14: table variable
@@ -21438,28 +21519,79 @@ BEGIN
     It stops at an eager spool (rule 1 covers that: the scan runs once and the spool is read for each
     outer row) and at a Row Count Spool (it only counts rows, it does not replay the scan).
     */
-    WITH climb AS
-    (
+    IF @pp_has_nested_loops = 1
+    BEGIN
+        WITH climb AS
+        (
+            SELECT
+                po.database_id,
+                po.plan_id,
+                po.stmt_id,
+                po.qp_id,
+                scan_node_id = po.node_id,
+                cur_node_id = po.node_id
+            FROM #plan_operators AS po
+            WHERE po.is_scan = 1
+            AND   po.table_cardinality >= @pp_scan_rows
+
+            UNION ALL
+
+            SELECT
+                c.database_id,
+                c.plan_id,
+                c.stmt_id,
+                c.qp_id,
+                c.scan_node_id,
+                cur_node_id = e.parent_node_id
+            FROM climb AS c
+            JOIN #plan_edges AS e
+              ON  e.database_id = c.database_id
+              AND e.plan_id = c.plan_id
+              AND e.stmt_id = c.stmt_id
+              AND e.qp_id = c.qp_id
+              AND e.child_node_id = c.cur_node_id
+            JOIN #plan_operators AS pa
+              ON  pa.database_id = e.database_id
+              AND pa.plan_id = e.plan_id
+              AND pa.stmt_id = e.stmt_id
+              AND pa.qp_id = e.qp_id
+              AND pa.node_id = e.parent_node_id
+            WHERE pa.physical_op = N'Compute Scalar'
+            OR
+            (
+                    pa.physical_op IN (N'Table Spool', N'Index Spool')
+                AND pa.logical_op = N'Lazy Spool'
+            )
+        )
+        INSERT
+            #plan_findings
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            object_name,
+            finding
+        )
         SELECT
-            po.database_id,
-            po.plan_id,
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 18,
+            rule_name = 'scan on inner side of nested loops',
             po.stmt_id,
             po.qp_id,
-            scan_node_id = po.node_id,
-            cur_node_id = po.node_id
-        FROM #plan_operators AS po
-        WHERE po.is_scan = 1
-        AND   po.table_cardinality >= @pp_scan_rows
-
-        UNION ALL
-
-        SELECT
-            c.database_id,
-            c.plan_id,
-            c.stmt_id,
-            c.qp_id,
-            c.scan_node_id,
-            cur_node_id = e.parent_node_id
+            po.node_id,
+            object_name = tn.table_name,
+            finding =
+                N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + FORMAT(po.table_cardinality, 'N0') +
+                N' rows) is on the inner side of a Nested Loops join, so it can run once for every row on the outer side. An index on the join columns lets it seek instead.'
         FROM climb AS c
         JOIN #plan_edges AS e
           ON  e.database_id = c.database_id
@@ -21467,81 +21599,33 @@ BEGIN
           AND e.stmt_id = c.stmt_id
           AND e.qp_id = c.qp_id
           AND e.child_node_id = c.cur_node_id
-        JOIN #plan_operators AS pa
-          ON  pa.database_id = e.database_id
-          AND pa.plan_id = e.plan_id
-          AND pa.stmt_id = e.stmt_id
-          AND pa.qp_id = e.qp_id
-          AND pa.node_id = e.parent_node_id
-        WHERE pa.physical_op = N'Compute Scalar'
-        OR
+          AND e.child_ordinal = 2
+        JOIN #plan_operators AS nl
+          ON  nl.database_id = e.database_id
+          AND nl.plan_id = e.plan_id
+          AND nl.stmt_id = e.stmt_id
+          AND nl.qp_id = e.qp_id
+          AND nl.node_id = e.parent_node_id
+          AND nl.physical_op = N'Nested Loops'
+        JOIN #plan_operators AS po
+          ON  po.database_id = c.database_id
+          AND po.plan_id = c.plan_id
+          AND po.stmt_id = c.stmt_id
+          AND po.qp_id = c.qp_id
+          AND po.node_id = c.scan_node_id
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = po.database_id
+          AND pf.plan_id = po.plan_id
+        CROSS APPLY
         (
-                pa.physical_op IN (N'Table Spool', N'Index Spool')
-            AND pa.logical_op = N'Lazy Spool'
-        )
-    )
-    INSERT
-        #plan_findings
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        query_id,
-        rule_id,
-        rule_name,
-        stmt_id,
-        qp_id,
-        node_id,
-        object_name,
-        finding
-    )
-    SELECT
-        pf.database_id,
-        pf.plan_id,
-        pf.query_id,
-        rule_id = 18,
-        rule_name = 'scan on inner side of nested loops',
-        po.stmt_id,
-        po.qp_id,
-        po.node_id,
-        object_name = tn.table_name,
-        finding =
-            N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + FORMAT(po.table_cardinality, 'N0') +
-            N' rows) is on the inner side of a Nested Loops join, so it can run once for every row on the outer side. An index on the join columns lets it seek instead.'
-    FROM climb AS c
-    JOIN #plan_edges AS e
-      ON  e.database_id = c.database_id
-      AND e.plan_id = c.plan_id
-      AND e.stmt_id = c.stmt_id
-      AND e.qp_id = c.qp_id
-      AND e.child_node_id = c.cur_node_id
-      AND e.child_ordinal = 2
-    JOIN #plan_operators AS nl
-      ON  nl.database_id = e.database_id
-      AND nl.plan_id = e.plan_id
-      AND nl.stmt_id = e.stmt_id
-      AND nl.qp_id = e.qp_id
-      AND nl.node_id = e.parent_node_id
-      AND nl.physical_op = N'Nested Loops'
-    JOIN #plan_operators AS po
-      ON  po.database_id = c.database_id
-      AND po.plan_id = c.plan_id
-      AND po.stmt_id = c.stmt_id
-      AND po.qp_id = c.qp_id
-      AND po.node_id = c.scan_node_id
-    JOIN #plan_facts AS pf
-      ON  pf.database_id = po.database_id
-      AND pf.plan_id = po.plan_id
-    CROSS APPLY
-    (
-        SELECT
-            table_name =
-                ISNULL(po.obj_database + N'.', N'') +
-                ISNULL(po.obj_schema + N'.', N'') +
-                po.obj_table
-    ) AS tn
-    OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+            SELECT
+                table_name =
+                    ISNULL(po.obj_database + N'.', N'') +
+                    ISNULL(po.obj_schema + N'.', N'') +
+                    po.obj_table
+        ) AS tn
+        OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+    END;
 
     /*
     Rule 19: long compile
