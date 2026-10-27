@@ -136,7 +136,7 @@ The rules, and the starting thresholds they use:
 Things to know:
 
 - The thresholds are starting values. They are declared as variables at the top of the plan parsing section of the procedure, so they are easy to change.
-- Execution counts per day are worked out from the window you asked for (`@start_date` to `@end_date`), with a minimum window of one day. A short window makes a busy query look busier, and the default window of seven days makes it look quieter.
+- Execution counts per day are worked out from the window you asked for (`@start_date` to `@end_date`), with a minimum window of one day. A short window makes a busy query look busier, and the default window of seven days makes it look quieter. With `@workdays = 1` only weekdays are counted, so the number is executions per work day.
 - Plans from older builds may not carry every attribute the rules read, so some rules can miss things there. A rule that does not fire does not prove the plan is fine.
 - With `@troubleshoot_performance = 1`, each plan parsing step gets its own timing row and its query plans, the same way as the other steps.
 

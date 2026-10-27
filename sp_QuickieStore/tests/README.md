@@ -69,7 +69,7 @@ each run *executes* what it built:
   rule 2 must flag `MaxDOPSetToOne` for a plan compiled under a database MAXDOP of 1 once the setting is back at 0, with a finding that says MAXDOP may have been 1 when the plan compiled, and must ignore `OPTION (MAXDOP 1)` in a comment and the fetch step of a
   `DYNAMIC` cursor (the fixture asserts it has the CPU), rule 10 must fire for a
   function over a table variable column, rule 1's `INCLUDE` must cover the column
-  behind a computed spool output, `@troubleshoot_performance = 1` must time the plan parsing steps, `@debug = 1` must dump without Msg 208 on the
+  behind a computed spool output, `@workdays = 1` must run cleanly, `@troubleshoot_performance = 1` must time the plan parsing steps, `@debug = 1` must dump without Msg 208 on the
   early exits (a missing database, a bad time zone), rules 8 and 12 must stay quiet for the
   optimizer's own filter and Top, rule 8 must stay quiet for a filter on an aggregate result, rule 0 must not fire for a plan that is only
   an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its

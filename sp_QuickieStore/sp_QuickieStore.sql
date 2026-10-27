@@ -18190,6 +18190,7 @@ BEGIN
         @pp_node_ids_shown integer = 3, /*node ids listed before "and N more"*/
         @pp_findings_shown integer = 3, /*findings and object names joined into one row before "and N more"*/
         @pp_window_minutes integer,
+        @pp_workdays bigint = 0,
         @pp_engine_edition integer = CONVERT(integer, SERVERPROPERTY('EngineEdition')),
         @pp_server_maxdop integer,
         @pp_rg_maxdop_1 bit = 0,
@@ -18203,10 +18204,59 @@ BEGIN
         @pp_troubleshoot_sql nvarchar(max) = N'(static statements of the plan parsing section, no dynamic SQL)',
         @pp_sql nvarchar(max) = N'';
 
+    /*
+    With @workdays = 1 the runtime stats only cover weekdays, Monday to Friday in server local time
+    (the same test the @workdays filter uses), so rule 7 divides by the weekdays in the window:
+    executions per work day. The window is @start_date up to, not including, @end_date.
+    */
+    IF @workdays = 1
+    BEGIN
+        SELECT
+            @pp_workdays =
+                (wd.days_total / 7) * 5 +
+                (
+                    SELECT
+                        COUNT_BIG(*)
+                    FROM
+                    (
+                        VALUES
+                            (0),
+                            (1),
+                            (2),
+                            (3),
+                            (4),
+                            (5)
+                    ) AS k (n)
+                    WHERE k.n < wd.days_total % 7
+                    AND   (wd.first_weekday + k.n) % 7 < 5
+                )
+        FROM
+        (
+            SELECT
+                days_total =
+                    DATEDIFF(DAY, ld.first_day, ld.last_day) + 1,
+                first_weekday =
+                    DATEDIFF(DAY, 0, ld.first_day) % 7
+            FROM
+            (
+                SELECT
+                    first_day =
+                        CONVERT(date, DATEADD(MINUTE, -@utc_minutes_difference, CONVERT(datetime2(7), @start_date))),
+                    last_day =
+                        CONVERT(date, DATEADD(MICROSECOND, -1, DATEADD(MINUTE, -@utc_minutes_difference, CONVERT(datetime2(7), @end_date))))
+            ) AS ld
+        ) AS wd;
+    END;
+
     SELECT
         @current_table = 'plan parsing: converting plans to xml',
         @pp_window_minutes =
             CASE
+                WHEN @workdays = 1
+                AND  @pp_workdays * 1440 < @pp_min_window_minutes
+                THEN @pp_min_window_minutes
+                WHEN @workdays = 1
+                THEN @pp_workdays * 1440
                 WHEN DATEDIFF(MINUTE, @start_date, @end_date) < @pp_min_window_minutes
                 THEN @pp_min_window_minutes
                 ELSE DATEDIFF(MINUTE, @start_date, @end_date)

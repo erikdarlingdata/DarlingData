@@ -2743,6 +2743,14 @@ def plan_parsing_tests(server, password, R):
                     and re.search(r"table_name\s+database_id\s+plan_id\s+stmt_id\s+obj_schema\s+obj_table\s+obj_index", out),
                     combined.replace("\n", " ")[:160])
 
+        # @workdays = 1: rule 7 counts executions per work day; the run has to finish cleanly
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 1, @workdays = 1, @top = 5",
+                               database_name=PP_DB, timeout=600)
+        R.check(G, "@plan_parsing = 1 with @workdays = 1 runs cleanly",
+                completed(out) and not pp_sql_errors(combined),
+                combined.replace("\n", " ")[:160])
+
         # @troubleshoot_performance = 1 times the plan parsing steps like the
         # rest of the procedure: one current_query row per step
         out, combined = run_qs(server, password,
