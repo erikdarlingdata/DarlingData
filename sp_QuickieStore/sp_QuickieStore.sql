@@ -18162,10 +18162,11 @@ Plan parsing: convert each plan once, shred it once, then run the
 rules as plain T-SQL over the shredded rows. Nothing here runs unless
 @plan_parsing = 1. The thresholds are starting values, change them here.
 
-The inserts into the plan parsing temp tables below leave out WITH (TABLOCK) on purpose.
-Measured: a TABLOCK insert can go parallel, and for these small inserts the parallel
-startup alone costs about 200 ms per statement, which was most of the cost of the
-passes that return few or no rows. TABLOCK stays on the temp table inserts everywhere else.
+The inserts into the plan parsing temp tables below use WITH (TABLOCK), as the style guide
+requires, and MAXDOP 1. TABLOCK lets an insert go parallel, and for these small inserts the
+parallel startup alone cost about 200 ms per statement (measured), which was most of the cost of
+the passes that return few or no rows. MAXDOP 1 in the query hint keeps them serial.
+(The INSERT ... EXECUTE for the database scoped MAXDOP has no query hint, so it only has TABLOCK.)
 */
 IF  @plan_parsing = 1
 AND @log_to_table = 0
@@ -18204,6 +18205,8 @@ BEGIN
     */
     INSERT
         #plan_parsing_xml
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18228,7 +18231,7 @@ BEGIN
         SELECT
             plan_xml = TRY_CAST(qsp.query_plan AS xml)
     ) AS px
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     One row per plan with the Query Store numbers the rules use.
@@ -18240,6 +18243,8 @@ BEGIN
 
     INSERT
         #plan_facts
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18337,7 +18342,7 @@ BEGIN
     ) AS rs
       ON  rs.database_id = qsp.database_id
       AND rs.plan_id = qsp.plan_id
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Shred the statements: one row per QueryPlan. A StmtSimple has one, a StmtCursor has one per phase
@@ -18354,6 +18359,8 @@ BEGIN
     )
     INSERT
         #plan_statements
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18410,7 +18417,7 @@ BEGIN
                 q.qp.query(N'.')
     ) AS qv
     WHERE ppx.plan_state = 0
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Shred the operators. Reading every property of every operator is slow
@@ -18427,6 +18434,8 @@ BEGIN
     )
     INSERT
         #plan_operators
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18469,7 +18478,7 @@ BEGIN
             exec_mode =
                 r.rel.value(N'(@EstimatedExecutionMode)[1]', N'nvarchar(10)')
     ) AS ov
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     CREATE CLUSTERED INDEX
         c
@@ -18486,6 +18495,8 @@ BEGIN
     )
     INSERT
         #plan_edges
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18529,7 +18540,7 @@ BEGIN
             child_node_id =
                 c.rel.value(N'(@NodeId)[1]', N'integer')
     ) AS cv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     CREATE CLUSTERED INDEX
         c
@@ -18545,6 +18556,8 @@ BEGIN
     )
     INSERT
         #plan_objects
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18587,7 +18600,7 @@ BEGIN
                 ob.obj.value(N'(@Storage)[1]', N'nvarchar(60)')
     ) AS obv
     WHERE obv.node_id IS NOT NULL
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Give each operator the first object it touches
@@ -18640,6 +18653,8 @@ BEGIN
     )
     INSERT
         #plan_predicates
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18673,7 +18688,7 @@ BEGIN
             pred_xml =
                 r.rel.query(N'*/*[self::Predicate or self::ProbeResidual]')
     ) AS pv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     The flags look for a function, an implicit conversion, a CASE or COALESCE around a column,
@@ -18734,6 +18749,8 @@ BEGIN
     )
     INSERT
         #plan_anti_cols
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18764,7 +18781,7 @@ BEGIN
     ) AS cv
     WHERE pp.pred_text LIKE N'%IS NULL%'
     AND   cv.col_ref IS NOT NULL
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     WITH XMLNAMESPACES
     (
@@ -18772,6 +18789,8 @@ BEGIN
     )
     INSERT
         #plan_anti_cols
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18812,7 +18831,7 @@ BEGIN
                 QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
     ) AS cv
     WHERE cv.col_ref IS NOT NULL
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     The IS NULL test of a NOT IN is often an index seek: the seek's residual Predicate, or a seek key
@@ -18826,6 +18845,8 @@ BEGIN
     )
     INSERT
         #plan_anti_cols
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18843,7 +18864,23 @@ BEGIN
         sv.node_id,
         col_kind = 'isnull',
         cv.col_ref
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS aj
+                  WHERE aj.database_id = ps0.database_id
+                  AND   aj.plan_id = ps0.plan_id
+                  AND   aj.stmt_id = ps0.stmt_id
+                  AND   aj.qp_id = ps0.qp_id
+                  AND   aj.logical_op = N'Left Anti Semi Join'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek" or @LogicalOp = "Left Anti Semi Join"]') AS r (rel)
     CROSS APPLY
     (
@@ -18866,19 +18903,8 @@ BEGIN
                 ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
                 QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
     ) AS cv
-    WHERE EXISTS
-          (
-              SELECT
-                  1/0
-              FROM #plan_operators AS aj
-              WHERE aj.database_id = ps.database_id
-              AND   aj.plan_id = ps.plan_id
-              AND   aj.stmt_id = ps.stmt_id
-              AND   aj.qp_id = ps.qp_id
-              AND   aj.logical_op = N'Left Anti Semi Join'
-          )
-    AND   cv.col_ref IS NOT NULL
-    OPTION(RECOMPILE);
+    WHERE cv.col_ref IS NOT NULL
+    OPTION(RECOMPILE, MAXDOP 1);
 
     WITH XMLNAMESPACES
     (
@@ -18886,6 +18912,8 @@ BEGIN
     )
     INSERT
         #plan_anti_cols
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18903,7 +18931,23 @@ BEGIN
         sv.node_id,
         col_kind = 'eq',
         cv.col_ref
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS aj
+                  WHERE aj.database_id = ps0.database_id
+                  AND   aj.plan_id = ps0.plan_id
+                  AND   aj.stmt_id = ps0.stmt_id
+                  AND   aj.qp_id = ps0.qp_id
+                  AND   aj.logical_op = N'Left Anti Semi Join'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek"][*/Predicate]') AS r (rel)
     CROSS APPLY
     (
@@ -18924,19 +18968,8 @@ BEGIN
                 ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
                 QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
     ) AS cv
-    WHERE EXISTS
-          (
-              SELECT
-                  1/0
-              FROM #plan_operators AS aj
-              WHERE aj.database_id = ps.database_id
-              AND   aj.plan_id = ps.plan_id
-              AND   aj.stmt_id = ps.stmt_id
-              AND   aj.qp_id = ps.qp_id
-              AND   aj.logical_op = N'Left Anti Semi Join'
-          )
-    AND   cv.col_ref IS NOT NULL
-    OPTION(RECOMPILE);
+    WHERE cv.col_ref IS NOT NULL
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Lookups, many-to-many merge joins, Top (1) operators and eager index spools:
@@ -18948,6 +18981,8 @@ BEGIN
     )
     INSERT
         #plan_specials
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18975,7 +19010,7 @@ BEGIN
             pred_text =
                 l.lk.value(N'(Predicate/ScalarOperator/@ScalarString)[1]', N'nvarchar(4000)')
     ) AS lv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     WITH XMLNAMESPACES
     (
@@ -18983,6 +19018,8 @@ BEGIN
     )
     INSERT
         #plan_specials
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19006,7 +19043,7 @@ BEGIN
             node_id =
                 m.mg.value(N'(../@NodeId)[1]', N'integer')
     ) AS mv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     WITH XMLNAMESPACES
     (
@@ -19014,6 +19051,8 @@ BEGIN
     )
     INSERT
         #plan_specials
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19037,7 +19076,7 @@ BEGIN
             node_id =
                 t.rel.value(N'(@NodeId)[1]', N'integer')
     ) AS tv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Columns, one row each, so the lists are built from rows and not from the text of an xml value:
@@ -19050,6 +19089,8 @@ BEGIN
     )
     INSERT
         #plan_columns
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19109,7 +19150,7 @@ BEGIN
             col_name =
                 c.col.value(N'(@Column)[1]', N'sysname')
     ) AS cv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     WITH XMLNAMESPACES
     (
@@ -19117,6 +19158,8 @@ BEGIN
     )
     INSERT
         #plan_columns
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19177,7 +19220,7 @@ BEGIN
             col_name =
                 c.col.value(N'(@Column)[1]', N'sysname')
     ) AS cv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     WITH XMLNAMESPACES
     (
@@ -19185,6 +19228,8 @@ BEGIN
     )
     INSERT
         #plan_columns
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19244,7 +19289,7 @@ BEGIN
             col_name =
                 c.col.value(N'(@Column)[1]', N'sysname')
     ) AS cv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     A computed column in the spool's output (Expr1004 = LEN(w)) has no table. The columns it is computed
@@ -19256,6 +19301,8 @@ BEGIN
     )
     INSERT
         #plan_columns
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19295,7 +19342,24 @@ BEGIN
         cv.col_schema,
         cv.col_table,
         cv.col_name
-    FROM #plan_statements AS ps
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS sp
+                  WHERE sp.database_id = ps0.database_id
+                  AND   sp.plan_id = ps0.plan_id
+                  AND   sp.stmt_id = ps0.stmt_id
+                  AND   sp.qp_id = ps0.qp_id
+                  AND   sp.physical_op = N'Index Spool'
+                  AND   sp.logical_op = N'Eager Spool'
+              )
+    ) AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"][OutputList/ColumnReference[not(@Table)]]') AS r (rel)
     CROSS APPLY
     (
@@ -19316,7 +19380,7 @@ BEGIN
             col_name =
                 c.col.value(N'(@Column)[1]', N'sysname')
     ) AS cv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     UPDATE
         po
@@ -19368,6 +19432,8 @@ BEGIN
     */
     INSERT
         #plan_relations
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19469,7 +19535,7 @@ BEGIN
     )
     OR    po.physical_op = N'Top'
     OR    po.logical_op = N'TopN Sort'
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Shred the warnings and the scalar functions the plan calls.
@@ -19484,6 +19550,8 @@ BEGIN
     )
     INSERT
         #plan_warnings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19502,7 +19570,7 @@ BEGIN
             w.warn.value(N'(@Expression)[1]', N'nvarchar(4000)')
     FROM #plan_statements AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//PlanAffectingConvert[@ConvertIssue = "Seek Plan"]') AS w (warn)
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     WITH XMLNAMESPACES
     (
@@ -19510,6 +19578,8 @@ BEGIN
     )
     INSERT
         #plan_warnings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19541,7 +19611,7 @@ BEGIN
             is_clr =
                 u.udf.value(N'(@IsClrFunction)[1]', N'bit')
     ) AS uv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Shred the missing index requests: one row per request, columns as lists
@@ -19555,6 +19625,8 @@ BEGIN
     )
     INSERT
         #plan_missing_indexes
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19613,7 +19685,7 @@ BEGIN
             n_include =
                 m.mi.value(N'count(ColumnGroup[@Usage = "INCLUDE"]/Column)', N'integer')
     ) AS mv
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     The missing index column names are bracketed and come out of the xml separated by single spaces:
@@ -19721,6 +19793,8 @@ BEGIN
     BEGIN
         INSERT
             #plan_database_maxdop
+            WITH
+                (TABLOCK)
         (
             database_id,
             maxdop
@@ -19742,6 +19816,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19774,7 +19850,7 @@ BEGIN
               WHERE ps.database_id = pf.database_id
               AND   ps.plan_id = pf.plan_id
           )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 1: eager index spool
@@ -19784,6 +19860,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19945,7 +20023,7 @@ BEGIN
     ) AS il
     WHERE po.physical_op = N'Index Spool'
     AND   po.logical_op = N'Eager Spool'
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 2: serial plan
@@ -19959,6 +20037,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20021,7 +20101,7 @@ BEGIN
         AND @pp_rg_maxdop_1 = 0
         )
     )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 3: scalar UDF
@@ -20029,6 +20109,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20095,13 +20177,15 @@ BEGIN
                 )
     ) AS fn
     WHERE fn.function_names IS NOT NULL
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 4: lookup with predicate
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20190,7 +20274,7 @@ BEGIN
       OR po.physical_op = N'RID Lookup'
     )
     AND   po.pred_text IS NOT NULL
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 5: NOT IN on nullable column
@@ -20258,6 +20342,8 @@ BEGIN
     )
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20314,13 +20400,15 @@ BEGIN
         i.stmt_id,
         i.qp_id,
         nl.col_ref
-    OPTION(RECOMPILE, MAXRECURSION 0);
+    OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
 
     /*
     Rule 6: implicit conversion prevents seek
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20355,7 +20443,7 @@ BEGIN
       ON  pf.database_id = pw.database_id
       AND pf.plan_id = pw.plan_id
     WHERE pw.warning_type = 'convert'
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 7: missing index request
@@ -20363,6 +20451,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20452,7 +20542,7 @@ BEGIN
       OR pf.avg_duration_ms >= @pp_duration_ms
       OR pf.executions_per_day >= @pp_execs_per_day
     )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 8: late filter
@@ -20460,6 +20550,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20497,7 +20589,7 @@ BEGIN
     AND   po.startup_expr = 0
     AND   po.pred_text IS NOT NULL
     AND   po.pred_base_col = 1
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 9: scan with residual predicate
@@ -20505,6 +20597,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20557,7 +20651,7 @@ BEGIN
               po.pred_text LIKE N'PROBE(%'
               AND po.pred_text NOT LIKE N'%AND [^P]%'
           )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 10: non-SARGable predicate
@@ -20565,6 +20659,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20642,7 +20738,7 @@ BEGIN
       OR po.pred_if = 1
       OR po.pred_like_lead = 1
     )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 11: multi-statement table-valued function
@@ -20651,6 +20747,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20695,7 +20793,7 @@ BEGIN
     ) AS tn
     WHERE po.physical_op = N'Table-valued function'
     AND   po.obj_schema IS NOT NULL
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 12: TOP over scan
@@ -20704,6 +20802,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20825,13 +20925,15 @@ BEGIN
          top_op.logical_op = N'TopN Sort'
       OR sc.pred_text IS NOT NULL
     )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 13: many-to-many merge join
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20860,7 +20962,7 @@ BEGIN
       AND pf.plan_id = po.plan_id
     WHERE po.physical_op = N'Merge Join'
     AND   po.many_to_many = 1
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 14: table variable
@@ -20869,6 +20971,8 @@ BEGIN
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20918,13 +21022,15 @@ BEGIN
         AND rl.gp_op IN (N'Nested Loops', N'Hash Match', N'Merge Join')
         )
     )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 15: remote query
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20963,7 +21069,7 @@ BEGIN
               N'Remote Update',
               N'Remote Delete'
           )
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 16: wide DML
@@ -20971,6 +21077,8 @@ BEGIN
     */
     INSERT
         #plan_dml_indexes
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21008,10 +21116,12 @@ BEGIN
         pob.obj_schema,
         pob.obj_table,
         pob.obj_index
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21081,7 +21191,7 @@ BEGIN
     JOIN #plan_facts AS pf
       ON  pf.database_id = dm.database_id
       AND pf.plan_id = dm.plan_id
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Rule 17: Standard Edition batch mode DOP 2
@@ -21094,6 +21204,8 @@ BEGIN
     BEGIN
         INSERT
             #plan_findings
+            WITH
+                (TABLOCK)
         (
             database_id,
             plan_id,
@@ -21151,7 +21263,7 @@ BEGIN
                   AND   po.plan_id = pf.plan_id
                   AND   po.exec_mode = N'Batch'
               )
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
     END;
 
     /*
@@ -21205,6 +21317,8 @@ BEGIN
     )
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21262,13 +21376,15 @@ BEGIN
                 ISNULL(po.obj_schema + N'.', N'') +
                 po.obj_table
     ) AS tn
-    OPTION(RECOMPILE, MAXRECURSION 0);
+    OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
 
     /*
     Rule 19: long compile
     */
     INSERT
         #plan_findings
+        WITH
+            (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21288,7 +21404,7 @@ BEGIN
             N' ms on average to compile. Every recompile pays that again: check why it recompiles, and whether the query can be simpler.'
     FROM #plan_facts AS pf
     WHERE pf.avg_compile_duration_ms >= @pp_compile_ms
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     /*
     Return the findings: one row per plan and rule. The first few findings are joined, and the object

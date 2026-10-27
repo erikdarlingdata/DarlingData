@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 318 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 327 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -60,12 +60,20 @@ each run *executes* what it built:
   PhysicalOp/LogicalOp) from its Query Store plan. Regression fixtures cover
   the review findings: rule 1 must script a valid `CREATE INDEX` (bracketed,
   comma separated, no duplicates, no `Expr` columns, parses under
-  `PARSEONLY`), rule 4 must separate the fetched columns, rule 5 must stay quiet
-  for `NOT IN` over `NOT NULL` keys and for `NOT IN` in a comment, rule 2 must
-  ignore `OPTION (MAXDOP 1)` in a comment, rules 8 and 12 must stay quiet for the
+  `PARSEONLY`), rule 4 must separate the fetched columns, rule 5 must fire for a
+  `NOT NULL` key `NOT IN` a nullable indexed column (the `IS NULL` test is the
+  seek or its residual predicate), and stay quiet for `NOT IN` over `NOT NULL`
+  keys, for `NOT EXISTS` with a time range on a nullable column, and for a
+  hand-written wildcard (`n = x OR n IS NULL`) with no `NOT IN` in the text,
+  rule 2 must ignore `OPTION (MAXDOP 1)` in a comment and the fetch step of a
+  `DYNAMIC` cursor (the fixture asserts it has the CPU), rule 10 must fire for a
+  function over a table variable column, rule 1's `INCLUDE` must cover the column
+  behind a computed spool output, `@debug = 1` must dump without Msg 208 on the
+  early exits (a missing database, a bad time zone), rules 8 and 12 must stay quiet for the
   optimizer's own filter and Top, rule 0 must not fire for a plan that is only
-  an `IF` condition, and `STATIC` and `KEYSET` cursors give one row per plan and
-  rule. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
+  an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its
+  phase (`10 (populate)`), the phase has that operator, and the `KEYSET`
+  lookup finding names the right table. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
   `MAXDOP 1`, because a small machine puts a spool over the scan. Rules
   15 (needs a linked server), 17 (needs Standard Edition) and 19 (needs a
   compile of 1 second or more) are not covered.
