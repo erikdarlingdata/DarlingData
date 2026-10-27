@@ -2481,6 +2481,9 @@ def plan_parsing_tests(server, password, R):
                 "pp_udf" in finding_text("r3", 3), finding_text("r3", 3)[:120])
         R.check(G, "rule 4 finding names the table",
                 "pp_small" in finding_text("r4", 4), finding_text("r4", 4)[:120])
+        R.check(G, "rule 18 finding does not claim a count of executions",
+                "can run again for each row" in finding_text("r18", 18),
+                finding_text("r18", 18)[:160])
         R.check(G, "rule 9 finding shows the 1,000,000 row table cardinality "
                    "with thousands separators",
                 "(1,000,000 rows)" in finding_text("r9", 9),

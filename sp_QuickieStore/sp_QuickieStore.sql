@@ -21799,7 +21799,7 @@ BEGIN
             object_name = tn.table_name,
             finding =
                 N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + FORMAT(po.table_cardinality, 'N0') +
-                N' rows) is on the inner side of a Nested Loops join, so it can run once for every row on the outer side. An index on the join columns lets it seek instead.'
+                N' rows) is on the inner side of a Nested Loops join, so it can run again for each row from the outer side. The plan cannot show how many times it ran: if the outer side returns more than a few rows, an index on the join columns lets it seek instead.'
         FROM climb AS c
         JOIN #plan_edges AS e
           ON  e.database_id = c.database_id

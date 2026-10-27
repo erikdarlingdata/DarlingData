@@ -130,7 +130,7 @@ The rules, and the starting thresholds they use:
 | 15      | remote query                           | any remote query, scan, index scan, index seek, insert, update or delete operator (linked servers)                                                  |
 | 16      | wide DML                               | one INSERT, UPDATE, DELETE or MERGE that has to maintain 5 or more indexes. Shows the count and the names                                           |
 | 17      | Standard Edition batch mode DOP 2      | Standard Edition limits batch mode to DOP 2. Fires for a query that ran at DOP 2 with batch mode operators, no Query Store hint or plan guide, when the server and database MAXDOP leave the effective MAXDOP at 0 or above 2 |
-| 18      | scan on inner side of nested loops     | a scan on the inner side of a nested loops join, on a table of 1,000,000 rows or more. It can run once for every outer row                       |
+| 18      | scan on inner side of nested loops     | a scan on the inner side of a nested loops join, on a table of 1,000,000 rows or more. It can run again for each outer row, but a plan cannot show how many times it ran, so the finding says when an index is worth it |
 | 19      | long compile                           | a plan that took 1,000 ms or more to compile                                                                                                        |
 
 Things to know:
