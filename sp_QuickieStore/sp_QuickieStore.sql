@@ -20055,7 +20055,7 @@ BEGIN
         rule_name = 'serial plan',
         finding =
             N'The plan is serial (NonParallelPlanReason: ' + ps.non_parallel_reason +
-            N') and averages ' + CONVERT(nvarchar(30), CONVERT(decimal(38,0), pf.avg_cpu_ms)) + N' ms of CPU. ' +
+            N') and averages ' + FORMAT(pf.avg_cpu_ms, 'N0') + N' ms of CPU. ' +
             CASE ps.non_parallel_reason
                 WHEN N'MaxDOPSetToOne'
                 THEN N'The server and database MAXDOP are not 1, so MAXDOP 1 was asked for in the query, a Query Store hint or a plan guide.'
@@ -20622,7 +20622,7 @@ BEGIN
         po.node_id,
         object_name = tn.table_name,
         finding =
-            N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + CONVERT(nvarchar(30), CONVERT(decimal(38,0), po.table_cardinality)) +
+            N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + FORMAT(po.table_cardinality, 'N0') +
             N' rows) applies a predicate to every row it reads: ' +
             LEFT(po.pred_text, @pp_text_chars) +
             CASE
@@ -21342,7 +21342,7 @@ BEGIN
         po.node_id,
         object_name = tn.table_name,
         finding =
-            N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + CONVERT(nvarchar(30), CONVERT(decimal(38,0), po.table_cardinality)) +
+            N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + FORMAT(po.table_cardinality, 'N0') +
             N' rows) is on the inner side of a Nested Loops join, so it can run once for every row on the outer side. An index on the join columns lets it seek instead.'
     FROM climb AS c
     JOIN #plan_edges AS e
@@ -21400,7 +21400,7 @@ BEGIN
         rule_id = 19,
         rule_name = 'long compile',
         finding =
-            N'The plan takes ' + CONVERT(nvarchar(30), CONVERT(decimal(38,0), pf.avg_compile_duration_ms)) +
+            N'The plan takes ' + FORMAT(pf.avg_compile_duration_ms, 'N0') +
             N' ms on average to compile. Every recompile pays that again: check why it recompiles, and whether the query can be simpler.'
     FROM #plan_facts AS pf
     WHERE pf.avg_compile_duration_ms >= @pp_compile_ms
