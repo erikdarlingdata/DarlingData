@@ -21474,7 +21474,7 @@ BEGIN
             object_count =
                 COUNT_BIG(DISTINCT pfi.object_name),
             node_count =
-                COUNT_BIG(DISTINCT CONVERT(varchar(30), ISNULL(pfi.qp_id, 0)) + '.' + CONVERT(varchar(30), pfi.node_id))
+                COUNT_BIG(DISTINCT CONVERT(varchar(30), ISNULL(pfi.stmt_id, 0)) + '.' + CONVERT(varchar(30), ISNULL(pfi.qp_id, 0)) + '.' + CONVERT(varchar(30), pfi.node_id))
         FROM #plan_findings AS pfi
         GROUP BY
             pfi.database_id,
