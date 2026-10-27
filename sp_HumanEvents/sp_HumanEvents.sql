@@ -3222,13 +3222,13 @@ BEGIN
         database_name =
             COALESCE
             (
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+                NULLIF(pd.database_name, N''),
+                DB_NAME(NULLIF(pd.database_id, 0))
             ),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
         blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
         blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
@@ -3260,6 +3260,44 @@ BEGIN
     INTO #blocked
     FROM #human_events_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                        THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                        ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                    END
+            FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     OUTER APPLY
     (
@@ -3393,13 +3431,13 @@ BEGIN
         database_name =
             COALESCE
             (
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+                NULLIF(pd.database_name, N''),
+                DB_NAME(NULLIF(pd.database_id, 0))
             ),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
         blocking_spid = pa.blocking_spid,
         blocking_ecid = pa.blocking_ecid,
@@ -3431,6 +3469,44 @@ BEGIN
     INTO #blocking
     FROM #human_events_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                        THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                        ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                    END
+            FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     OUTER APPLY
     (
@@ -5001,13 +5077,13 @@ FROM
             database_name =
                 COALESCE
                 (
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
+                    NULLIF(pd.database_name, N''''),
+                    DB_NAME(NULLIF(pd.database_id, 0))
                 ),
-            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
+            database_id = pd.database_id,
+            object_id = pd.object_id,
+            transaction_id = pd.transaction_id,
+            resource_owner_type = pd.resource_owner_type,
             monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
             spid = pa.spid,
             ecid = pa.ecid,
@@ -5035,6 +5111,44 @@ FROM
             process_report = xet.human_events_xml
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+        OUTER APPLY
+        (
+            /*
+            One pass over the data elements of the event, PIVOTed by name. Each
+            data[@name=...] lookup read all of them again and sorted the
+            matches. blocked_process is left out: it is the report itself.
+            */
+            SELECT
+                database_name = CONVERT(sysname, p.database_name),
+                database_id = CONVERT(integer, p.database_id),
+                object_id = CONVERT(integer, p.object_id),
+                transaction_id = CONVERT(bigint, p.transaction_id),
+                resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+            FROM
+            (
+                SELECT
+                    name = d.d.value(''@name'', ''sysname'') COLLATE Latin1_General_BIN2,
+                    value =
+                        CASE
+                            WHEN d.d.value(''@name'', ''sysname'') IN (N''resource_owner_type'')
+                            THEN d.d.value(''(text)[1]'', ''nvarchar(256)'')
+                            ELSE d.d.value(''(value/text())[1]'', ''nvarchar(256)'')
+                        END
+                FROM oa.c.nodes(''data[@name != "blocked_process"]'') AS d(d)
+            ) AS a
+            PIVOT
+            (
+                MAX(a.value)
+                FOR a.name IN
+                (
+                    database_name,
+                    database_id,
+                    object_id,
+                    transaction_id,
+                    resource_owner_type
+                )
+            ) AS p
+        ) AS pd
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
         OUTER APPLY
         (
@@ -5113,13 +5227,13 @@ FROM
             database_name =
                 COALESCE
                 (
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
+                    NULLIF(pd.database_name, N''''),
+                    DB_NAME(NULLIF(pd.database_id, 0))
                 ),
-            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
+            database_id = pd.database_id,
+            object_id = pd.object_id,
+            transaction_id = pd.transaction_id,
+            resource_owner_type = pd.resource_owner_type,
             monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
             spid = pa.spid,
             ecid = pa.ecid,
@@ -5141,6 +5255,44 @@ FROM
             process_report = xet.human_events_xml
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+        OUTER APPLY
+        (
+            /*
+            One pass over the data elements of the event, PIVOTed by name. Each
+            data[@name=...] lookup read all of them again and sorted the
+            matches. blocked_process is left out: it is the report itself.
+            */
+            SELECT
+                database_name = CONVERT(sysname, p.database_name),
+                database_id = CONVERT(integer, p.database_id),
+                object_id = CONVERT(integer, p.object_id),
+                transaction_id = CONVERT(bigint, p.transaction_id),
+                resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+            FROM
+            (
+                SELECT
+                    name = d.d.value(''@name'', ''sysname'') COLLATE Latin1_General_BIN2,
+                    value =
+                        CASE
+                            WHEN d.d.value(''@name'', ''sysname'') IN (N''resource_owner_type'')
+                            THEN d.d.value(''(text)[1]'', ''nvarchar(256)'')
+                            ELSE d.d.value(''(value/text())[1]'', ''nvarchar(256)'')
+                        END
+                FROM oa.c.nodes(''data[@name != "blocked_process"]'') AS d(d)
+            ) AS a
+            PIVOT
+            (
+                MAX(a.value)
+                FOR a.name IN
+                (
+                    database_name,
+                    database_id,
+                    object_id,
+                    transaction_id,
+                    resource_owner_type
+                )
+            ) AS p
+        ) AS pd
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
         OUTER APPLY
         (
@@ -5234,9 +5386,9 @@ JOIN
     FROM
     (
         SELECT
-            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
+            database_id = pd.database_id,
+            object_id = pd.object_id,
+            transaction_id = pd.transaction_id,
             spid = bd.value(''(process/@spid)[1]'', ''integer''),
             ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
             waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
@@ -5245,6 +5397,35 @@ JOIN
             loginname = bd.value(''(process/@loginname)[1]'', ''sysname'')
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+        OUTER APPLY
+        (
+            /*
+            One pass over the data elements of the event, PIVOTed by name. Each
+            data[@name=...] lookup read all of them again and sorted the
+            matches. blocked_process is left out: it is the report itself.
+            */
+            SELECT
+                database_id = CONVERT(integer, p.database_id),
+                object_id = CONVERT(integer, p.object_id),
+                transaction_id = CONVERT(bigint, p.transaction_id)
+            FROM
+            (
+                SELECT
+                    name = d.d.value(''@name'', ''sysname'') COLLATE Latin1_General_BIN2,
+                    value = d.d.value(''(value/text())[1]'', ''nvarchar(256)'')
+                FROM oa.c.nodes(''data[@name != "blocked_process"]'') AS d(d)
+            ) AS a
+            PIVOT
+            (
+                MAX(a.value)
+                FOR a.name IN
+                (
+                    database_id,
+                    object_id,
+                    transaction_id
+                )
+            ) AS p
+        ) AS pd
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
         WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
     ) AS b
