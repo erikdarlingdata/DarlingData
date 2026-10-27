@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 251 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 273 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -55,7 +55,18 @@ each run *executes* what it built:
   executions per day gate with a short `@start_date` and fail it with the
   default window. Rule 14 must fire below compatibility level 150 and stay
   quiet at 150 and up. The column list is pinned, `@plan_parsing = 0` must
-  return no findings, and each rejected combination must raise an error. Rules
+  return no findings, and each rejected combination must raise an error. A
+  failed rule check prints the fixture query's operator list (NodeId,
+  PhysicalOp/LogicalOp) from its Query Store plan. Regression fixtures cover
+  the review findings: rule 1 must script a valid `CREATE INDEX` (bracketed,
+  comma separated, no duplicates, no `Expr` columns, parses under
+  `PARSEONLY`), rule 4 must separate the fetched columns, rule 5 must stay quiet
+  for `NOT IN` over `NOT NULL` keys and for `NOT IN` in a comment, rule 2 must
+  ignore `OPTION (MAXDOP 1)` in a comment, rules 8 and 12 must stay quiet for the
+  optimizer's own filter and Top, rule 0 must not fire for a plan that is only
+  an `IF` condition, and `STATIC` and `KEYSET` cursors give one row per plan and
+  rule. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
+  `MAXDOP 1`, because a small machine puts a spool over the scan. Rules
   15 (needs a linked server), 17 (needs Standard Edition) and 19 (needs a
   compile of 1 second or more) are not covered.
 - **`@include_query_hash_totals`**: the `by_query_hash` columns are in the
