@@ -5009,7 +5009,8 @@ FROM
                     bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
                     1
                 ),
-            process_report = oa.c.query(''.'')
+            /* the staging row is this one event already, so no second copy */
+            process_report = xet.human_events_xml
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
@@ -5114,7 +5115,8 @@ FROM
             loginname = pa.loginname,
             isolationlevel = pa.isolationlevel,
             sqlhandle = NULL,
-            process_report = oa.c.query(''.'')
+            /* the staging row is this one event already, so no second copy */
+            process_report = xet.human_events_xml
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
