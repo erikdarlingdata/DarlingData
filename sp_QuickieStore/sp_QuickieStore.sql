@@ -19492,6 +19492,54 @@ BEGIN
                 END
         FROM #plan_filter_parts AS fp
         OPTION(RECOMPILE);
+
+        /*
+        A wide (per index) UPDATE or MERGE plan has a Filter the optimizer adds to test whether the index key
+        changed (an Expr built from the old and the new value). It reads the rows a Split makes: the Split itself,
+        a Table Spool over the Split, or the second Table Spool that reads that spool (its PrimaryNodeId).
+        That check has no earlier place, so it does not count. Only the statements with a Split are opened.
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        UPDATE
+            fp
+        SET
+            fp.part_flag = 0
+        FROM #plan_filter_parts AS fp
+        JOIN #plan_statements AS ps
+          ON  ps.database_id = fp.database_id
+          AND ps.plan_id = fp.plan_id
+          AND ps.stmt_id = fp.stmt_id
+          AND ps.qp_id = fp.qp_id
+        WHERE fp.part_flag = 1
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS so
+                  WHERE so.database_id = fp.database_id
+                  AND   so.plan_id = fp.plan_id
+                  AND   so.stmt_id = fp.stmt_id
+                  AND   so.qp_id = fp.qp_id
+                  AND   so.physical_op = N'Split'
+              )
+        AND   ps.qp_xml.exist
+              (
+                  N'.//RelOp[@PhysicalOp = "Filter"][@NodeId = sql:column("fp.node_id")]/Filter/RelOp
+                      [
+                          @PhysicalOp = "Split"
+                       or (
+                              @PhysicalOp = "Table Spool"
+                          and (
+                                  Spool/RelOp/@PhysicalOp = "Split"
+                               or Spool/@PrimaryNodeId = //RelOp[@PhysicalOp = "Table Spool"][Spool/RelOp/@PhysicalOp = "Split"]/@NodeId
+                              )
+                          )
+                      ]'
+              ) = 1
+        OPTION(RECOMPILE);
     END;
 
     /*

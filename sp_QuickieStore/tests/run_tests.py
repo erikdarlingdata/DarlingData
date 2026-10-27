@@ -2051,6 +2051,16 @@ INSERT dbo.pp_fk WITH (TABLOCK) (id, pk_id)
 SELECT p.id, CASE WHEN p.id % 11 = 0 THEN NULL ELSE p.id % 400 + 1 END FROM dbo.pp_pk AS p;
 CREATE INDEX ix_fk_pk ON dbo.pp_fk (pk_id);
 
+/* a table with three nonclustered indexes: UPDATE ... OPTION (QUERYTRACEON 8790) gets a wide (per index) plan */
+CREATE TABLE dbo.pp_upd (id integer NOT NULL PRIMARY KEY CLUSTERED, a integer NOT NULL, b integer NOT NULL, n integer NULL);
+INSERT dbo.pp_upd WITH (TABLOCK) (id, a, b, n)
+SELECT TOP (50000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 1000, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 7,
+       CASE WHEN ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 10 = 0 THEN NULL ELSE ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 500 END
+FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2;
+CREATE INDEX ix_a ON dbo.pp_upd (a);
+CREATE INDEX ix_b ON dbo.pp_upd (b);
+CREATE INDEX ix_n ON dbo.pp_upd (n);
+
 /* a procedure whose only plan statement is an IF condition */
 EXECUTE (N'CREATE PROCEDURE dbo.pp_ifproc AS BEGIN IF /*pp_cond*/ EXISTS (SELECT 1/0 FROM dbo.pp_small AS s WHERE s.a = 5) SELECT 1; END;');
 """
@@ -2129,6 +2139,10 @@ SELECT /*pp_r8cs*/ @s = d.u FROM (SELECT TOP (1000) s.id, u = UPPER(s.c) + CONVE
 /* 8, positive: a mixed predicate, a table column and a window aggregate. The column part could
    filter earlier, so it counts; the finding says the other part reads a window result */
 SELECT /*pp_r8mix*/ @i = d.id FROM (SELECT s.id, s.b, cnt = COUNT_BIG(*) OVER (PARTITION BY s.a) FROM dbo.pp_small AS s) AS d WHERE d.b = 3 AND d.cnt > 2;
+
+/* 8, negative: a wide (per index) UPDATE. The optimizer adds a Filter over the Split (and over a Table Spool that
+   reads the Split's spool) to test whether the index key changed; there is no earlier place for it */
+UPDATE /*pp_r8upd*/ dbo.pp_upd SET b = 1 WHERE a < 800 AND n IS NULL OPTION (QUERYTRACEON 8790);
 
 /* 0, negative: a plan that is only an IF condition */
 EXECUTE dbo.pp_ifproc;
@@ -2426,7 +2440,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r4self", "r5nn", "r5ne",
-            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2660,6 +2674,17 @@ def plan_parsing_tests(server, password, R):
         R.check(G, "rule 8 fires for a filter on a Compute Scalar over table columns",
                 pp_has(found, ids["r8cs"], 8),
                 "no row" + pp_operators(server, password, ids["r8cs"]))
+        # The wide UPDATE has to have the shape the rule skips, or the check proves nothing
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'SPLITFILTER:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                         "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                         "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                         "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                         "//RelOp[@PhysicalOp = \"Filter\"]/Filter/RelOp[@PhysicalOp = \"Split\" or @PhysicalOp = \"Table Spool\"]') = 1;"
+                         % ids["r8upd"], database=PP_DB)
+        R.check(G, "wide UPDATE fixture has a Filter over a Split or Table Spool",
+                "SPLITFILTER:1" in out, out[:200])
+        quiet("r8upd", 8, "rule 8 stays quiet for the index key change Filter over a Split in a wide UPDATE")
         mix_text = full_text("r8mix", 8)
         R.check(G, "rule 8 fires for a mixed predicate and says part of it reads a window result",
                 pp_has(found, ids["r8mix"], 8) and "[b]=(3)" in mix_text
