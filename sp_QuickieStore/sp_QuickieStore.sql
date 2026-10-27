@@ -21776,10 +21776,30 @@ BEGIN
             pfi.rule_name,
             finding_count =
                 COUNT_BIG(DISTINCT pfi.finding),
+            /*
+            The two counts skip the findings with no object or no node id before they count,
+            so the aggregate never sees a NULL (that sent "Null value is eliminated" to the client)
+            */
             object_count =
-                COUNT_BIG(DISTINCT pfi.object_name),
+                (
+                    SELECT
+                        COUNT_BIG(DISTINCT f4.object_name)
+                    FROM #plan_findings AS f4
+                    WHERE f4.database_id = pfi.database_id
+                    AND   f4.plan_id = pfi.plan_id
+                    AND   f4.rule_id = pfi.rule_id
+                    AND   f4.object_name IS NOT NULL
+                ),
             node_count =
-                COUNT_BIG(DISTINCT CONVERT(varchar(30), ISNULL(pfi.stmt_id, 0)) + '.' + CONVERT(varchar(30), ISNULL(pfi.qp_id, 0)) + '.' + CONVERT(varchar(30), pfi.node_id))
+                (
+                    SELECT
+                        COUNT_BIG(DISTINCT CONVERT(varchar(30), ISNULL(f5.stmt_id, 0)) + '.' + CONVERT(varchar(30), ISNULL(f5.qp_id, 0)) + '.' + CONVERT(varchar(30), f5.node_id))
+                    FROM #plan_findings AS f5
+                    WHERE f5.database_id = pfi.database_id
+                    AND   f5.plan_id = pfi.plan_id
+                    AND   f5.rule_id = pfi.rule_id
+                    AND   f5.node_id IS NOT NULL
+                )
         FROM #plan_findings AS pfi
         GROUP BY
             pfi.database_id,
@@ -21801,8 +21821,9 @@ BEGIN
                         (
                             SELECT
                                 f0.finding,
+                                /* the lowest node id, NULL when the finding has none, without a NULL reaching MIN */
                                 node_id =
-                                    MIN(f0.node_id),
+                                    NULLIF(MIN(ISNULL(f0.node_id, 2147483647)), 2147483647),
                                 finding_id =
                                     MIN(f0.finding_id)
                             FROM #plan_findings AS f0
