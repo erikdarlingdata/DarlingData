@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 338 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 342 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -21,7 +21,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `338` (`337` on SQL Server 2017, which skips the rule 14 check at
+password). Expect `342` (`341` on SQL Server 2017, which skips the rule 14 check at
 compatibility level 150 and up).
 
 The harness needs go-sqlcmd: it passes `-W` together with `-y`, which the older ODBC
@@ -74,7 +74,7 @@ each run *executes* what it built:
   function over a table variable column, rule 1's `INCLUDE` must cover the column
   behind a computed spool output, `@workdays = 1` must run cleanly, `@troubleshoot_performance = 1` must time the plan parsing steps, `@debug = 1` must dump without Msg 208 on the
   early exits (a missing database, a bad time zone), rules 8 and 12 must stay quiet for the
-  optimizer's own filter and Top, rule 8 must stay quiet for a filter on an aggregate result, rule 0 must not fire for a plan that is only
+  optimizer's own filter and Top, rule 8 must stay quiet for a filter on an aggregate result, for `HAVING` and for a filter on `ROW_NUMBER()`, and must fire for a filter on a Compute Scalar over table columns and for a mixed predicate (a table column and a window aggregate), rule 0 must not fire for a plan that is only
   an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its
   phase (`10 (populate)`), the phase has that operator, and the `KEYSET`
   lookup finding names the right table. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and

@@ -2055,6 +2055,77 @@ CREATE TABLE
 );
 
 /*
+Rule 8, for a Filter whose predicate reads a computed value (an Expr): the parts of its predicate
+(the conditions of a top level AND, or the whole predicate), the Exprs each part reads, and where
+each Expr of the statement comes from (is_agg: an aggregate or a window function; has_base: a table column)
+*/
+CREATE TABLE
+    #plan_filter_parts
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    part_ord integer NOT NULL,
+    part_base_col bit NOT NULL,
+    part_agg bit NULL,
+    part_flag bit NULL,
+    part_xml xml NULL
+);
+
+CREATE TABLE
+    #plan_filter_part_exprs
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    part_ord integer NOT NULL,
+    expr_name sysname NOT NULL
+);
+
+CREATE TABLE
+    #plan_expr_defs
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    expr_name sysname NULL,
+    is_agg bit NOT NULL,
+    has_base bit NOT NULL,
+    def_xml xml NULL
+);
+
+CREATE TABLE
+    #plan_expr_refs
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    expr_name sysname NOT NULL,
+    ref_name sysname NOT NULL
+);
+
+/*
+The Exprs that come from an aggregate or a window function (agg), directly or through other Exprs,
+and the ones built from a table column (base)
+*/
+CREATE TABLE
+    #plan_expr_class
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    expr_name sysname NOT NULL,
+    expr_source varchar(4) NOT NULL
+);
+
+/*
 Columns an anti semi join compares for equality (eq) and
 columns that an operator tests with IS NULL (isnull), for the NOT IN rule
 */
@@ -18199,6 +18270,7 @@ BEGIN
         @pp_has_lookup bit = 0,
         @pp_has_eager_index_spool bit = 0,
         @pp_has_nested_loops bit = 0,
+        @pp_has_expr_filter bit = 0,
         @pp_troubleshoot_sql nvarchar(max) = N'(static statements of the plan parsing section, no dynamic SQL)',
         @pp_sql nvarchar(max) = N'';
 
@@ -19034,6 +19106,391 @@ BEGIN
       AND pp.node_id = po.node_id
     WHERE pp.pred_text IS NOT NULL
     OPTION(RECOMPILE);
+
+    /*
+    Rule 8 traces the computed values (Exprs) a Filter reads. Only the statements with a Filter whose
+    predicate reads one are opened. Each part of the predicate (a condition of a top level AND, or the
+    whole predicate) is read from the predicate copy, with the Exprs it reads. Each Expr the statement
+    defines is read with where it comes from: an Aggregate (Stream Aggregate, Hash Match aggregate,
+    Window Aggregate) or a Sequence (Sequence Project) in its definition, a table column in it, and the
+    Exprs it is built from, so a Compute Scalar chain can be followed to its source.
+    */
+    SELECT
+        @pp_has_expr_filter =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #plan_operators AS po
+                         WHERE po.physical_op = N'Filter'
+                         AND   po.startup_expr = 0
+                         AND   po.pred_expr_col = 1
+                     )
+                THEN 1
+                ELSE 0
+            END;
+
+    IF @pp_has_expr_filter = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_filter_parts
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            part_ord,
+            part_base_col,
+            part_xml
+        )
+        SELECT
+            pp.database_id,
+            pp.plan_id,
+            pp.stmt_id,
+            pp.qp_id,
+            pp.node_id,
+            part_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        pp.database_id,
+                        pp.plan_id,
+                        pp.stmt_id,
+                        pp.qp_id,
+                        pp.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            part_base_col =
+                pt.part.exist(N'.//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]'),
+            part_xml =
+                pt.part.query(N'.')
+        FROM #plan_predicates AS pp
+        JOIN #plan_operators AS po
+          ON  po.database_id = pp.database_id
+          AND po.plan_id = pp.plan_id
+          AND po.stmt_id = pp.stmt_id
+          AND po.qp_id = pp.qp_id
+          AND po.node_id = pp.node_id
+        CROSS APPLY pp.pred_xml.nodes
+        (
+            N'(Predicate/ScalarOperator[Logical/@Operation = "AND"]/Logical/ScalarOperator, Predicate/ScalarOperator[not(Logical/@Operation = "AND")])'
+        ) AS pt (part)
+        WHERE po.physical_op = N'Filter'
+        AND   po.startup_expr = 0
+        AND   po.pred_expr_col = 1
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_filter_part_exprs
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            part_ord,
+            expr_name
+        )
+        SELECT DISTINCT
+            fp.database_id,
+            fp.plan_id,
+            fp.stmt_id,
+            fp.qp_id,
+            fp.node_id,
+            fp.part_ord,
+            expr_name =
+                c.col.value(N'(@Column)[1]', N'sysname')
+        FROM #plan_filter_parts AS fp
+        CROSS APPLY fp.part_xml.nodes(N'.//ColumnReference[not(@Table)][not(substring(@Column, 1, 1) = "@")][not(substring(@Column, 1, 10) = "Opt_Bitmap")]') AS c (col)
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_expr_defs
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            is_agg,
+            has_base,
+            def_xml
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            expr_name = NULL,
+            is_agg = 0,
+            has_base = 0,
+            def_xml = d.def.query(N'.')
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_filter_parts AS fp
+                      WHERE fp.database_id = ps0.database_id
+                      AND   fp.plan_id = ps0.plan_id
+                      AND   fp.stmt_id = ps0.stmt_id
+                      AND   fp.qp_id = ps0.qp_id
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//DefinedValue[ScalarOperator]') AS d (def)
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        /*
+        The name and the flags are read from the small copies: the same reads on the plans cost several times as much
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        UPDATE
+            xd
+        SET
+            xd.expr_name =
+                xd.def_xml.value(N'(DefinedValue/ColumnReference/@Column)[1]', N'sysname'),
+            xd.is_agg =
+                xd.def_xml.exist(N'(DefinedValue/ScalarOperator/Aggregate, DefinedValue/ScalarOperator/Sequence)'),
+            xd.has_base =
+                xd.def_xml.exist(N'DefinedValue/ScalarOperator//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]')
+        FROM #plan_expr_defs AS xd
+        OPTION(RECOMPILE);
+
+        DELETE
+            xd
+        FROM #plan_expr_defs AS xd
+        WHERE xd.expr_name IS NULL
+        OPTION(RECOMPILE);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_expr_refs
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            ref_name
+        )
+        SELECT DISTINCT
+            xd.database_id,
+            xd.plan_id,
+            xd.stmt_id,
+            xd.qp_id,
+            xd.expr_name,
+            ref_name =
+                c.col.value(N'(@Column)[1]', N'sysname')
+        FROM #plan_expr_defs AS xd
+        CROSS APPLY xd.def_xml.nodes(N'DefinedValue/ScalarOperator//ColumnReference[not(@Table)][not(substring(@Column, 1, 1) = "@")][not(substring(@Column, 1, 10) = "Opt_Bitmap")]') AS c (col)
+        /* an operator can pass an Expr on as itself ([Expr1018] = [Expr1018]); that is not a source */
+        WHERE c.col.value(N'(@Column)[1]', N'sysname') <> xd.expr_name
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        /*
+        Follow the chains: an Expr built from an aggregate or window Expr is one too, and an Expr built
+        from a table column (or from such an Expr) is a base Expr. The depth stops a runaway chain.
+        */
+        WITH
+            chain
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            expr_source,
+            depth
+        ) AS
+        (
+            SELECT DISTINCT
+                xd.database_id,
+                xd.plan_id,
+                xd.stmt_id,
+                xd.qp_id,
+                xd.expr_name,
+                expr_source =
+                    CONVERT(varchar(4), 'agg'),
+                depth = 0
+            FROM #plan_expr_defs AS xd
+            WHERE xd.is_agg = 1
+
+            UNION ALL
+
+            SELECT DISTINCT
+                xd.database_id,
+                xd.plan_id,
+                xd.stmt_id,
+                xd.qp_id,
+                xd.expr_name,
+                expr_source =
+                    CONVERT(varchar(4), 'base'),
+                depth = 0
+            FROM #plan_expr_defs AS xd
+            WHERE xd.has_base = 1
+
+            UNION ALL
+
+            SELECT
+                er.database_id,
+                er.plan_id,
+                er.stmt_id,
+                er.qp_id,
+                er.expr_name,
+                c.expr_source,
+                depth = c.depth + 1
+            FROM chain AS c
+            JOIN #plan_expr_refs AS er
+              ON  er.database_id = c.database_id
+              AND er.plan_id = c.plan_id
+              AND er.stmt_id = c.stmt_id
+              AND er.qp_id = c.qp_id
+              AND er.ref_name = c.expr_name
+            WHERE c.depth < 32
+        )
+        INSERT
+            #plan_expr_class
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            expr_source
+        )
+        SELECT DISTINCT
+            c.database_id,
+            c.plan_id,
+            c.stmt_id,
+            c.qp_id,
+            c.expr_name,
+            c.expr_source
+        FROM chain AS c
+        OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+
+        /*
+        A part reads an aggregate or window result when one of its Exprs is an agg Expr: it can only be
+        checked after that operator. Any other part that reads a table column, directly or through
+        an Expr, could have been checked earlier, so rule 8 counts it.
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        UPDATE
+            fp
+        SET
+            fp.part_agg =
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #plan_filter_part_exprs AS fe
+                             JOIN #plan_expr_class AS ec
+                               ON  ec.database_id = fe.database_id
+                               AND ec.plan_id = fe.plan_id
+                               AND ec.stmt_id = fe.stmt_id
+                               AND ec.qp_id = fe.qp_id
+                               AND ec.expr_name = fe.expr_name
+                               AND ec.expr_source = 'agg'
+                             WHERE fe.database_id = fp.database_id
+                             AND   fe.plan_id = fp.plan_id
+                             AND   fe.stmt_id = fp.stmt_id
+                             AND   fe.qp_id = fp.qp_id
+                             AND   fe.node_id = fp.node_id
+                             AND   fe.part_ord = fp.part_ord
+                         )
+                    THEN 1
+                    ELSE 0
+                END,
+            fp.part_flag =
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #plan_filter_part_exprs AS fe
+                             JOIN #plan_expr_class AS ec
+                               ON  ec.database_id = fe.database_id
+                               AND ec.plan_id = fe.plan_id
+                               AND ec.stmt_id = fe.stmt_id
+                               AND ec.qp_id = fe.qp_id
+                               AND ec.expr_name = fe.expr_name
+                               AND ec.expr_source = 'agg'
+                             WHERE fe.database_id = fp.database_id
+                             AND   fe.plan_id = fp.plan_id
+                             AND   fe.stmt_id = fp.stmt_id
+                             AND   fe.qp_id = fp.qp_id
+                             AND   fe.node_id = fp.node_id
+                             AND   fe.part_ord = fp.part_ord
+                         )
+                    THEN 0
+                    /* a bitmap probe is the optimizer's own filter, as in the PROBE-only test */
+                    WHEN fp.part_xml.exist(N'ScalarOperator/Intrinsic[@FunctionName = "PROBE"]') = 1
+                    THEN 0
+                    WHEN fp.part_base_col = 1
+                    THEN 1
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #plan_filter_part_exprs AS fe
+                             JOIN #plan_expr_class AS ec
+                               ON  ec.database_id = fe.database_id
+                               AND ec.plan_id = fe.plan_id
+                               AND ec.stmt_id = fe.stmt_id
+                               AND ec.qp_id = fe.qp_id
+                               AND ec.expr_name = fe.expr_name
+                               AND ec.expr_source = 'base'
+                             WHERE fe.database_id = fp.database_id
+                             AND   fe.plan_id = fp.plan_id
+                             AND   fe.stmt_id = fp.stmt_id
+                             AND   fe.qp_id = fp.qp_id
+                             AND   fe.node_id = fp.node_id
+                             AND   fe.part_ord = fp.part_ord
+                         )
+                    THEN 1
+                    ELSE 0
+                END
+        FROM #plan_filter_parts AS fp
+        OPTION(RECOMPILE);
+    END;
 
     /*
     The NOT IN rule. A column that an operator tests with IS NULL, read from the predicate copies
@@ -21238,10 +21695,13 @@ BEGIN
 
     /*
     Rule 8: late filter
-    A Filter operator whose predicate reads a base table column could have been pushed into the scan or seek.
-    Two kinds of Filter are the optimizer's own and are left out: one that only probes a bitmap
-    (the test rule 9 uses), and one whose predicate reads a column another operator computed
-    (an aggregate or a join result), which cannot be applied before that operator.
+    A Filter operator whose predicate reads a table column could have filtered earlier, in the scan or seek.
+    A Filter that only probes a bitmap (the test rule 9 uses) is the optimizer's own and is left out.
+    A predicate that reads a computed value (an Expr) is checked part by part (the conditions of a
+    top level AND). A part that reads an aggregate or window function result, directly or through a
+    Compute Scalar chain, can only be checked here, so it does not count. Any other part that reads a
+    table column, directly or through a Compute Scalar, counts. The plan has no text for each part, so
+    the finding shows the whole predicate and says when part of it reads an aggregate or window result.
     */
     INSERT
         #plan_findings
@@ -21275,21 +21735,50 @@ BEGIN
                 THEN N'...'
                 ELSE N''
             END +
+            CASE
+                WHEN fc.agg_parts > 0
+                THEN N' (part of the predicate reads an aggregate or window function result, which only exists here; the table column part could filter earlier)'
+                ELSE N''
+            END +
             N'. Rows were read, joined or computed before they were thrown away; look for a way to filter earlier.'
     FROM #plan_operators AS po
     JOIN #plan_facts AS pf
       ON  pf.database_id = po.database_id
       AND pf.plan_id = po.plan_id
+    CROSS APPLY
+    (
+        SELECT
+            flag_parts =
+                ISNULL(SUM(CASE WHEN fp.part_flag = 1 THEN 1 ELSE 0 END), 0),
+            agg_parts =
+                ISNULL(SUM(CASE WHEN fp.part_agg = 1 THEN 1 ELSE 0 END), 0)
+        FROM #plan_filter_parts AS fp
+        WHERE fp.database_id = po.database_id
+        AND   fp.plan_id = po.plan_id
+        AND   fp.stmt_id = po.stmt_id
+        AND   fp.qp_id = po.qp_id
+        AND   fp.node_id = po.node_id
+    ) AS fc
     WHERE po.physical_op = N'Filter'
     AND   po.startup_expr = 0
     AND   po.pred_text IS NOT NULL
-    AND   po.pred_base_col = 1
-    AND   ISNULL(po.pred_expr_col, 0) = 0
     AND   NOT
           (
               po.pred_text LIKE N'PROBE(%'
               AND po.pred_text NOT LIKE N'%AND [^P]%'
           )
+    AND
+    (
+        (
+            ISNULL(po.pred_expr_col, 0) = 0
+        AND po.pred_base_col = 1
+        )
+     OR
+        (
+            po.pred_expr_col = 1
+        AND fc.flag_parts > 0
+        )
+    )
     OPTION(RECOMPILE, MAXDOP 1);
 
     /*
@@ -23699,6 +24188,55 @@ BEGIN
                 '#plan_anti_cols',
             pac.*
         FROM #plan_anti_cols AS pac
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_filter_parts',
+            fp.database_id,
+            fp.plan_id,
+            fp.stmt_id,
+            fp.qp_id,
+            fp.node_id,
+            fp.part_ord,
+            fp.part_base_col,
+            fp.part_agg,
+            fp.part_flag
+        FROM #plan_filter_parts AS fp
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_filter_part_exprs',
+            fe.*
+        FROM #plan_filter_part_exprs AS fe
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_expr_defs',
+            xd.database_id,
+            xd.plan_id,
+            xd.stmt_id,
+            xd.qp_id,
+            xd.expr_name,
+            xd.is_agg,
+            xd.has_base
+        FROM #plan_expr_defs AS xd
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_expr_refs',
+            er.*
+        FROM #plan_expr_refs AS er
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_expr_class',
+            ec.*
+        FROM #plan_expr_class AS ec
         OPTION(RECOMPILE);
 
         SELECT

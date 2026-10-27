@@ -2112,6 +2112,20 @@ SELECT /*pp_r1tv*/ @j = MAX(x.m) FROM dbo.pp_small AS s CROSS APPLY (SELECT m = 
    computed), so it cannot move down to the scan */
 SELECT /*pp_r8expr*/ @i = s.id FROM dbo.pp_small AS s WHERE s.b <> ISNULL((SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a), 0);
 
+/* 8, negative: HAVING, a Filter on the values a Hash Match aggregate computes */
+SELECT /*pp_r8hav*/ @i = s.a FROM dbo.pp_small AS s GROUP BY s.a HAVING COUNT_BIG(*) > 50 AND MAX(s.b) > 3;
+
+/* 8, negative: a Filter on ROW_NUMBER(), which a Sequence Project computes */
+SELECT /*pp_r8rn*/ @i = d.id FROM (SELECT s.id, rn = ROW_NUMBER() OVER (PARTITION BY s.a ORDER BY s.id) FROM dbo.pp_small AS s) AS d WHERE d.rn = 2;
+
+/* 8, positive: the Filter reads an Expr a Compute Scalar builds from table columns. The TOP
+   keeps the Filter above the scan */
+SELECT /*pp_r8cs*/ @s = d.u FROM (SELECT TOP (1000) s.id, u = UPPER(s.c) + CONVERT(varchar(10), s.b * 2) FROM dbo.pp_small AS s ORDER BY s.id) AS d WHERE d.u LIKE 'X%';
+
+/* 8, positive: a mixed predicate, a table column and a window aggregate. The column part could
+   filter earlier, so it counts; the finding says the other part reads a window result */
+SELECT /*pp_r8mix*/ @i = d.id FROM (SELECT s.id, s.b, cnt = COUNT_BIG(*) OVER (PARTITION BY s.a) FROM dbo.pp_small AS s) AS d WHERE d.b = 3 AND d.cnt > 2;
+
 /* 0, negative: a plan that is only an IF condition */
 EXECUTE dbo.pp_ifproc;
 """
@@ -2408,7 +2422,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r5nn", "r5ne",
-            "r5c", "r8cat", "r8expr", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2509,7 +2523,7 @@ def plan_parsing_tests(server, password, R):
         # range seek that also outputs a computed column (r1b). The harness
         # cuts wide columns at 200 characters, so read these at full width.
         out, combined, found_full = pp_run(server, password,
-                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r1tv"], ids["r2c"]],
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r1tv"], ids["r2c"], ids["r8mix"]],
                                            width=8000)
         found_full = found_full or []
 
@@ -2584,6 +2598,16 @@ def plan_parsing_tests(server, password, R):
         quiet("r5c", 12, "rule 12 stays quiet for the Top inside a <> ALL null check")
         quiet("r8cat", 8, "rule 8 stays quiet for the has_access filter on a catalog view")
         quiet("r8expr", 8, "rule 8 stays quiet for a filter on an aggregate result (an Expr from another operator)")
+        quiet("r8hav", 8, "rule 8 stays quiet for HAVING (a filter on Hash Match aggregate values)")
+        quiet("r8rn", 8, "rule 8 stays quiet for a filter on ROW_NUMBER()")
+        R.check(G, "rule 8 fires for a filter on a Compute Scalar over table columns",
+                pp_has(found, ids["r8cs"], 8),
+                "no row" + pp_operators(server, password, ids["r8cs"]))
+        mix_text = full_text("r8mix", 8)
+        R.check(G, "rule 8 fires for a mixed predicate and says part of it reads a window result",
+                pp_has(found, ids["r8mix"], 8) and "[b]=(3)" in mix_text
+                and "part of the predicate reads an aggregate" in mix_text,
+                mix_text[:200])
 
         # Rule 0: a plan that is only an IF condition is checked or skipped
         quiet("cond", 0, "rule 0 does not fire for a plan that is only an IF condition")
