@@ -18535,68 +18535,6 @@ BEGIN
         (database_id, plan_id, stmt_id, qp_id, node_id);
 
     /*
-    Parents and children: one row per operator under an operator.
-    The first child has child_ordinal 1 (NodeIds count up in plan order, so the children sort by NodeId).
-    */
-    WITH XMLNAMESPACES
-    (
-        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
-    )
-    INSERT
-        #plan_edges
-        WITH
-            (TABLOCK)
-    (
-        database_id,
-        plan_id,
-        stmt_id,
-        qp_id,
-        parent_node_id,
-        child_node_id,
-        child_ordinal
-    )
-    SELECT
-        ps.database_id,
-        ps.plan_id,
-        ps.stmt_id,
-        ps.qp_id,
-        pv.parent_node_id,
-        cv.child_node_id,
-        child_ordinal =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    ps.database_id,
-                    ps.plan_id,
-                    ps.stmt_id,
-                    ps.qp_id,
-                    pv.parent_node_id
-                ORDER BY
-                    cv.child_node_id
-            )
-    FROM #plan_statements AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[*/RelOp]') AS p (rel)
-    CROSS APPLY
-    (
-        SELECT
-            parent_node_id =
-                p.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS pv
-    CROSS APPLY p.rel.nodes(N'*/RelOp') AS c (rel)
-    CROSS APPLY
-    (
-        SELECT
-            child_node_id =
-                c.rel.value(N'(@NodeId)[1]', N'integer')
-    ) AS cv
-    OPTION(RECOMPILE, MAXDOP 1);
-
-    CREATE CLUSTERED INDEX
-        c
-    ON #plan_edges
-        (database_id, plan_id, stmt_id, qp_id, parent_node_id, child_node_id);
-
-    /*
     Objects: one row per object under an operator (a wide DML operator lists one per index).
     The objects are read from their operator, not the other way round: a trip up to the
     parent (../../@NodeId) from every Object cost more than the rest of this pass.
@@ -18718,6 +18656,124 @@ BEGIN
             ISNULL(MAX(CASE WHEN po.physical_op = N'Nested Loops' THEN 1 ELSE 0 END), 0)
     FROM #plan_operators AS po
     OPTION(RECOMPILE);
+
+    /*
+    Parents and children: one row per operator under an operator.
+    The first child has child_ordinal 1 (NodeIds count up in plan order, so the children sort by NodeId).
+    Listing the children of an operator reads its whole subtree, so this is the most expensive pass.
+    Only the statements a rule reads edges for are opened: a Top or TopN Sort (rule 12), an anti semi
+    join (rule 5), a table variable scan estimated at one row (rule 14), and a large scan in a plan
+    with a Nested Loops join (rule 18). A new rule that reads #plan_edges has to be added here.
+    */
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_edges
+        WITH
+            (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        parent_node_id,
+        child_node_id,
+        child_ordinal
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        pv.parent_node_id,
+        cv.child_node_id,
+        child_ordinal =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    ps.database_id,
+                    ps.plan_id,
+                    ps.stmt_id,
+                    ps.qp_id,
+                    pv.parent_node_id
+                ORDER BY
+                    cv.child_node_id
+            )
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS eo
+                  WHERE eo.database_id = ps0.database_id
+                  AND   eo.plan_id = ps0.plan_id
+                  AND   eo.stmt_id = ps0.stmt_id
+                  AND   eo.qp_id = ps0.qp_id
+                  AND
+                  (
+                       eo.physical_op = N'Top'
+                    OR eo.logical_op IN (N'TopN Sort', N'Left Anti Semi Join')
+                    OR
+                      (
+                          eo.is_scan = 1
+                      AND LEFT(eo.obj_table, 2) = N'[@'
+                      AND eo.est_rows = 1
+                      )
+                  )
+              )
+        OR
+        (
+            EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #plan_operators AS eo
+                WHERE eo.database_id = ps0.database_id
+                AND   eo.plan_id = ps0.plan_id
+                AND   eo.stmt_id = ps0.stmt_id
+                AND   eo.qp_id = ps0.qp_id
+                AND   eo.is_scan = 1
+                AND   eo.table_cardinality >= @pp_scan_rows
+            )
+        AND EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #plan_operators AS eo
+                WHERE eo.database_id = ps0.database_id
+                AND   eo.plan_id = ps0.plan_id
+                AND   eo.stmt_id = ps0.stmt_id
+                AND   eo.qp_id = ps0.qp_id
+                AND   eo.physical_op = N'Nested Loops'
+            )
+        )
+    ) AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[*/RelOp]') AS p (rel)
+    CROSS APPLY
+    (
+        SELECT
+            parent_node_id =
+                p.rel.value(N'(@NodeId)[1]', N'integer')
+    ) AS pv
+    CROSS APPLY p.rel.nodes(N'*/RelOp') AS c (rel)
+    CROSS APPLY
+    (
+        SELECT
+            child_node_id =
+                c.rel.value(N'(@NodeId)[1]', N'integer')
+    ) AS cv
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    CREATE CLUSTERED INDEX
+        c
+    ON #plan_edges
+        (database_id, plan_id, stmt_id, qp_id, parent_node_id, child_node_id);
 
     /*
     Predicates: only for the operators the rules look at (scans, filters, anti semi joins) that have one.
