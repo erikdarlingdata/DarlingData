@@ -23,7 +23,8 @@ python run_tests.py --server SQL2022
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
 password). Expect `251`.
 
-To run only the multi-database group, add `--only multidb`.
+To run only the multi-database group, add `--only multidb`. To run only the
+plan findings group, add `--only plan_parsing`.
 
 ## What it actually covers
 
@@ -45,6 +46,17 @@ each run *executes* what it built:
   `parameter sensitive` signal must fire on a real conviction.
 - **`@find_high_impact`**: the default run, the absolute total columns, and
   the hash-based include and ignore lists filtering bidirectionally.
+- **`@plan_parsing`**, the plan findings result set. A scratch database with a
+  1,000,000 row table and one query per rule (0 to 14, 16 and 18), each found
+  in Query Store by a marker comment. Each rule must show up for its query
+  with its `rule_id` and `rule_name`. A primary key seek, a cheap serial query
+  and a UDF query must stay quiet where the rules say so. Rule 7 must pass its
+  executions per day gate with a short `@start_date` and fail it with the
+  default window. Rule 14 must fire below compatibility level 150 and stay
+  quiet at 150 and up. The column list is pinned, `@plan_parsing = 0` must
+  return no findings, and each rejected combination must raise an error. Rules
+  15 (needs a linked server), 17 (needs Standard Edition) and 19 (needs a
+  compile of 1 second or more) are not covered.
 - **`@include_query_hash_totals`**: the `by_query_hash` columns are in the
   output, and a date window with no queries returns no detail rows.
 - **Id lists**: ids separated by commas, spaces, or line breaks return the
