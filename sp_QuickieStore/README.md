@@ -138,7 +138,6 @@ Things to know:
 - The thresholds are starting values. They are declared as variables at the top of the plan parsing section of the procedure, so they are easy to change.
 - Execution counts per day are worked out from the window you asked for (`@start_date` to `@end_date`), with a minimum window of one day. A short window makes a busy query look busier, and the default window of seven days makes it look quieter.
 - Plans from older builds may not carry every attribute the rules read, so some rules can miss things there. A rule that does not fire does not prove the plan is fine.
-- It reads plan XML for each plan it returns, so it takes longer on big result sets. Use `@top` and the other filters to keep the set small.
 
 ## Examples
 
