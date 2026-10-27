@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 328 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 338 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -21,8 +21,11 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `294` (`293` on SQL Server 2017, which skips the rule 14 check at
+password). Expect `338` (`337` on SQL Server 2017, which skips the rule 14 check at
 compatibility level 150 and up).
+
+The harness needs go-sqlcmd: it passes `-W` together with `-y`, which the older ODBC
+`sqlcmd` rejects.
 
 To run only the multi-database group, add `--only multidb`. To run only the
 plan findings group, add `--only plan_parsing`.
