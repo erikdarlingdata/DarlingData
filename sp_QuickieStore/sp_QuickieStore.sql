@@ -20780,12 +20780,16 @@ BEGIN
                 STUFF
                 (
                     (
-                        SELECT DISTINCT
+                        SELECT
                             N', ' + pw.detail
                         FROM #plan_warnings AS pw
                         WHERE pw.database_id = pf.database_id
                         AND   pw.plan_id = pf.plan_id
                         AND   pw.warning_type = 'udf'
+                        GROUP BY
+                            pw.detail
+                        ORDER BY
+                            pw.detail
                         FOR
                             XML
                             PATH(N''),
