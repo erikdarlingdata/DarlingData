@@ -2497,7 +2497,7 @@ def plan_parsing_tests(server, password, R):
         # range seek that also outputs a computed column (r1b). The harness
         # cuts wide columns at 200 characters, so read these at full width.
         out, combined, found_full = pp_run(server, password,
-                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r1tv"]],
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r1tv"], ids["r2c"]],
                                            width=8000)
         found_full = found_full or []
 
@@ -2543,13 +2543,17 @@ def plan_parsing_tests(server, password, R):
                 pp_has(found, ids["r5c"], 5),
                 "no row" + pp_operators(server, password, ids["r5c"]))
 
-        # Rule 2: MaxDOPSetToOne is judged from the server and database MAXDOP.
-        # r2c compiled while the database MAXDOP was 1. With it back at 0 the
-        # MAXDOP 1 can only have come from the query, a hint or a plan guide, so
-        # it is flagged; with the database MAXDOP at 1 it is not.
-        R.check(G, "rule 2 flags MaxDOPSetToOne when server and database MAXDOP are not 1",
+        # Rule 2: MaxDOPSetToOne is judged from the server and database MAXDOP
+        # as they are now. r2c compiled while the database MAXDOP was 1. With it
+        # back at 0 the procedure cannot tell where the MAXDOP 1 came from, so it
+        # is flagged, and the finding has to say that MAXDOP may have been 1 when
+        # the plan compiled. With the database MAXDOP at 1 it is not flagged.
+        R.check(G, "rule 2 flags MaxDOPSetToOne when server and database MAXDOP are not 1 now",
                 pp_has(found, ids["r2c"], 2),
                 "no row" + pp_operators(server, password, ids["r2c"]))
+        R.check(G, "rule 2 MaxDOPSetToOne finding allows for a MAXDOP of 1 at compile time",
+                "unless MAXDOP was 1 when the plan compiled" in full_text("r2c", 2),
+                full_text("r2c", 2)[:300])
         _sqlcmd(server, password,
                 "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 1;", database=PP_DB)
         try:

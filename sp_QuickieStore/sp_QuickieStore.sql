@@ -20403,7 +20403,8 @@ BEGIN
     A cursor has a QueryPlan for each phase. Its fetch and refresh steps always say
     NonParallelizableIntrinsicFunction (the cursor's own machinery), so only the populate step is read.
     MaxDOPSetToOne only counts when neither the server nor the database MAXDOP is 1 (and no Resource Governor
-    workload group has max_dop 1): then the MAXDOP 1 came from the query, a Query Store hint or a plan guide.
+    workload group has max_dop 1): then the MAXDOP 1 came from the query, a Query Store hint or a plan guide,
+    unless a setting was 1 when the plan compiled. The plan does not say, so the finding says so.
     */
     INSERT
         #plan_findings
@@ -20428,7 +20429,7 @@ BEGIN
             N') and averages ' + FORMAT(pf.avg_cpu_ms, 'N0') + N' ms of CPU. ' +
             CASE ps.non_parallel_reason
                 WHEN N'MaxDOPSetToOne'
-                THEN N'The server and database MAXDOP are not 1, so MAXDOP 1 was asked for in the query, a Query Store hint or a plan guide.'
+                THEN N'The server and database MAXDOP are not 1 now, so unless MAXDOP was 1 when the plan compiled, MAXDOP 1 was asked for in the query, a Query Store hint or a plan guide.'
                 WHEN N'NonParallelizableIntrinsicFunction'
                 THEN N'The query uses an intrinsic function that cannot run in parallel.'
                 WHEN N'CouldNotGenerateValidParallelPlan'

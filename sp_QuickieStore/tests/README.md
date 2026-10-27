@@ -65,7 +65,7 @@ each run *executes* what it built:
   seek or its residual predicate), and stay quiet for `NOT IN` over `NOT NULL`
   keys, for `NOT EXISTS` with a time range on a nullable column, and for a
   hand-written wildcard (`n = x OR n IS NULL`) with no `NOT IN` in the text,
-  rule 2 must ignore `OPTION (MAXDOP 1)` in a comment and the fetch step of a
+  rule 2 must flag `MaxDOPSetToOne` for a plan compiled under a database MAXDOP of 1 once the setting is back at 0, with a finding that says MAXDOP may have been 1 when the plan compiled, and must ignore `OPTION (MAXDOP 1)` in a comment and the fetch step of a
   `DYNAMIC` cursor (the fixture asserts it has the CPU), rule 10 must fire for a
   function over a table variable column, rule 1's `INCLUDE` must cover the column
   behind a computed spool output, `@debug = 1` must dump without Msg 208 on the
