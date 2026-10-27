@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 251 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 327 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -21,9 +21,11 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `251`.
+password). Expect `294` (`293` on SQL Server 2017, which skips the rule 14 check at
+compatibility level 150 and up).
 
-To run only the multi-database group, add `--only multidb`.
+To run only the multi-database group, add `--only multidb`. To run only the
+plan findings group, add `--only plan_parsing`.
 
 ## What it actually covers
 
@@ -45,6 +47,36 @@ each run *executes* what it built:
   `parameter sensitive` signal must fire on a real conviction.
 - **`@find_high_impact`**: the default run, the absolute total columns, and
   the hash-based include and ignore lists filtering bidirectionally.
+- **`@plan_parsing`**, the plan findings result set. A scratch database with a
+  1,000,000 row table and one query per rule (0 to 14, 16 and 18), each found
+  in Query Store by a marker comment. Each rule must show up for its query
+  with its `rule_id` and `rule_name`. A primary key seek, a cheap serial query
+  and a UDF query must stay quiet where the rules say so. Rule 7 must pass its
+  executions per day gate with a short `@start_date` and fail it with the
+  default window. Rule 14 must fire below compatibility level 150 and stay
+  quiet at 150 and up. The column list is pinned, `@plan_parsing = 0` must
+  return no findings, and each rejected combination must raise an error. A
+  failed rule check prints the fixture query's operator list (NodeId,
+  PhysicalOp/LogicalOp) from its Query Store plan. Regression fixtures cover
+  the review findings: rule 1 must script a valid `CREATE INDEX` (bracketed,
+  comma separated, no duplicates, no `Expr` columns, parses under
+  `PARSEONLY`), rule 4 must separate the fetched columns, rule 5 must fire for a
+  `NOT NULL` key `NOT IN` a nullable indexed column (the `IS NULL` test is the
+  seek or its residual predicate), and stay quiet for `NOT IN` over `NOT NULL`
+  keys, for `NOT EXISTS` with a time range on a nullable column, and for a
+  hand-written wildcard (`n = x OR n IS NULL`) with no `NOT IN` in the text,
+  rule 2 must ignore `OPTION (MAXDOP 1)` in a comment and the fetch step of a
+  `DYNAMIC` cursor (the fixture asserts it has the CPU), rule 10 must fire for a
+  function over a table variable column, rule 1's `INCLUDE` must cover the column
+  behind a computed spool output, `@debug = 1` must dump without Msg 208 on the
+  early exits (a missing database, a bad time zone), rules 8 and 12 must stay quiet for the
+  optimizer's own filter and Top, rule 0 must not fire for a plan that is only
+  an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its
+  phase (`10 (populate)`), the phase has that operator, and the `KEYSET`
+  lookup finding names the right table. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
+  `MAXDOP 1`, because a small machine puts a spool over the scan. Rules
+  15 (needs a linked server), 17 (needs Standard Edition) and 19 (needs a
+  compile of 1 second or more) are not covered.
 - **`@include_query_hash_totals`**: the `by_query_hash` columns are in the
   output, and a date window with no queries returns no detail rows.
 - **Id lists**: ids separated by commas, spaces, or line breaks return the

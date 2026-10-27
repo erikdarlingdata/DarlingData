@@ -82,11 +82,62 @@ Use the `@expert_mode` parameter to return additional details.
 | @log_schema_name                       | sysname        | schema to store logging tables                                                                                                                    | a valid schema name                                                                                                                                                                                                                                                                                                                                               | NULL; dbo                                                                 |
 | @log_table_name_prefix                 | sysname        | prefix for all logging table names                                                                                                                | a valid identifier                                                                                                                                                                                                                                                                                                                                                | QuickieStore                                                              |
 | @log_retention_days                    | integer        | days of data to retain, 0 = keep indefinitely                                                                                                     | a positive integer, or 0                                                                                                                                                                                                                                                                                                                                          | 30                                                                        |
+| @plan_parsing                          | bit            | reads the Query Store plans of the queries it returns and adds one more result set of plan findings (see Plan findings below). It works in the normal mode only, so it cannot be combined with @find_high_impact, @find_parameter_sensitive, regression mode or @log_to_table | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @help                                   | bit            | how you got here                                                                                                                                  | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @debug                                  | bit            | prints dynamic sql, statement length, parameter and variable values, and raw temp table contents                                                  | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @troubleshoot_performance               | bit            | set statistics xml on for queries against views                                                                                                   | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @version                                | varchar        | OUTPUT; for support                                                                                                                               | none; OUTPUT                                                                                                                                                                                                                                                                                                                                                      | none; OUTPUT                                                              |
 | @version_date                           | datetime       | OUTPUT; for support                                                                                                                               | none; OUTPUT                                                                                                                                                                                                                                                                                                                                                      | none; OUTPUT                                                              |
+
+## Plan findings
+
+Set `@plan_parsing = 1` and sp_QuickieStore reads the Query Store plans of the queries it returns. It adds one more result set of things worth fixing in them. It is off by default, and it only works in the normal mode. It is rejected, with an error, together with `@find_high_impact`, `@find_parameter_sensitive`, regression mode (`@regression_baseline_start_date`) and `@log_to_table`.
+
+The result set comes out after the expert mode results (and whether or not you asked for `@expert_mode`), and before the query store trouble check. It has one row per plan and rule. When a rule hits the same kind of operator more than once in a plan, the node ids fold into one list, lowest first: `4, 7, 12 and 3 more`. The finding text (the first three, joined with `|`) and the object names fold the same way.
+
+| column        | what it holds                                                       |
+|---------------|---------------------------------------------------------------------|
+| database_name | the database the query lives in                                     |
+| query_id      | the Query Store query id                                            |
+| plan_id       | the Query Store plan id                                             |
+| rule_id       | the rule number from the list below                                 |
+| rule_name     | the rule name from the list below                                   |
+| finding       | what was found, with the details (names, columns, a script to fix)  |
+| object_name   | the table, index or function the finding is about                   |
+| node_ids      | the plan node ids where it was found                                |
+
+Query Store keeps estimated plans. There are no actual row counts or actual costs in them. So the rules only use what the plan can tell you for sure, such as table sizes, operators, predicates and warnings. They also use what Query Store measured: CPU, duration and executions. Not one of them uses an estimated cost or an estimated number of executions.
+
+The rules, and the starting thresholds they use:
+
+| rule_id | rule_name                              | what it looks for                                                                                                                                   |
+|---------|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| 0       | plan not checked                       | the plan text does not convert to XML (more than 128 levels of nesting), or it has no query plan in it to look at                                  |
+| 1       | eager index spool                      | an eager index spool: SQL Server built a temporary index while the query ran. The finding scripts the CREATE INDEX that replaces it           |
+| 2       | serial plan                            | a serial plan with a reason you can fix, in a query that averages 1,000 ms of CPU or more. MaxDOPSetToOne only counts when the server and database MAXDOP are not 1 (and no Resource Governor workload group has max_dop 1), so the MAXDOP 1 came from the query, a Query Store hint or a plan guide. Rule 3 covers the T-SQL scalar UDF reason |
+| 3       | scalar UDF                             | a scalar function that was not inlined. It lists the functions, and says when they forced the whole plan to run serially                           |
+| 4       | lookup with predicate                  | a key or RID lookup that filters rows on its own. The finding shows the predicate and the columns the lookup fetches (the INCLUDE fix), and warns that the lookup count swings with parameter values |
+| 5       | NOT IN on nullable column              | NOT IN against a column that can be NULL, which makes SQL Server add the extra NULL handling: an anti join that tests a column it compares with IS NULL. Read from the plan (the equality and the `IS NULL` test, including index seeks), and the query text must have `NOT IN` or `<> ALL`. Names the column |
+| 6       | implicit conversion prevents seek      | a data type conversion that stopped an index seek. Shows the converting expression                                                                  |
+| 7       | missing index request                  | a missing index request on a query that averages 1,000 ms of CPU or duration, or runs 1,000 times a day or more. Shows the table, the impact and the columns, and flags more than 4 key columns, more than 5 includes, and several requests for one table |
+| 8       | late filter                            | a Filter operator that applies a predicate on a table column, so the rows were read first and thrown away afterward                                 |
+| 9       | scan with residual predicate           | a scan that filters rows with a predicate, on a table of 1,000,000 rows or more                                                                     |
+| 10      | non-SARGable predicate                 | a scan whose predicate wraps a column in a function, an implicit conversion, a CASE or COALESCE, or a LIKE that starts with %                       |
+| 11      | multi-statement table-valued function  | a multi-statement table-valued function. On compatibility level 140 and up it mentions interleaved execution                                       |
+| 12      | TOP over scan                          | a TOP that sorts a scan, or filters one, so it reads far more than it returns                                                                       |
+| 13      | many-to-many merge join                | a merge join that has duplicates on both sides, so it has to work through a worktable                                                               |
+| 14      | table variable                         | a scan of a table variable with an estimate of one row feeding a join, on compatibility level below 150. Table-valued parameters look the same     |
+| 15      | remote query                           | any remote query, scan, index scan, index seek, insert, update or delete operator (linked servers)                                                  |
+| 16      | wide DML                               | one INSERT, UPDATE, DELETE or MERGE that has to maintain 5 or more indexes. Shows the count and the names                                           |
+| 17      | Standard Edition batch mode DOP 2      | Standard Edition limits batch mode to DOP 2. Fires for a query that ran at DOP 2 with batch mode operators, no Query Store hint or plan guide, when the server and database MAXDOP leave the effective MAXDOP at 0 or above 2 |
+| 18      | scan on inner side of nested loops     | a scan on the inner side of a nested loops join, on a table of 1,000,000 rows or more. It can run once for every outer row                       |
+| 19      | long compile                           | a plan that took 1,000 ms or more to compile                                                                                                        |
+
+Things to know:
+
+- The thresholds are starting values. They are declared as variables at the top of the plan parsing section of the procedure, so they are easy to change.
+- Execution counts per day are worked out from the window you asked for (`@start_date` to `@end_date`), with a minimum window of one day. A short window makes a busy query look busier, and the default window of seven days makes it look quieter.
+- Plans from older builds may not carry every attribute the rules read, so some rules can miss things there. A rule that does not fire does not prove the plan is fine.
 
 ## Examples
 
@@ -134,6 +185,12 @@ EXECUTE dbo.sp_QuickieStore
 -- queries, known offenders) can be filtered out
 EXECUTE dbo.sp_QuickieStore
     @find_parameter_sensitive = 1;
+
+-- Read the plans of the top 10 queries by CPU and return one extra
+-- result set of plan findings (eager index spools, lookups with
+-- predicates, implicit conversions, missing indexes, and so on)
+EXECUTE dbo.sp_QuickieStore
+    @plan_parsing = 1;
 
 -- Expert mode for additional details
 EXECUTE dbo.sp_QuickieStore
