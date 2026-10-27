@@ -2067,6 +2067,10 @@ SELECT /*pp_r1b*/ @c = SUM(x.c) FROM dbo.pp_small AS o CROSS APPLY (SELECT c = S
 /* 4: a key lookup that fetches two columns (c and n) and applies a predicate */
 EXECUTE sys.sp_executesql N'SELECT /*pp_r4b*/ s.id, s.c, s.n FROM dbo.pp_small AS s WHERE s.a = @p AND s.b = @q;', N'@p integer, @q integer', 5, 3;
 
+/* 4: a self-join lookup. Its predicate compares the looked-up column n with a column of the outer
+   alias (o.b), which is an outer row value: the finding must list n and not b */
+SELECT /*pp_r4self*/ @c = SUM(LEN(s.c)) FROM dbo.pp_small AS o JOIN dbo.pp_small AS s WITH (INDEX (ix_a)) ON s.a = o.a AND s.n <> o.b WHERE o.id < 30 OPTION (LOOP JOIN, FORCE ORDER);
+
 /* 5, negative: NOT IN over NOT NULL keys, with an unrelated IS NULL filter */
 SELECT /*pp_r5nn*/ @i = s.id FROM dbo.pp_small AS s WHERE s.n IS NULL AND s.id NOT IN (SELECT s2.id FROM dbo.pp_small AS s2 WHERE s2.b = 3) OPTION (LOOP JOIN);
 
@@ -2421,7 +2425,7 @@ def plan_parsing_tests(server, password, R):
                 database=PP_DB)
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
-            "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r5nn", "r5ne",
+            "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r4self", "r5nn", "r5ne",
             "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
@@ -2523,7 +2527,7 @@ def plan_parsing_tests(server, password, R):
         # range seek that also outputs a computed column (r1b). The harness
         # cuts wide columns at 200 characters, so read these at full width.
         out, combined, found_full = pp_run(server, password,
-                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r1tv"], ids["r2c"], ids["r8mix"]],
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r4self"], ids["r1tv"], ids["r2c"], ids["r8mix"]],
                                            width=8000)
         found_full = found_full or []
 
@@ -2604,6 +2608,15 @@ def plan_parsing_tests(server, password, R):
                 fetched is not None and fetched.group(2) is not None and "[b]" in fetched.group(2)
                 and "[b]" not in items,
                 full_text("r4b", 4)[:300])
+        # In a self-join the predicate also reads the outer alias of the same table (o.b):
+        # that is an outer row value, so only the looked-up alias column (n) is listed
+        self_text = full_text("r4self", 4)
+        self_fetched = re.search(r"It fetches (.*?)(?: and filters on (.*?))?: add", self_text)
+        R.check(G, "rule 4 in a self-join lists the looked-up alias column and not the outer alias column",
+                self_fetched is not None and self_fetched.group(2) is not None
+                and "[n]" in self_fetched.group(2) and "[b]" not in self_fetched.group(2)
+                and "[b]" not in self_fetched.group(1),
+                self_text[:400])
         quiet("r8cat", 4, "rule 4 stays quiet for a lookup into a system table")
 
         # Rule 5 only for a real nullable NOT IN

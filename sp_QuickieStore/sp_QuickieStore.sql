@@ -2014,7 +2014,8 @@ CREATE TABLE
     special varchar(10) NOT NULL,
     pred_text nvarchar(4000) NULL,
     fetch_xml xml NULL,
-    pred_xml xml NULL
+    pred_xml xml NULL,
+    obj_alias nvarchar(258) NULL
 );
 
 /*
@@ -19774,7 +19775,8 @@ BEGIN
         special,
         pred_text,
         fetch_xml,
-        pred_xml
+        pred_xml,
+        obj_alias
     )
     SELECT
         ps.database_id,
@@ -19785,7 +19787,8 @@ BEGIN
         special = 'lookup',
         lv.pred_text,
         lv.fetch_xml,
-        lv.pred_xml
+        lv.pred_xml,
+        lv.obj_alias
     FROM #plan_statements AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//IndexScan[@Lookup = "1"]') AS l (lk)
     CROSS APPLY
@@ -19798,7 +19801,9 @@ BEGIN
             fetch_xml =
                 l.lk.query(N'DefinedValues'),
             pred_xml =
-                l.lk.query(N'Predicate')
+                l.lk.query(N'Predicate'),
+            obj_alias =
+                l.lk.value(N'(Object/@Alias)[1]', N'nvarchar(258)')
     ) AS lv
     OPTION(RECOMPILE, MAXDOP 1);
 
@@ -20050,9 +20055,12 @@ BEGIN
                 col_table =
                     c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
                 col_name =
-                    c.col.value(N'(@Column)[1]', N'sysname')
+                    c.col.value(N'(@Column)[1]', N'sysname'),
+                col_alias =
+                    c.col.value(N'(@Alias)[1]', N'nvarchar(258)')
         ) AS cv
         WHERE psp.special = 'lookup'
+        AND   ISNULL(cv.col_alias, N'') = ISNULL(psp.obj_alias, N'')
         OPTION(RECOMPILE, MAXDOP 1);
     END;
 
@@ -21288,7 +21296,8 @@ BEGIN
     /*
     Rule 4: lookup with predicate
     The columns to add are the ones the lookup fetches and the ones of its own table that its predicate reads:
-    with both in the index, the seek needs no lookup. Lookups into system tables (schema sys) are left out.
+    with both in the index, the seek needs no lookup. In a self-join the predicate can also read the other
+    alias of the same table, which is an outer row value, so the predicate columns are matched on the alias too. Lookups into system tables (schema sys) are left out.
     */
     INSERT
         #plan_findings
