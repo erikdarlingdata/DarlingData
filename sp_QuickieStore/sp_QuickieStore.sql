@@ -21780,7 +21780,8 @@ BEGIN
 
     /*
     Rule 16: wide DML
-    One INSERT, UPDATE, DELETE or MERGE statement that maintains many indexes
+    One INSERT, UPDATE, DELETE or MERGE statement that maintains many indexes.
+    An object with no table name is not one of yours: a cursor worktable ([CWT_PrimaryKey]) is left out
     */
     INSERT
         #plan_dml_indexes
@@ -21809,6 +21810,7 @@ BEGIN
       AND po.qp_id = pob.qp_id
       AND po.node_id = pob.node_id
     WHERE pob.obj_index IS NOT NULL
+    AND   pob.obj_table IS NOT NULL
     AND
     (
          po.physical_op LIKE N'%Insert'
@@ -21861,30 +21863,8 @@ BEGIN
             d.stmt_id,
             stmt_type = MAX(ps.stmt_type),
             index_count = COUNT_BIG(*),
-            /*
-            A cursor worktable has no table name. MIN and MAX over it sent
-            "Null value is eliminated" to the client, so they skip it first
-            */
-            min_table =
-                (
-                    SELECT
-                        MIN(d3.obj_table)
-                    FROM #plan_dml_indexes AS d3
-                    WHERE d3.database_id = d.database_id
-                    AND   d3.plan_id = d.plan_id
-                    AND   d3.stmt_id = d.stmt_id
-                    AND   d3.obj_table IS NOT NULL
-                ),
-            max_table =
-                (
-                    SELECT
-                        MAX(d3.obj_table)
-                    FROM #plan_dml_indexes AS d3
-                    WHERE d3.database_id = d.database_id
-                    AND   d3.plan_id = d.plan_id
-                    AND   d3.stmt_id = d.stmt_id
-                    AND   d3.obj_table IS NOT NULL
-                ),
+            min_table = MIN(d.obj_table),
+            max_table = MAX(d.obj_table),
             index_names =
                 STUFF
                 (
