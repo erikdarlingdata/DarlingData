@@ -18695,6 +18695,9 @@ BEGIN
     Predicates: only for the operators the rules look at (scans, filters, anti semi joins) that have one.
     The operator is picked with attribute tests, which are cheap. Each predicate is copied out once into
     a small xml column; the text and the flags are then read from that copy, not from the whole plan.
+    Two things cost more than the rest of the pass, so they are not done here: a test for the predicate
+    in the path (the copy is made anyway, and an empty copy is dropped instead), and a read of
+    StartupExpression from operators that are not a Filter (a missing attribute reads the whole subtree).
     */
     WITH XMLNAMESPACES
     (
@@ -18719,24 +18722,35 @@ BEGIN
         ps.stmt_id,
         ps.qp_id,
         pv.node_id,
-        pv.startup_expr,
-        pv.pred_xml
+        su.startup_expr,
+        pq.pred_xml
     FROM #plan_statements AS ps
     CROSS APPLY ps.qp_xml.nodes
     (
-        N'.//RelOp[@PhysicalOp = "Clustered Index Scan" or @PhysicalOp = "Index Scan" or @PhysicalOp = "Table Scan"
-                   or @PhysicalOp = "Filter" or @LogicalOp = "Left Anti Semi Join"][*/*[self::Predicate or self::ProbeResidual]]'
+        N'.//RelOp[@PhysicalOp = ("Clustered Index Scan", "Index Scan", "Table Scan", "Filter") or @LogicalOp = "Left Anti Semi Join"]'
     ) AS r (rel)
     CROSS APPLY
     (
         SELECT
             node_id =
                 r.rel.value(N'(@NodeId)[1]', N'integer'),
-            startup_expr =
-                r.rel.value(N'(Filter/@StartupExpression)[1]', N'bit'),
+            physical_op =
+                r.rel.value(N'(@PhysicalOp)[1]', N'nvarchar(60)')
+    ) AS pv
+    CROSS APPLY
+    (
+        SELECT
             pred_xml =
                 r.rel.query(N'*/*[self::Predicate or self::ProbeResidual]')
-    ) AS pv
+    ) AS pq
+    OUTER APPLY
+    (
+        SELECT
+            startup_expr =
+                r.rel.value(N'(Filter/@StartupExpression)[1]', N'bit')
+        WHERE pv.physical_op = N'Filter'
+    ) AS su
+    WHERE pq.pred_xml.exist(N'*') = 1
     OPTION(RECOMPILE, MAXDOP 1);
 
     /*
