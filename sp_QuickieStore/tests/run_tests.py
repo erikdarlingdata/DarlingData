@@ -2542,12 +2542,54 @@ def plan_parsing_tests(server, password, R):
                 R.check(G, "rule 1 (%s) CREATE INDEX compiles under PARSEONLY" % marker,
                         not errs, str(errs[:1]) + " " + stmt)
 
-        # Rule 1 on a table variable: the index goes in the DECLARE, not CREATE INDEX ... ON @t
+        # Rule 1 on a table variable: the index goes in the DECLARE, not CREATE INDEX ... ON @t.
+        # Before SQL Server 2019 an inline INDEX cannot take INCLUDE (Msg 102), so there the
+        # include column goes at the end of the key and the temp table alternative is a
+        # separate CREATE INDEX ... INCLUDE. Every statement the text suggests must parse.
         tv_text = full_text("r1tv", 1)
+        vout, _ = _sqlcmd(server, password,
+                          "SET NOCOUNT ON; SELECT 'VER:' + CONVERT(varchar(10), "
+                          "SERVERPROPERTY('ProductMajorVersion'));")
+        vm = re.search(r"VER:(\d+)", vout)
+        server_major = int(vm.group(1)) if vm else 99
         R.check(G, "rule 1 (r1tv) suggests an inline INDEX for the table variable, not CREATE INDEX",
-                "INDEX [ix_tv1_spool] ([a])" in tv_text and "in its DECLARE" in tv_text
-                and "CREATE INDEX [" not in tv_text and " ON @" not in tv_text,
-                tv_text[:300])
+                "INDEX [ix_tv1_spool] ([a]" in tv_text and "in its DECLARE" in tv_text
+                and "CREATE INDEX [" not in tv_text.replace(", or use a temp table and CREATE INDEX [", "")
+                and " ON @" not in tv_text,
+                tv_text[:400])
+        inline = re.search(r"INDEX \[ix_tv1_spool\] \([^)]*\)(?: INCLUDE \([^)]*\))?", tv_text)
+        if server_major < 15:
+            R.check(G, "rule 1 (r1tv) on SQL Server before 2019 puts the include column in the key, "
+                       "no inline INCLUDE",
+                    inline is not None and inline.group(0) == "INDEX [ix_tv1_spool] ([a], [b])"
+                    and "INCLUDE" not in tv_text.split("in its DECLARE")[0],
+                    tv_text[:400])
+            temp_ix = re.search(r"CREATE INDEX \[ix_tv1_spool\] ON \[#tv1\] \(\[a\]\) INCLUDE \(\[b\]\);",
+                                tv_text)
+            R.check(G, "rule 1 (r1tv) on SQL Server before 2019 gives the temp table a separate "
+                       "CREATE INDEX ... INCLUDE",
+                    temp_ix is not None, tv_text[:400])
+        else:
+            R.check(G, "rule 1 (r1tv) on SQL Server 2019 and up keeps INCLUDE in the inline index",
+                    inline is not None
+                    and inline.group(0) == "INDEX [ix_tv1_spool] ([a]) INCLUDE ([b])",
+                    tv_text[:400])
+        if inline:
+            perr, perr2 = _sqlcmd(server, password,
+                                  "SET PARSEONLY ON; DECLARE @tv1 TABLE (a integer NOT NULL, "
+                                  "b integer NOT NULL, " + inline.group(0) + ");",
+                                  database=PP_DB)
+            errs = pp_sql_errors(perr + "\n" + perr2)
+            R.check(G, "rule 1 (r1tv) inline table variable INDEX parses on this version",
+                    not errs, str(errs[:1]) + " " + inline.group(0))
+        if server_major < 15:
+            temp_stmt = re.search(r"CREATE INDEX [^;]*;", tv_text)
+            if temp_stmt:
+                perr, perr2 = _sqlcmd(server, password,
+                                      "SET PARSEONLY ON; " + temp_stmt.group(0), database=PP_DB)
+                errs = pp_sql_errors(perr + "\n" + perr2)
+                R.check(G, "rule 1 (r1tv) temp table CREATE INDEX ... INCLUDE parses on this version",
+                        not errs, str(errs[:1]) + " " + temp_stmt.group(0))
 
         # Rule 4 lists the columns it fetches with commas, and the column its
         # own predicate reads (b) after "filters on"

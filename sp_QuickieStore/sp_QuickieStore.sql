@@ -20932,20 +20932,44 @@ BEGIN
             object_name = st.table_name,
             finding =
                 CASE
-                    /* A table variable cannot take CREATE INDEX: the index goes in its DECLARE */
+                    /*
+                    A table variable cannot take CREATE INDEX: the index goes in its DECLARE.
+                    Before SQL Server 2019 the inline index cannot take INCLUDE (Msg 102), so there the
+                    include columns go at the end of the key, and the temp table alternative is a separate
+                    CREATE INDEX ... INCLUDE.
+                    */
                     WHEN LEFT(sk.col_table, 1) = N'@'
                     OR   LEFT(sk.col_table, 2) = N'[@'
                     THEN
                         N'The optimizer builds a temporary index on the table variable ' + st.table_name +
                         N' every time this runs. A table variable cannot take CREATE INDEX: declare it with the index, INDEX ' +
                         QUOTENAME(N'ix_' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'') + N'_spool') +
-                        N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
+                        N' (' + ISNULL(kl.key_list, N'<seek columns>') +
                         CASE
                             WHEN il.include_list IS NOT NULL
+                            AND  @product_version < 15
+                            AND  @azure = 0
+                            THEN N', ' + il.include_list
+                            ELSE N''
+                        END + N')' +
+                        CASE
+                            WHEN il.include_list IS NOT NULL
+                            AND  NOT (@product_version < 15 AND @azure = 0)
                             THEN N' INCLUDE (' + il.include_list + N')'
                             ELSE N''
                         END +
-                        N' in its DECLARE, or use a temp table with that index.'
+                        N' in its DECLARE' +
+                        CASE
+                            WHEN il.include_list IS NOT NULL
+                            AND  @product_version < 15
+                            AND  @azure = 0
+                            THEN
+                                N', or use a temp table and CREATE INDEX ' +
+                                QUOTENAME(N'ix_' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'') + N'_spool') +
+                                N' ON ' + QUOTENAME(N'#' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'')) +
+                                N' (' + ISNULL(kl.key_list, N'<seek columns>') + N') INCLUDE (' + il.include_list + N');'
+                            ELSE N', or use a temp table with that index.'
+                        END
                     ELSE
                         N'The optimizer builds a temporary index on ' + ISNULL(st.table_name, N'a table') +
                         N' every time this runs. Create the index instead: CREATE INDEX ' +
