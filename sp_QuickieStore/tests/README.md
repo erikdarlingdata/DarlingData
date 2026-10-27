@@ -60,7 +60,7 @@ each run *executes* what it built:
   PhysicalOp/LogicalOp) from its Query Store plan. Regression fixtures cover
   the review findings: rule 1 must script a valid `CREATE INDEX` (bracketed,
   comma separated, no duplicates, no `Expr` columns, parses under
-  `PARSEONLY`), rule 4 must separate the fetched columns, rule 5 must fire for a
+  `PARSEONLY`), rule 4 must separate the fetched columns and name the column its own predicate reads, and stay quiet for a lookup into a system table, rule 5 must fire for a
   `NOT NULL` key `NOT IN` a nullable indexed column (the `IS NULL` test is the
   seek or its residual predicate), and stay quiet for `NOT IN` over `NOT NULL`
   keys, for `NOT EXISTS` with a time range on a nullable column, and for a

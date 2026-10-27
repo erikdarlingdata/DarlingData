@@ -2511,12 +2511,18 @@ def plan_parsing_tests(server, password, R):
                 R.check(G, "rule 1 (%s) CREATE INDEX compiles under PARSEONLY" % marker,
                         not errs, str(errs[:1]) + " " + stmt)
 
-        # Rule 4 lists the columns it fetches with commas
-        fetched = re.search(r"It fetches (.*?): add", full_text("r4b", 4))
+        # Rule 4 lists the columns it fetches with commas, and the column its
+        # own predicate reads (b) after "filters on"
+        fetched = re.search(r"It fetches (.*?)(?: and filters on (.*?))?: add", full_text("r4b", 4))
         items = [c.strip() for c in fetched.group(1).split(",")] if fetched else []
         R.check(G, "rule 4 lists two fetched columns, comma separated",
                 len(items) >= 2 and all(re.fullmatch(r"\[?\w+\]?", c) for c in items),
                 full_text("r4b", 4)[:300])
+        R.check(G, "rule 4 lists the predicate column of the looked-up table",
+                fetched is not None and fetched.group(2) is not None and "[b]" in fetched.group(2)
+                and "[b]" not in items,
+                full_text("r4b", 4)[:300])
+        quiet("r8cat", 4, "rule 4 stays quiet for a lookup into a system table")
 
         # Rule 5 only for a real nullable NOT IN
         quiet("r5nn", 5, "rule 5 stays quiet for NOT IN over NOT NULL keys with an unrelated IS NULL")

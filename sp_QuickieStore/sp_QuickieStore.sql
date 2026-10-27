@@ -2000,7 +2000,8 @@ CREATE TABLE
 );
 
 /*
-Lookups, many-to-many merge joins and Top (1) operators (special: lookup, m2m, top1)
+Lookups, many-to-many merge joins and Top (1) operators (special: lookup, m2m, top1).
+A lookup keeps small copies of the columns it fetches and of its predicate, so its columns are read from those
 */
 CREATE TABLE
     #plan_specials
@@ -2011,12 +2012,14 @@ CREATE TABLE
     qp_id integer NOT NULL,
     node_id integer NOT NULL,
     special varchar(10) NOT NULL,
-    pred_text nvarchar(4000) NULL
+    pred_text nvarchar(4000) NULL,
+    fetch_xml xml NULL,
+    pred_xml xml NULL
 );
 
 /*
 Column references, one row each: the seek columns of an eager index spool (seek),
-its output columns (output), and the columns a lookup fetches (fetch).
+its output columns (output), the columns a lookup fetches (fetch), and the columns its own predicate reads (lkpred).
 Only references to a table are kept. is_equality is 1 for the Prefix part of a seek.
 */
 CREATE TABLE
@@ -19172,7 +19175,9 @@ BEGIN
         qp_id,
         node_id,
         special,
-        pred_text
+        pred_text,
+        fetch_xml,
+        pred_xml
     )
     SELECT
         ps.database_id,
@@ -19181,7 +19186,9 @@ BEGIN
         ps.qp_id,
         lv.node_id,
         special = 'lookup',
-        lv.pred_text
+        lv.pred_text,
+        lv.fetch_xml,
+        lv.pred_xml
     FROM #plan_statements AS ps
     CROSS APPLY ps.qp_xml.nodes(N'.//IndexScan[@Lookup = "1"]') AS l (lk)
     CROSS APPLY
@@ -19190,7 +19197,11 @@ BEGIN
             node_id =
                 l.lk.value(N'(../@NodeId)[1]', N'integer'),
             pred_text =
-                l.lk.value(N'(Predicate/ScalarOperator/@ScalarString)[1]', N'nvarchar(4000)')
+                l.lk.value(N'(Predicate/ScalarOperator/@ScalarString)[1]', N'nvarchar(4000)'),
+            fetch_xml =
+                l.lk.query(N'DefinedValues'),
+            pred_xml =
+                l.lk.query(N'Predicate')
     ) AS lv
     OPTION(RECOMPILE, MAXDOP 1);
 
@@ -19314,9 +19325,10 @@ BEGIN
 
     /*
     Columns, one row each, so the lists are built from rows and not from the text of an xml value:
-    the columns a lookup fetches, and the seek and output columns of an eager index spool.
-    The order of the rows (col_ord) is the order in the plan.
-    Each pass only opens the statements that have a lookup (found above) or an eager index spool.
+    the columns a lookup fetches and the columns its own predicate reads, and the seek and output
+    columns of an eager index spool. The order of the rows (col_ord) is the order in the plan.
+    The lookup columns are read from the small copies the lookup pass kept, not from the plans.
+    The spool passes only open the statements that have an eager index spool.
     */
     IF @pp_has_lookup = 1
     BEGIN
@@ -19343,22 +19355,22 @@ BEGIN
             col_name
         )
         SELECT
-            ps.database_id,
-            ps.plan_id,
-            ps.stmt_id,
-            ps.qp_id,
-            lv.node_id,
+            psp.database_id,
+            psp.plan_id,
+            psp.stmt_id,
+            psp.qp_id,
+            psp.node_id,
             col_role = 'fetch',
             is_equality = 0,
             col_ord =
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
-                        ps.database_id,
-                        ps.plan_id,
-                        ps.stmt_id,
-                        ps.qp_id,
-                        lv.node_id
+                        psp.database_id,
+                        psp.plan_id,
+                        psp.stmt_id,
+                        psp.qp_id,
+                        psp.node_id
                     ORDER BY
                         (SELECT NULL)
                 ),
@@ -19366,31 +19378,8 @@ BEGIN
             cv.col_schema,
             cv.col_table,
             cv.col_name
-        FROM
-        (
-            SELECT
-                ps0.*
-            FROM #plan_statements AS ps0
-            WHERE EXISTS
-                  (
-                      SELECT
-                          1/0
-                      FROM #plan_specials AS lk
-                      WHERE lk.database_id = ps0.database_id
-                      AND   lk.plan_id = ps0.plan_id
-                      AND   lk.stmt_id = ps0.stmt_id
-                      AND   lk.qp_id = ps0.qp_id
-                      AND   lk.special = 'lookup'
-                  )
-        ) AS ps
-        CROSS APPLY ps.qp_xml.nodes(N'.//IndexScan[@Lookup = "1"]') AS l (lk)
-        CROSS APPLY
-        (
-            SELECT
-                node_id =
-                    l.lk.value(N'(../@NodeId)[1]', N'integer')
-        ) AS lv
-        CROSS APPLY l.lk.nodes(N'DefinedValues/DefinedValue/ColumnReference[@Table][@Column]') AS c (col)
+        FROM #plan_specials AS psp
+        CROSS APPLY psp.fetch_xml.nodes(N'DefinedValues/DefinedValue/ColumnReference[@Table][@Column]') AS c (col)
         CROSS APPLY
         (
             SELECT
@@ -19403,6 +19392,70 @@ BEGIN
                 col_name =
                     c.col.value(N'(@Column)[1]', N'sysname')
         ) AS cv
+        WHERE psp.special = 'lookup'
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+            WITH
+                (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
+        SELECT
+            psp.database_id,
+            psp.plan_id,
+            psp.stmt_id,
+            psp.qp_id,
+            psp.node_id,
+            col_role = 'lkpred',
+            is_equality = 0,
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        psp.database_id,
+                        psp.plan_id,
+                        psp.stmt_id,
+                        psp.qp_id,
+                        psp.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM #plan_specials AS psp
+        CROSS APPLY psp.pred_xml.nodes(N'Predicate//ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        WHERE psp.special = 'lookup'
         OPTION(RECOMPILE, MAXDOP 1);
     END;
 
@@ -20481,6 +20534,8 @@ BEGIN
 
     /*
     Rule 4: lookup with predicate
+    The columns to add are the ones the lookup fetches and the ones of its own table that its predicate reads:
+    with both in the index, the seek needs no lookup. Lookups into system tables (schema sys) are left out.
     */
     INSERT
         #plan_findings
@@ -20516,8 +20571,17 @@ BEGIN
                 THEN N'...'
                 ELSE N''
             END +
-            N'. Rows are fetched before they are filtered. It fetches ' +
-            ISNULL(fl.fetch_list, N'<columns not listed>') +
+            N'. Rows are fetched before they are filtered. ' +
+            CASE
+                WHEN fl.fetch_list IS NOT NULL
+                AND  pl.pred_list IS NOT NULL
+                THEN N'It fetches ' + fl.fetch_list + N' and filters on ' + pl.pred_list
+                WHEN fl.fetch_list IS NOT NULL
+                THEN N'It fetches ' + fl.fetch_list
+                WHEN pl.pred_list IS NOT NULL
+                THEN N'It fetches no other columns and filters on ' + pl.pred_list
+                ELSE N'It fetches <columns not listed>'
+            END +
             N': add them to the index the seek uses as INCLUDE (or key) columns. The number of lookups swings with the parameter values, so this is also a parameter sensitivity risk.'
     FROM #plan_operators AS po
     JOIN #plan_facts AS pf
@@ -20568,12 +20632,66 @@ BEGIN
                     N''
                 )
     ) AS fl
+    CROSS APPLY
+    (
+        SELECT
+            pred_list =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' + QUOTENAME(k.col_name)
+                        FROM
+                        (
+                            SELECT
+                                pc.col_name,
+                                pred_ord =
+                                    MIN(pc.col_ord)
+                            FROM #plan_columns AS pc
+                            WHERE pc.database_id = po.database_id
+                            AND   pc.plan_id = po.plan_id
+                            AND   pc.stmt_id = po.stmt_id
+                            AND   pc.qp_id = po.qp_id
+                            AND   pc.node_id = po.node_id
+                            AND   pc.col_role = 'lkpred'
+                            AND   pc.col_table = po.obj_table
+                            AND   ISNULL(pc.col_schema, N'') = ISNULL(po.obj_schema, N'')
+                            AND   ISNULL(pc.col_database, N'') = ISNULL(po.obj_database, N'')
+                            AND   NOT EXISTS
+                                  (
+                                      SELECT
+                                          1/0
+                                      FROM #plan_columns AS pf2
+                                      WHERE pf2.database_id = pc.database_id
+                                      AND   pf2.plan_id = pc.plan_id
+                                      AND   pf2.stmt_id = pc.stmt_id
+                                      AND   pf2.qp_id = pc.qp_id
+                                      AND   pf2.node_id = pc.node_id
+                                      AND   pf2.col_role = 'fetch'
+                                      AND   pf2.col_name = pc.col_name
+                                  )
+                            GROUP BY
+                                pc.col_name
+                        ) AS k
+                        ORDER BY
+                            k.pred_ord
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS pl
     WHERE
     (
          po.is_lookup = 1
       OR po.physical_op = N'RID Lookup'
     )
     AND   po.pred_text IS NOT NULL
+    AND   ISNULL(po.obj_schema, N'') <> N'[sys]'
     OPTION(RECOMPILE, MAXDOP 1);
 
     /*
@@ -23233,7 +23351,13 @@ BEGIN
         SELECT
             table_name =
                 '#plan_specials',
-            psp.*
+            psp.database_id,
+            psp.plan_id,
+            psp.stmt_id,
+            psp.qp_id,
+            psp.node_id,
+            psp.special,
+            psp.pred_text
         FROM #plan_specials AS psp
         OPTION(RECOMPILE);
 
