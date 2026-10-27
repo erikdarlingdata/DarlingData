@@ -18606,7 +18606,11 @@ BEGIN
         pv.startup_expr,
         pv.pred_xml
     FROM #plan_statements AS ps
-    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Clustered Index Scan" or @PhysicalOp = "Index Scan" or @PhysicalOp = "Table Scan" or @PhysicalOp = "Filter" or @LogicalOp = "Left Anti Semi Join"][*/*[self::Predicate or self::ProbeResidual]]') AS r (rel)
+    CROSS APPLY ps.qp_xml.nodes
+    (
+        N'.//RelOp[@PhysicalOp = "Clustered Index Scan" or @PhysicalOp = "Index Scan" or @PhysicalOp = "Table Scan"
+                   or @PhysicalOp = "Filter" or @LogicalOp = "Left Anti Semi Join"][*/*[self::Predicate or self::ProbeResidual]]'
+    ) AS r (rel)
     CROSS APPLY
     (
         SELECT
@@ -18740,7 +18744,12 @@ BEGIN
             node_id =
                 r.rel.value(N'(@NodeId)[1]', N'integer')
     ) AS av
-    CROSS APPLY r.rel.nodes(N'*/*[self::HashKeysBuild or self::HashKeysProbe or self::InnerSideJoinColumns or self::OuterSideJoinColumns or self::Predicate or self::ProbeResidual or self::Residual]//ColumnReference[@Column][not(../../../self::Compare[@CompareOp = "IS"])]') AS c (col)
+    CROSS APPLY r.rel.nodes
+    (
+        N'*/*[self::HashKeysBuild or self::HashKeysProbe or self::InnerSideJoinColumns or self::OuterSideJoinColumns
+              or self::Predicate or self::ProbeResidual or self::Residual]
+           //ColumnReference[@Column][not(../../../self::Compare[@CompareOp = "IS"])]'
+    ) AS c (col)
     CROSS APPLY
     (
         SELECT
@@ -19597,7 +19606,14 @@ BEGIN
                             SELECT
                                 pc.col_name,
                                 key_rank =
-                                    MIN(CASE WHEN pc.is_equality = 1 THEN 0 ELSE 1 END),
+                                    MIN
+                                    (
+                                        CASE
+                                            WHEN pc.is_equality = 1
+                                            THEN 0
+                                            ELSE 1
+                                        END
+                                    ),
                                 key_ord =
                                     MIN(pc.col_ord)
                             FROM #plan_columns AS pc
@@ -19997,7 +20013,8 @@ BEGIN
             MIN(i.lasj_node_id),
         finding =
             N'The plan has an anti join that handles NULLs: it tests ' + nl.col_ref +
-            N' IS NULL, and that column is one the anti join compares. The optimizer only adds that handling when it cannot prove the column is NOT NULL, as with NOT IN over a nullable column. Rewrite with NOT EXISTS, or make the column NOT NULL.'
+            N' IS NULL, and that column is one the anti join compares. The optimizer only adds that handling when it cannot prove ' +
+            N'the column is NOT NULL, as with NOT IN over a nullable column. Rewrite with NOT EXISTS, or make the column NOT NULL.'
     FROM inner_nodes AS i
     JOIN #plan_anti_cols AS nl
       ON  nl.database_id = i.database_id

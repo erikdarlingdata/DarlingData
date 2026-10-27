@@ -2004,6 +2004,11 @@ SELECT /*pp_r1*/ @i = s.id, @j = (SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.
    FORCE ORDER and MAXDOP 1 keep the join order and the serial shape. */
 SELECT /*pp_r18*/ @c = SUM(CONVERT(bigint, b.id) * o.a) FROM dbo.pp_outer AS o JOIN dbo.pp_big AS b ON b.k = o.a OPTION (LOOP JOIN, FORCE ORDER, MAXDOP 1, QUERYTRACEON 8690);
 
+/* 18, unpinned: the same query with nothing but LOOP JOIN. Whatever shape the
+   hardware gives (the scan directly under the join, or under a chain of spools
+   and compute scalars), rule 18 has to find it. */
+SELECT /*pp_r18u*/ @c = SUM(CONVERT(bigint, b.id) * o.a) FROM dbo.pp_outer AS o JOIN dbo.pp_big AS b ON b.k = o.a OPTION (LOOP JOIN);
+
 /* 16: one insert into a table with six indexes */
 INSERT /*pp_r16*/ dbo.pp_wide (id, c1, c2, c3, c4, c5) SELECT TOP (1) 2, 1, 1, 1, 1, 1 FROM sys.objects AS o OPTION (RECOMPILE);
 
@@ -2058,11 +2063,10 @@ SELECT /*pp_r5nn*/ @i = s.id FROM dbo.pp_small AS s WHERE s.n IS NULL AND s.id N
 /* 5, negative: NOT EXISTS whose subquery has an unrelated IS NULL */
 SELECT /*pp_r5ne*/ @i = s.id FROM dbo.pp_small AS s WHERE NOT EXISTS (SELECT 1/0 FROM dbo.pp_small AS s2 WHERE s2.a = s.a AND s2.b = 3 AND s2.n IS NULL) OPTION (LOOP JOIN);
 
-/* 5, negative: NOT IN is only in a comment. <> ALL means NOT IN and has the
-   same plan with the null handling, so rule 5 would fire if the comment
-   counted. (Query Store drops a comment after the last token, so it sits in
-   the middle of the statement.) */
-SELECT /*pp_r5c*/ @i = s.id /* not a NOT IN (list), it is <> ALL */ FROM dbo.pp_small AS s WHERE s.a <> ALL (SELECT s2.n FROM dbo.pp_small AS s2 WHERE s2.b = 3);
+/* 5, positive: <> ALL over a nullable column has the same meaning as NOT IN
+   and the same plan with the null handling. Rule 5 reads the plan, not the
+   query text, so it fires. */
+SELECT /*pp_r5c*/ @i = s.id FROM dbo.pp_small AS s WHERE s.a <> ALL (SELECT s2.n FROM dbo.pp_small AS s2 WHERE s2.b = 3);
 
 /* 8, negative: a catalog view has a has_access filter on its base table */
 SELECT /*pp_r8cat*/ @i = o.object_id FROM sys.objects AS o WHERE o.name LIKE N'pp_x%';
@@ -2084,13 +2088,13 @@ DECLARE cn CURSOR LOCAL KEYSET FOR SELECT /*pp_curn*/ b.id FROM dbo.pp_nl AS o J
 OPEN cn; FETCH NEXT FROM cn INTO @c; CLOSE cn; DEALLOCATE cn;
 """
 
-# Rule 2, negative: the server side MAXDOP is 1 for this query's compile (a
-# database scoped setting) and the text only says OPTION (MAXDOP 1) in a
-# comment. About 150 million rows go through a hash join, as in r2.
+# Rule 2, MaxDOPSetToOne from the database scoped MAXDOP: the setting is 1 for
+# this query's compile and put back afterward. About 150 million rows go
+# through a hash join, as in r2.
 PP_MAXDOP_COMMENT_SQL = """
 SET NOCOUNT ON;
 DECLARE @c bigint;
-SELECT /*pp_r2c*/ @c = SUM(CONVERT(bigint, b1.id) * b2.id) /* OPTION (MAXDOP 1) */ FROM dbo.pp_big AS b1 JOIN dbo.pp_big AS b2 ON b2.k = b1.k WHERE b2.id < 150000;
+SELECT /*pp_r2c*/ @c = SUM(CONVERT(bigint, b1.id) * b2.id) FROM dbo.pp_big AS b1 JOIN dbo.pp_big AS b2 ON b2.k = b1.k WHERE b2.id < 150000;
 """
 
 # Rule 14: a table variable compiled for one row only counts below compat 150,
@@ -2127,6 +2131,7 @@ PP_RULE_CASES = [
     (13, "many-to-many merge join", "r13"),
     (16, "wide DML", "r16"),
     (18, "scan on inner side of nested loops", "r18"),
+    (18, "scan on inner side of nested loops", "r18u"),
 ]
 
 
@@ -2303,9 +2308,8 @@ def plan_parsing_tests(server, password, R):
             errs += pp_sql_errors(out + "\n" + err)
         R.check(G, "table variable queries ran", not errs, str(errs[:2]))
 
-        # Fixtures for the review findings. Rule 2's comment case needs a
-        # serial plan from a server side MAXDOP of 1 (a database scoped
-        # setting), so the text, not the setting, is what the rule must ignore.
+        # Fixtures for the review findings. Rule 2's MaxDOPSetToOne case needs a
+        # serial plan from a database scoped MAXDOP of 1 at compile time.
         errs = []
         for sql in (PP_REVIEW_OBJECTS_SQL, PP_REVIEW_SQL, PP_CURSOR_SQL):
             out, err = _sqlcmd(server, password, sql, database=PP_DB, timeout=900)
@@ -2441,8 +2445,29 @@ def plan_parsing_tests(server, password, R):
         # Rule 5 only for a real nullable NOT IN
         quiet("r5nn", 5, "rule 5 stays quiet for NOT IN over NOT NULL keys with an unrelated IS NULL")
         quiet("r5ne", 5, "rule 5 stays quiet for NOT EXISTS with an unrelated IS NULL")
-        quiet("r5c", 5, "rule 5 ignores NOT IN inside a comment")
-        quiet("r2c", 2, "rule 2 ignores OPTION (MAXDOP 1) inside a comment")
+        R.check(G, "rule 5 fires for <> ALL over a nullable column (same plan as NOT IN)",
+                pp_has(found, ids["r5c"], 5),
+                "no row" + pp_operators(server, password, ids["r5c"]))
+
+        # Rule 2: MaxDOPSetToOne is judged from the server and database MAXDOP.
+        # r2c compiled while the database MAXDOP was 1. With it back at 0 the
+        # MAXDOP 1 can only have come from the query, a hint or a plan guide, so
+        # it is flagged; with the database MAXDOP at 1 it is not.
+        R.check(G, "rule 2 flags MaxDOPSetToOne when server and database MAXDOP are not 1",
+                pp_has(found, ids["r2c"], 2),
+                "no row" + pp_operators(server, password, ids["r2c"]))
+        _sqlcmd(server, password,
+                "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 1;", database=PP_DB)
+        try:
+            out_m, combined_m, found_m = pp_run(server, password, [ids["r2c"]],
+                                                ", @start_date = '%s'" % window)
+        finally:
+            _sqlcmd(server, password,
+                    "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 0;", database=PP_DB)
+        R.check(G, "rule 2 does not flag MaxDOPSetToOne when database MAXDOP 1 explains it",
+                completed(out_m) and found_m is not None
+                and not pp_has(found_m, ids["r2c"], 2),
+                "rule 2 fired or the run did not finish")
 
         # Rule 12 and 8: the optimizer's own Top and has_access filter
         quiet("r5", 12, "rule 12 stays quiet for the Top inside the NOT IN null check")

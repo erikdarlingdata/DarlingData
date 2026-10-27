@@ -93,7 +93,7 @@ Use the `@expert_mode` parameter to return additional details.
 
 Set `@plan_parsing = 1` and sp_QuickieStore reads the Query Store plans of the queries it returns. It adds one more result set of things worth fixing in them. It is off by default, and it only works in the normal mode. It is rejected, with an error, together with `@find_high_impact`, `@find_parameter_sensitive`, regression mode (`@regression_baseline_start_date`) and `@log_to_table`.
 
-The result set comes out after the expert mode results (and whether or not you asked for `@expert_mode`), and before the query store trouble check. It has one row per plan and rule. When a rule hits the same kind of operator more than once in a plan, the node ids fold into one list, lowest first: `4, 7, 12 and 3 more`.
+The result set comes out after the expert mode results (and whether or not you asked for `@expert_mode`), and before the query store trouble check. It has one row per plan and rule. When a rule hits the same kind of operator more than once in a plan, the node ids fold into one list, lowest first: `4, 7, 12 and 3 more`. The finding text (the first three, joined with `|`) and the object names fold the same way.
 
 | column        | what it holds                                                       |
 |---------------|---------------------------------------------------------------------|
@@ -112,12 +112,12 @@ The rules, and the starting thresholds they use:
 
 | rule_id | rule_name                              | what it looks for                                                                                                                                   |
 |---------|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| 0       | plan not checked                       | the plan text does not convert to XML (more than 128 levels of nesting), or it has no statements in it to look at                                  |
+| 0       | plan not checked                       | the plan text does not convert to XML (more than 128 levels of nesting), or it has no query plan in it to look at                                  |
 | 1       | eager index spool                      | an eager index spool: SQL Server built a temporary index while the query ran. The finding scripts the CREATE INDEX that replaces it           |
-| 2       | serial plan                            | a serial plan with a reason you can fix, in a query that averages 1,000 ms of CPU or more. Rule 3 covers the scalar UDF reason |
+| 2       | serial plan                            | a serial plan with a reason you can fix, in a query that averages 1,000 ms of CPU or more. MaxDOPSetToOne only counts when the server and database MAXDOP are not 1 (and no Resource Governor workload group has max_dop 1), so the MAXDOP 1 came from the query, a Query Store hint or a plan guide. Rule 3 covers the T-SQL scalar UDF reason |
 | 3       | scalar UDF                             | a scalar function that was not inlined. It lists the functions, and says when they forced the whole plan to run serially                           |
 | 4       | lookup with predicate                  | a key or RID lookup that filters rows on its own. The finding shows the predicate and the columns the lookup fetches (the INCLUDE fix), and warns that the lookup count swings with parameter values |
-| 5       | NOT IN on nullable column              | NOT IN against a column that can be NULL, which makes SQL Server add the extra NULL handling. Names the column                                      |
+| 5       | NOT IN on nullable column              | NOT IN against a column that can be NULL, which makes SQL Server add the extra NULL handling: an anti join that tests a column it compares with IS NULL. Read from the plan, not the query text. Names the column |
 | 6       | implicit conversion prevents seek      | a data type conversion that stopped an index seek. Shows the converting expression                                                                  |
 | 7       | missing index request                  | a missing index request on a query that averages 1,000 ms of CPU or duration, or runs 1,000 times a day or more. Shows the table, the impact and the columns, and flags more than 4 key columns, more than 5 includes, and several requests for one table |
 | 8       | late filter                            | a Filter operator that applies a predicate on a table column, so the rows were read first and thrown away afterward                                 |
@@ -129,7 +129,7 @@ The rules, and the starting thresholds they use:
 | 14      | table variable                         | a scan of a table variable with an estimate of one row feeding a join, on compatibility level below 150. Table-valued parameters look the same     |
 | 15      | remote query                           | any remote query, scan, index scan, index seek, insert, update or delete operator (linked servers)                                                  |
 | 16      | wide DML                               | one INSERT, UPDATE, DELETE or MERGE that has to maintain 5 or more indexes. Shows the count and the names                                           |
-| 17      | Standard Edition batch mode DOP 2      | Standard Edition limits batch mode to DOP 2. Fires for a query with batch mode operators and no MAXDOP 2 hint, when MAXDOP is set to 0 or above 2 |
+| 17      | Standard Edition batch mode DOP 2      | Standard Edition limits batch mode to DOP 2. Fires for a query that ran at DOP 2 with batch mode operators, no Query Store hint or plan guide, when the server and database MAXDOP leave the effective MAXDOP at 0 or above 2 |
 | 18      | scan on inner side of nested loops     | a scan on the inner side of a nested loops join, on a table of 1,000,000 rows or more. It can run once for every outer row                       |
 | 19      | long compile                           | a plan that took 1,000 ms or more to compile                                                                                                        |
 
