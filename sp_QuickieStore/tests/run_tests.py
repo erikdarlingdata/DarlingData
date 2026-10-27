@@ -2472,6 +2472,10 @@ def plan_parsing_tests(server, password, R):
                 "pp_udf" in finding_text("r3", 3), finding_text("r3", 3)[:120])
         R.check(G, "rule 4 finding names the table",
                 "pp_small" in finding_text("r4", 4), finding_text("r4", 4)[:120])
+        R.check(G, "rule 9 finding shows the 1,000,000 row table cardinality "
+                   "with thousands separators",
+                "(1,000,000 rows)" in finding_text("r9", 9),
+                finding_text("r9", 9)[:160])
 
         # --- Regression tests for the round 1 review findings ---------------
         def quiet(marker, rule_id, label):
