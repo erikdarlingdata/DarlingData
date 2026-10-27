@@ -21,7 +21,8 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `251`.
+password). Expect `294` (`293` on SQL Server 2017, which skips the rule 14 check at
+compatibility level 150 and up).
 
 To run only the multi-database group, add `--only multidb`. To run only the
 plan findings group, add `--only plan_parsing`.
