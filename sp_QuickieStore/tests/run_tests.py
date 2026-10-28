@@ -2051,6 +2051,16 @@ INSERT dbo.pp_fk WITH (TABLOCK) (id, pk_id)
 SELECT p.id, CASE WHEN p.id % 11 = 0 THEN NULL ELSE p.id % 400 + 1 END FROM dbo.pp_pk AS p;
 CREATE INDEX ix_fk_pk ON dbo.pp_fk (pk_id);
 
+/* a table with three nonclustered indexes: UPDATE ... OPTION (QUERYTRACEON 8790) gets a wide (per index) plan */
+CREATE TABLE dbo.pp_upd (id integer NOT NULL PRIMARY KEY CLUSTERED, a integer NOT NULL, b integer NOT NULL, n integer NULL);
+INSERT dbo.pp_upd WITH (TABLOCK) (id, a, b, n)
+SELECT TOP (50000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 1000, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 7,
+       CASE WHEN ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 10 = 0 THEN NULL ELSE ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 500 END
+FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2;
+CREATE INDEX ix_a ON dbo.pp_upd (a);
+CREATE INDEX ix_b ON dbo.pp_upd (b);
+CREATE INDEX ix_n ON dbo.pp_upd (n);
+
 /* a procedure whose only plan statement is an IF condition */
 EXECUTE (N'CREATE PROCEDURE dbo.pp_ifproc AS BEGIN IF /*pp_cond*/ EXISTS (SELECT 1/0 FROM dbo.pp_small AS s WHERE s.a = 5) SELECT 1; END;');
 """
@@ -2066,6 +2076,10 @@ SELECT /*pp_r1b*/ @c = SUM(x.c) FROM dbo.pp_small AS o CROSS APPLY (SELECT c = S
 
 /* 4: a key lookup that fetches two columns (c and n) and applies a predicate */
 EXECUTE sys.sp_executesql N'SELECT /*pp_r4b*/ s.id, s.c, s.n FROM dbo.pp_small AS s WHERE s.a = @p AND s.b = @q;', N'@p integer, @q integer', 5, 3;
+
+/* 4: a self-join lookup. Its predicate compares the looked-up column n with a column of the outer
+   alias (o.b), which is an outer row value: the finding must list n and not b */
+SELECT /*pp_r4self*/ @c = SUM(LEN(s.c)) FROM dbo.pp_small AS o JOIN dbo.pp_small AS s WITH (INDEX (ix_a)) ON s.a = o.a AND s.n <> o.b WHERE o.id < 30 OPTION (LOOP JOIN, FORCE ORDER);
 
 /* 5, negative: NOT IN over NOT NULL keys, with an unrelated IS NULL filter */
 SELECT /*pp_r5nn*/ @i = s.id FROM dbo.pp_small AS s WHERE s.n IS NULL AND s.id NOT IN (SELECT s2.id FROM dbo.pp_small AS s2 WHERE s2.b = 3) OPTION (LOOP JOIN);
@@ -2099,8 +2113,65 @@ SELECT /*pp_r10tv*/ @i = t.a FROM @tv AS t WHERE ABS(t.k) = 3 OPTION (RECOMPILE)
 /* 8, negative: a catalog view has a has_access filter on its base table */
 SELECT /*pp_r8cat*/ @i = o.object_id FROM sys.objects AS o WHERE o.name LIKE N'pp_x%';
 
+/* 3: the same UDF under MAXDOP 1. The plan gives MaxDOPSetToOne as the reason, so rule 3
+   must not say the function forced the serial plan */
+SELECT /*pp_r3m*/ @i = s.id, @j = dbo.pp_udf(s.a) FROM dbo.pp_small AS s WHERE s.id < 100 OPTION (MAXDOP 1);
+
+/* 1: an eager index spool over a table variable. The finding cannot be CREATE INDEX on it */
+DECLARE @tv1 TABLE (a integer NOT NULL, b integer NOT NULL);
+INSERT @tv1 (a, b) SELECT h.a, h.b FROM dbo.pp_heap AS h;
+SELECT /*pp_r1tv*/ @j = MAX(x.m) FROM dbo.pp_small AS s CROSS APPLY (SELECT m = MAX(t.b) FROM @tv1 AS t WHERE t.a = s.a) AS x WHERE s.id < 2000 OPTION (LOOP JOIN, RECOMPILE);
+
+/* 1: the same, but the spool also outputs an nvarchar(max) and an nvarchar(1000) column. Before SQL Server 2019 those
+   cannot go in the inline key (Msg 1919 for max, Msg 1945 and then Msg 1946 on insert for the long one) */
+DECLARE @tv2 TABLE (a integer NOT NULL, b integer NOT NULL, c nvarchar(max) NULL, w nvarchar(1000) NULL);
+INSERT @tv2 (a, b, c, w) SELECT h.a, h.b, REPLICATE(N'c', 10), N'w' FROM dbo.pp_heap AS h;
+SELECT /*pp_r1tvmax*/ @j = SUM(LEN(x.c) + LEN(x.w)) FROM dbo.pp_small AS s CROSS APPLY (SELECT t.c, t.w FROM @tv2 AS t WHERE t.a = s.a AND t.b > s.id) AS x WHERE s.id < 2000 OPTION (LOOP JOIN, FORCE ORDER, RECOMPILE);
+
+/* 8, negative: the Filter compares a column with an aggregate (an Expr another operator
+   computed), so it cannot move down to the scan */
+SELECT /*pp_r8expr*/ @i = s.id FROM dbo.pp_small AS s WHERE s.b <> ISNULL((SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a), 0);
+
+/* 8, negative: HAVING, a Filter on the values a Hash Match aggregate computes */
+SELECT /*pp_r8hav*/ @i = s.a FROM dbo.pp_small AS s GROUP BY s.a HAVING COUNT_BIG(*) > 50 AND MAX(s.b) > 3;
+
+/* 8, negative: a Filter on ROW_NUMBER(), which a Sequence Project computes */
+SELECT /*pp_r8rn*/ @i = d.id FROM (SELECT s.id, rn = ROW_NUMBER() OVER (PARTITION BY s.a ORDER BY s.id) FROM dbo.pp_small AS s) AS d WHERE d.rn = 2;
+
+/* 8, positive: the Filter reads an Expr a Compute Scalar builds from table columns. The TOP
+   keeps the Filter above the scan */
+SELECT /*pp_r8cs*/ @s = d.u FROM (SELECT TOP (1000) s.id, u = UPPER(s.c) + CONVERT(varchar(10), s.b * 2) FROM dbo.pp_small AS s ORDER BY s.id) AS d WHERE d.u LIKE 'X%';
+
+/* 8, positive: a mixed predicate, a table column and a window aggregate. The column part could
+   filter earlier, so it counts; the finding says the other part reads a window result */
+SELECT /*pp_r8mix*/ @i = d.id FROM (SELECT s.id, s.b, cnt = COUNT_BIG(*) OVER (PARTITION BY s.a) FROM dbo.pp_small AS s) AS d WHERE d.b = 3 AND d.cnt > 2;
+
+/* 8, negative: a wide (per index) UPDATE. The optimizer adds a Filter over the Split (and over a Table Spool that
+   reads the Split's spool) to test whether the index key changed; there is no earlier place for it */
+UPDATE /*pp_r8upd*/ dbo.pp_upd SET b = 1 WHERE a < 800 AND n IS NULL OPTION (QUERYTRACEON 8790);
+
+/* 8, negative: the Filter reads the probe result of a semi join (EXISTS inside a CASE), which only the join makes.
+   The default plan is a Merge Join (the probe Expr is only in its OutputList); LOOP JOIN gives a Nested Loops
+   (ProbeColumn) */
+SELECT /*pp_r8semi*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3;
+SELECT /*pp_r8semiL*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3 OPTION (LOOP JOIN);
+
+/* 8, positive: the Filter compares a table column with a value from a VALUES list (UnionNNNN, which a Constant Scan
+   outputs and the joins above only pass up). It is a late Filter over the eager index spool, so rule 8 still fires. */
+SELECT /*pp_r8val*/ @c = MAX(y.c) FROM (SELECT c = (SELECT COUNT_BIG(*) FROM dbo.pp_heap AS h WHERE h.a >= d.d AND h.b >= r.r) FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24)) AS d (d) CROSS JOIN (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24)) AS r (r)) AS y OPTION (LOOP JOIN);
+
 /* 0, negative: a plan that is only an IF condition */
 EXECUTE dbo.pp_ifproc;
+"""
+
+# Rule 8 on a batch mode Window Aggregate: COUNT_BIG(*) OVER (...) has no DefinedValue, so its
+# Expr is defined nowhere. Batch mode on rowstore needs compatibility level 150 and up (SQL Server 2019+).
+# The partition is the constant pad column, so the filter on k cannot move below the window.
+PP_BATCH_SQL = """
+SET NOCOUNT ON;
+DECLARE @i integer;
+SELECT /*pp_r8bat*/ @i = d.id FROM (SELECT b.id, b.k, cnt = COUNT_BIG(*) OVER (PARTITION BY b.pad) FROM dbo.pp_big AS b) AS d WHERE d.k = 3 OR d.cnt > 50;
+SELECT /*pp_r8bat2*/ @i = d.id FROM (SELECT b.id, b.k, cnt = COUNT_BIG(*) OVER (PARTITION BY b.pad) FROM dbo.pp_big AS b) AS d WHERE d.k = 3 AND d.cnt > 50;
 """
 
 # Cursors, each its own batch: a STATIC and a KEYSET cursor over a join. The
@@ -2372,6 +2443,9 @@ def plan_parsing_tests(server, password, R):
         for sql in (PP_REVIEW_OBJECTS_SQL, PP_REVIEW_SQL, PP_CURSOR_SQL):
             out, err = _sqlcmd(server, password, sql, database=PP_DB, timeout=900)
             errs += pp_sql_errors(out + "\n" + err)
+        if default_compat >= 150:
+            out, err = _sqlcmd(server, password, PP_BATCH_SQL, database=PP_DB, timeout=900)
+            errs += pp_sql_errors(out + "\n" + err)
         _sqlcmd(server, password,
                 "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 1;", database=PP_DB)
         out, err = _sqlcmd(server, password, PP_MAXDOP_COMMENT_SQL,
@@ -2394,8 +2468,8 @@ def plan_parsing_tests(server, password, R):
                 database=PP_DB)
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
-            "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r5nn", "r5ne",
-            "r5c", "r8cat", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r4self", "r5nn", "r5ne",
+            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r8semi", "r8semiL", "r8val", "r1tv", "r1tvmax", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2410,7 +2484,7 @@ def plan_parsing_tests(server, password, R):
                          "SET NOCOUNT ON; SELECT 'WIN:' + CONVERT(varchar(19), "
                          "DATEADD(HOUR, -2, SYSDATETIME()), 120);")
         window = re.search(r"WIN:(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)", out).group(1)
-        all_ids = [ids[k] for k in want] + ([ids["r14new"]] if "r14new" in ids else [])
+        all_ids = [ids[k] for k in want] + [ids[k] for k in ("r14new", "r8bat", "r8bat2") if k in ids]
 
         out, combined, found = pp_run(server, password, all_ids,
                                       ", @start_date = '%s'" % window)
@@ -2470,8 +2544,16 @@ def plan_parsing_tests(server, password, R):
                 finding_text("r1", 1)[:120])
         R.check(G, "rule 3 finding names the function",
                 "pp_udf" in finding_text("r3", 3), finding_text("r3", 3)[:120])
+        R.check(G, "rule 3 says the UDF forces a serial plan when the plan gives the UDF reason",
+                "force a serial plan" in finding_text("r3", 3), finding_text("r3", 3)[:160])
+        R.check(G, "rule 3 does not blame the UDF when the plan is serial for MAXDOP 1",
+                pp_has(found, ids["r3m"], 3) and "force a serial plan" not in finding_text("r3m", 3),
+                finding_text("r3m", 3)[:160])
         R.check(G, "rule 4 finding names the table",
                 "pp_small" in finding_text("r4", 4), finding_text("r4", 4)[:120])
+        R.check(G, "rule 18 finding does not claim a count of executions",
+                "can run again for each row" in finding_text("r18", 18),
+                finding_text("r18", 18)[:160])
         R.check(G, "rule 9 finding shows the 1,000,000 row table cardinality "
                    "with thousands separators",
                 "(1,000,000 rows)" in finding_text("r9", 9),
@@ -2488,7 +2570,8 @@ def plan_parsing_tests(server, password, R):
         # range seek that also outputs a computed column (r1b). The harness
         # cuts wide columns at 200 characters, so read these at full width.
         out, combined, found_full = pp_run(server, password,
-                                           [ids["r1"], ids["r1b"], ids["r4b"]],
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r4self"], ids["r1tv"], ids["r1tvmax"], ids["r2c"], ids["r8mix"]]
+                                           + ([ids["r8bat2"]] if "r8bat2" in ids else []),
                                            width=8000)
         found_full = found_full or []
 
@@ -2507,12 +2590,95 @@ def plan_parsing_tests(server, password, R):
                 R.check(G, "rule 1 (%s) CREATE INDEX compiles under PARSEONLY" % marker,
                         not errs, str(errs[:1]) + " " + stmt)
 
-        # Rule 4 lists the columns it fetches with commas
-        fetched = re.search(r"It fetches (.*?): add", full_text("r4b", 4))
+        # Rule 1 on a table variable: the index goes in the DECLARE, not CREATE INDEX ... ON @t.
+        # Before SQL Server 2019 an inline INDEX cannot take INCLUDE (Msg 102), and the include columns cannot go
+        # in the key (an nvarchar(max) column is Msg 1919, a long one fails on insert), so there the inline index
+        # lists the seek columns only and the temp table alternative is a separate CREATE INDEX ... INCLUDE.
+        # Every statement the text suggests is run for real (not parse only), so binding errors show.
+        vout, _ = _sqlcmd(server, password,
+                          "SET NOCOUNT ON; SELECT 'VER:' + CONVERT(varchar(10), "
+                          "SERVERPROPERTY('ProductMajorVersion'));")
+        vm = re.search(r"VER:(\d+)", vout)
+        server_major = int(vm.group(1)) if vm else 99
+
+        def check_tv_advice(marker, cols, seek, other, long_cols):
+            """Run the advice of a rule 1 table variable finding: the DECLARE with the inline index, and (before
+            SQL Server 2019) the temp table CREATE TABLE + CREATE INDEX ... INCLUDE. long_cols are columns that
+            must stay out of the inline key. Returns the finding text."""
+            text = full_text(marker, 1)
+            tvn = "tv2" if marker.endswith("max") else "tv1"
+            R.check(G, "rule 1 (%s) suggests an inline INDEX for the table variable, not CREATE INDEX" % marker,
+                    "INDEX [ix_%s_spool] (%s" % (tvn, seek) in text
+                    and "in its DECLARE" in text
+                    and "CREATE INDEX [" not in text.replace(" and CREATE INDEX [", "")
+                    and " ON @" not in text,
+                    text[:400])
+            inline = re.search(r"INDEX \[ix_%s_spool\] \([^)]*\)(?: INCLUDE \([^)]*\))?" % tvn, text)
+            if server_major < 15:
+                R.check(G, "rule 1 (%s) before SQL Server 2019 lists the seek columns only in the inline index" % marker,
+                        inline is not None and inline.group(0) == "INDEX [ix_%s_spool] (%s)" % (tvn, seek)
+                        and "INCLUDE" not in text.split("in its DECLARE")[0]
+                        and not any(c in inline.group(0) for c in long_cols),
+                        text[:500])
+                temp_ix = re.search(r"CREATE INDEX \[ix_%s_spool\] ON \[#%s\] \(%s\) INCLUDE \(%s\);"
+                                    % (tvn, tvn, re.escape(seek), re.escape(other)), text)
+                R.check(G, "rule 1 (%s) before SQL Server 2019 gives the temp table a separate "
+                           "CREATE INDEX ... INCLUDE" % marker,
+                        temp_ix is not None, text[:500])
+            else:
+                R.check(G, "rule 1 (%s) on SQL Server 2019 and up keeps INCLUDE in the inline index" % marker,
+                        inline is not None
+                        and inline.group(0) == "INDEX [ix_%s_spool] (%s) INCLUDE (%s)" % (tvn, seek, other),
+                        text[:500])
+            if inline:
+                perr, perr2 = _sqlcmd(server, password,
+                                      "DECLARE @%s TABLE (%s, %s);" % (tvn, cols, inline.group(0)),
+                                      database=PP_DB)
+                errs = pp_sql_errors(perr + "\n" + perr2)
+                R.check(G, "rule 1 (%s) inline table variable INDEX runs on this version" % marker,
+                        not errs, str(errs[:1]) + " " + inline.group(0))
+            if server_major < 15:
+                temp_stmt = re.search(r"CREATE INDEX [^;]*;", text)
+                R.check(G, "rule 1 (%s) has a temp table CREATE INDEX to run" % marker,
+                        temp_stmt is not None, text[:400])
+                if temp_stmt:
+                    perr, perr2 = _sqlcmd(server, password,
+                                          "CREATE TABLE [#%s] (%s); %s DROP TABLE [#%s];"
+                                          % (tvn, cols, temp_stmt.group(0), tvn),
+                                          database=PP_DB)
+                    errs = pp_sql_errors(perr + "\n" + perr2)
+                    R.check(G, "rule 1 (%s) temp table CREATE INDEX ... INCLUDE runs on this version" % marker,
+                            not errs, str(errs[:1]) + " " + temp_stmt.group(0))
+            return text
+
+        tv_text = check_tv_advice("r1tv", "a integer NOT NULL, b integer NOT NULL", "[a]", "[b]", ())
+        R.check(G, "rule 1 (r1tv) says a table-valued parameter takes the index in its table type",
+                "table-valued parameter" in tv_text and "table type" in tv_text, tv_text[:400])
+        # The spool also outputs an nvarchar(max) and an nvarchar(1000) column: they are INCLUDE columns, never key
+        check_tv_advice("r1tvmax", "a integer NOT NULL, b integer NOT NULL, c nvarchar(max) NULL, w nvarchar(1000) NULL",
+                        "[a], [b]", "[c], [w]", ("[c]", "[w]"))
+
+        # Rule 4 lists the columns it fetches with commas, and the column its
+        # own predicate reads (b) after "filters on"
+        fetched = re.search(r"It fetches (.*?)(?: and filters on (.*?))?: add", full_text("r4b", 4))
         items = [c.strip() for c in fetched.group(1).split(",")] if fetched else []
         R.check(G, "rule 4 lists two fetched columns, comma separated",
                 len(items) >= 2 and all(re.fullmatch(r"\[?\w+\]?", c) for c in items),
                 full_text("r4b", 4)[:300])
+        R.check(G, "rule 4 lists the predicate column of the looked-up table",
+                fetched is not None and fetched.group(2) is not None and "[b]" in fetched.group(2)
+                and "[b]" not in items,
+                full_text("r4b", 4)[:300])
+        # In a self-join the predicate also reads the outer alias of the same table (o.b):
+        # that is an outer row value, so only the looked-up alias column (n) is listed
+        self_text = full_text("r4self", 4)
+        self_fetched = re.search(r"It fetches (.*?)(?: and filters on (.*?))?: add", self_text)
+        R.check(G, "rule 4 in a self-join lists the looked-up alias column and not the outer alias column",
+                self_fetched is not None and self_fetched.group(2) is not None
+                and "[n]" in self_fetched.group(2) and "[b]" not in self_fetched.group(2)
+                and "[b]" not in self_fetched.group(1),
+                self_text[:400])
+        quiet("r8cat", 4, "rule 4 stays quiet for a lookup into a system table")
 
         # Rule 5 only for a real nullable NOT IN
         quiet("r5nn", 5, "rule 5 stays quiet for NOT IN over NOT NULL keys with an unrelated IS NULL")
@@ -2521,13 +2687,17 @@ def plan_parsing_tests(server, password, R):
                 pp_has(found, ids["r5c"], 5),
                 "no row" + pp_operators(server, password, ids["r5c"]))
 
-        # Rule 2: MaxDOPSetToOne is judged from the server and database MAXDOP.
-        # r2c compiled while the database MAXDOP was 1. With it back at 0 the
-        # MAXDOP 1 can only have come from the query, a hint or a plan guide, so
-        # it is flagged; with the database MAXDOP at 1 it is not.
-        R.check(G, "rule 2 flags MaxDOPSetToOne when server and database MAXDOP are not 1",
+        # Rule 2: MaxDOPSetToOne is judged from the server and database MAXDOP
+        # as they are now. r2c compiled while the database MAXDOP was 1. With it
+        # back at 0 the procedure cannot tell where the MAXDOP 1 came from, so it
+        # is flagged, and the finding has to say that MAXDOP may have been 1 when
+        # the plan compiled. With the database MAXDOP at 1 it is not flagged.
+        R.check(G, "rule 2 flags MaxDOPSetToOne when server and database MAXDOP are not 1 now",
                 pp_has(found, ids["r2c"], 2),
                 "no row" + pp_operators(server, password, ids["r2c"]))
+        R.check(G, "rule 2 MaxDOPSetToOne finding allows for a MAXDOP of 1 at compile time",
+                "unless MAXDOP was 1 when the plan compiled" in full_text("r2c", 2),
+                full_text("r2c", 2)[:300])
         _sqlcmd(server, password,
                 "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 1;", database=PP_DB)
         try:
@@ -2545,6 +2715,67 @@ def plan_parsing_tests(server, password, R):
         quiet("r5", 12, "rule 12 stays quiet for the Top inside the NOT IN null check")
         quiet("r5c", 12, "rule 12 stays quiet for the Top inside a <> ALL null check")
         quiet("r8cat", 8, "rule 8 stays quiet for the has_access filter on a catalog view")
+        quiet("r8expr", 8, "rule 8 stays quiet for a filter on an aggregate result (an Expr from another operator)")
+        quiet("r8hav", 8, "rule 8 stays quiet for HAVING (a filter on Hash Match aggregate values)")
+        quiet("r8rn", 8, "rule 8 stays quiet for a filter on ROW_NUMBER()")
+        R.check(G, "rule 8 fires for a filter on a Compute Scalar over table columns",
+                pp_has(found, ids["r8cs"], 8),
+                "no row" + pp_operators(server, password, ids["r8cs"]))
+        # The wide UPDATE has to have the shape the rule skips, or the check proves nothing
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'SPLITFILTER:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                         "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                         "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                         "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                         "//RelOp[@PhysicalOp = \"Filter\"]/Filter/RelOp[@PhysicalOp = \"Split\" or @PhysicalOp = \"Table Spool\"]') = 1;"
+                         % ids["r8upd"], database=PP_DB)
+        R.check(G, "wide UPDATE fixture has a Filter over a Split or Table Spool",
+                "SPLITFILTER:1" in out, out[:200])
+        quiet("r8upd", 8, "rule 8 stays quiet for the index key change Filter over a Split in a wide UPDATE")
+        quiet("r8semi", 8, "rule 8 stays quiet for a filter on a Merge Join semi join probe result")
+        quiet("r8semiL", 8, "rule 8 stays quiet for a filter on a Nested Loops semi join probe result")
+        # The VALUES outer side passes UnionNNNN columns up through the joins; only a column no input outputs is a join's own
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'VALFILTER:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                         "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                         "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                         "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                         "//RelOp[@PhysicalOp = \"Filter\"][Filter/Predicate/ScalarOperator[contains(@ScalarString, \"[Union\")]]"
+                         "[Filter/RelOp/@PhysicalOp = \"Index Spool\"]') = 1;"
+                         % ids["r8val"], database=PP_DB)
+        R.check(G, "VALUES fixture has a Filter on a Union column over an Index Spool",
+                "VALFILTER:1" in out, out[:200] + pp_operators(server, password, ids["r8val"]))
+        R.check(G, "rule 8 fires for a late filter that compares a column with a VALUES list value",
+                pp_has(found, ids["r8val"], 8),
+                "no row" + pp_operators(server, password, ids["r8val"]))
+        mix_text = full_text("r8mix", 8)
+        R.check(G, "rule 8 fires for a mixed predicate and says part of it reads a window result",
+                pp_has(found, ids["r8mix"], 8) and "[b]=(3)" in mix_text
+                and "part of the predicate reads an aggregate" in mix_text,
+                mix_text[:200])
+
+        # A batch mode Window Aggregate has empty DefinedValues. Batch mode on rowstore is SQL Server 2019+
+        # (compatibility level 150), so this is skipped on SQL Server 2017 and earlier.
+        if default_compat >= 150:
+            R.check(G, "batch mode window fixtures ran", "r8bat" in ids and "r8bat2" in ids,
+                    "missing markers: %s" % [k for k in ("r8bat", "r8bat2") if k not in ids])
+            if "r8bat" in ids and "r8bat2" in ids:
+                out, _ = _sqlcmd(server, password,
+                                 "SET NOCOUNT ON; SELECT 'BATCHWIN:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                                 "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                                 "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                                 "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                                 "//RelOp[@PhysicalOp = \"Window Aggregate\"][@EstimatedExecutionMode = \"Batch\"]"
+                                 "[WindowAggregate/DefinedValues[not(DefinedValue)]]') = 1;"
+                                 % ids["r8bat"], database=PP_DB)
+                R.check(G, "batch mode window fixture has a Window Aggregate with no DefinedValue",
+                        "BATCHWIN:1" in out, out[:200])
+                quiet("r8bat", 8, "rule 8 stays quiet when the other part of an OR reads a batch mode COUNT(*) OVER result")
+                bat_text = full_text("r8bat2", 8)
+                R.check(G, "rule 8 fires for the AND form and says part of it reads a window result",
+                        pp_has(found, ids["r8bat2"], 8) and "[k]=(3)" in bat_text
+                        and "part of the predicate reads an aggregate" in bat_text,
+                        bat_text[:200])
 
         # Rule 0: a plan that is only an IF condition is checked or skipped
         quiet("cond", 0, "rule 0 does not fire for a plan that is only an IF condition")
@@ -2703,6 +2934,25 @@ def plan_parsing_tests(server, password, R):
                     "Msg 208" not in combined and "Invalid object name" not in combined
                     and re.search(r"table_name\s+database_id\s+plan_id\s+stmt_id\s+obj_schema\s+obj_table\s+obj_index", out),
                     combined.replace("\n", " ")[:160])
+
+        # @workdays = 1: rule 7 counts executions per work day; the run has to finish cleanly
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 1, @workdays = 1, @top = 5",
+                               database_name=PP_DB, timeout=600)
+        R.check(G, "@plan_parsing = 1 with @workdays = 1 runs cleanly",
+                completed(out) and not pp_sql_errors(combined),
+                combined.replace("\n", " ")[:160])
+
+        # @troubleshoot_performance = 1 times the plan parsing steps like the
+        # rest of the procedure: one current_query row per step
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 1, @troubleshoot_performance = 1, @top = 5",
+                               database_name=PP_DB, timeout=600)
+        R.check(G, "@troubleshoot_performance = 1 covers the plan parsing steps",
+                completed(out) and not pp_sql_errors(combined)
+                and "plan parsing: shredding operators" in out
+                and "plan parsing: running the rules" in out,
+                combined.replace("\n", " ")[:160])
 
         # Rejected combinations: severity 11 error that names @plan_parsing,
         # and the run does not reach the footer.
