@@ -12,6 +12,23 @@ on:
   # builds the bundle from sp_*/sp_*.sql), .github/sql/*.sql, and this workflow.
   # The Python harnesses use only the standard library, and go-sqlcmd is pulled
   # from its latest release, so there is no requirements file to watch.
+  #
+  # What runs on a pull request (the changes job decides, see its case block):
+  #   - The matrix runs when a non-Markdown file changed that the tests use
+  #     (.sql, tests/, Install-All/, .github/sql/, this workflow, or a harness
+  #     proc folder). A change to Markdown files only does not run it.
+  #   - The always-on steps (install, verify, help output, basic execution) run
+  #     on every matrix run.
+  #   - Each assertion harness has its own flag (perfcheck, humanevents,
+  #     indexcleanup, queryreprobuilder, loghunter, quickiestore,
+  #     querystorecleanup) and runs only when that proc's folder changed, or a
+  #     shared input changed (this workflow, .github/sql/, Install-All/).
+  #     sp_HumanEvents/ covers both sp_HumanEvents and sp_HumanEventsBlockViewer.
+  #     The StackOverflow2013 fixture step follows the indexcleanup flag.
+  #   - A pull request into main runs every harness, so the dev to main
+  #     promotion tests everything. A push to dev also runs everything.
+  #   - A new harness needs a flag in the changes job outputs, a case pattern for
+  #     its folder, and an if: on its step.
   push:
     branches: [dev]
     paths:
@@ -29,6 +46,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sql: ${{ steps.filter.outputs.sql }}
+      perfcheck: ${{ steps.filter.outputs.perfcheck }}
+      humanevents: ${{ steps.filter.outputs.humanevents }}
+      indexcleanup: ${{ steps.filter.outputs.indexcleanup }}
+      queryreprobuilder: ${{ steps.filter.outputs.queryreprobuilder }}
+      loghunter: ${{ steps.filter.outputs.loghunter }}
+      quickiestore: ${{ steps.filter.outputs.quickiestore }}
+      querystorecleanup: ${{ steps.filter.outputs.querystorecleanup }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -38,13 +62,25 @@ jobs:
         id: filter
         env:
           EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+
           if [ "$EVENT_NAME" != "pull_request" ]; then
             # Pushes are already limited by the paths filter on the trigger.
-            echo "sql=true" >> "$GITHUB_OUTPUT"
+            # They run every harness.
+            {
+              echo "sql=true"
+              echo "perfcheck=true"
+              echo "humanevents=true"
+              echo "indexcleanup=true"
+              echo "queryreprobuilder=true"
+              echo "loghunter=true"
+              echo "quickiestore=true"
+              echo "querystorecleanup=true"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -54,18 +90,94 @@ jobs:
           echo "Changed files:"
           cat changed_files.txt
 
+          # A pull request into main (the dev to main promotion) runs every
+          # harness. Any other pull request starts with none and turns them on
+          # per changed file.
+          start=false
+          if [ "$BASE_REF" = "main" ]; then
+            start=true
+          fi
+          perfcheck=$start
+          humanevents=$start
+          indexcleanup=$start
+          queryreprobuilder=$start
+          loghunter=$start
+          quickiestore=$start
+          querystorecleanup=$start
+
           sql=false
           while IFS= read -r f; do
             case "$f" in
-              *.sql | tests/* | */tests/* | Install-All/* | .github/sql/* | .github/workflows/sql-tests.yml)
-                echo "Matched: $f"
+              # Markdown never changes what the tests run.
+              *.md)
+                continue
+                ;;
+              # Shared inputs: the workflow, the smoke tests, and the bundle.
+              .github/workflows/sql-tests.yml | .github/sql/* | Install-All/*)
+                echo "Matched (shared input, all harnesses): $f"
                 sql=true
-                break
+                perfcheck=true
+                humanevents=true
+                indexcleanup=true
+                queryreprobuilder=true
+                loghunter=true
+                quickiestore=true
+                querystorecleanup=true
+                ;;
+              sp_PerfCheck/*)
+                echo "Matched (perfcheck): $f"
+                sql=true
+                perfcheck=true
+                ;;
+              sp_HumanEvents/*)
+                echo "Matched (humanevents): $f"
+                sql=true
+                humanevents=true
+                ;;
+              sp_IndexCleanup/*)
+                echo "Matched (indexcleanup): $f"
+                sql=true
+                indexcleanup=true
+                ;;
+              sp_QueryReproBuilder/*)
+                echo "Matched (queryreprobuilder): $f"
+                sql=true
+                queryreprobuilder=true
+                ;;
+              sp_LogHunter/*)
+                echo "Matched (loghunter): $f"
+                sql=true
+                loghunter=true
+                ;;
+              sp_QuickieStore/*)
+                echo "Matched (quickiestore): $f"
+                sql=true
+                quickiestore=true
+                ;;
+              sp_QueryStoreCleanup/*)
+                echo "Matched (querystorecleanup): $f"
+                sql=true
+                querystorecleanup=true
+                ;;
+              # Any other SQL or test file runs the matrix and the always-on
+              # steps, but no harness.
+              *.sql | tests/* | */tests/*)
+                echo "Matched (matrix only): $f"
+                sql=true
                 ;;
             esac
           done < changed_files.txt
 
-          echo "sql=$sql" >> "$GITHUB_OUTPUT"
+          {
+            echo "sql=$sql"
+            echo "perfcheck=$perfcheck"
+            echo "humanevents=$humanevents"
+            echo "indexcleanup=$indexcleanup"
+            echo "queryreprobuilder=$queryreprobuilder"
+            echo "loghunter=$loghunter"
+            echo "quickiestore=$quickiestore"
+            echo "querystorecleanup=$querystorecleanup"
+          } >> "$GITHUB_OUTPUT"
 
   test:
     needs: changes
@@ -213,6 +325,7 @@ jobs:
       # (trust cert) does not bypass that; there is nothing to secure on a
       # localhost throwaway container.
       - name: sp_PerfCheck assertion harness
+        if: needs.changes.outputs.perfcheck == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
@@ -221,6 +334,7 @@ jobs:
           python3 sp_PerfCheck/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
 
       - name: sp_HumanEvents assertion harness
+        if: needs.changes.outputs.humanevents == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
@@ -234,6 +348,7 @@ jobs:
       # index reads and every rule is structural (dedupe / overlap / usage
       # floor). See sp_IndexCleanup/tests/fixture_stackoverflow2013.sql.
       - name: Create StackOverflow2013 fixture (for the sp_IndexCleanup harness)
+        if: needs.changes.outputs.indexcleanup == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
@@ -243,6 +358,7 @@ jobs:
       # (which also EXECUTE every generated MERGE/DISABLE script), rule coverage
       # in its own scratch databases, and the no-database-access preflight guard.
       - name: sp_IndexCleanup assertion harness
+        if: needs.changes.outputs.indexcleanup == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
@@ -257,6 +373,7 @@ jobs:
       # and its one table-dependent case builds a fixture in tempdb. No user
       # database needed.
       - name: sp_QueryReproBuilder assertion harness
+        if: needs.changes.outputs.queryreprobuilder == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
@@ -271,6 +388,7 @@ jobs:
       # matrix, and writes a marker to the error log via RAISERROR ... WITH LOG
       # as a positive control so the absence assertions cannot pass vacuously.
       - name: sp_LogHunter assertion harness
+        if: needs.changes.outputs.loghunter == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
@@ -284,6 +402,7 @@ jobs:
       # expert/format grid, each of which executes the statement it just built.
       # It creates and drops its own Query Store scratch database.
       - name: sp_QuickieStore assertion harness
+        if: needs.changes.outputs.quickiestore == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
@@ -297,6 +416,7 @@ jobs:
       # leaves this procedure out, so the harness installs it itself. It
       # creates and drops its own qsc_* databases.
       - name: sp_QueryStoreCleanup assertion harness
+        if: needs.changes.outputs.querystorecleanup == 'true'
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd

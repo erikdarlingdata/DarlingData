@@ -206,7 +206,10 @@ group uses `AUTO_UPDATE_STATISTICS` instead of `AUTO_CLOSE` for a separate reaso
 ## Running in CI
 
 This suite runs in GitHub Actions as part of `.github/workflows/sql-tests.yml`,
-against SQL Server **2017, 2019, 2022, and 2025** containers. It reconfigures the
+against SQL Server **2017, 2019, 2022, and 2025** containers. A pull request into `main`
+runs it. A pull request into `dev` runs it only when it changes a file in
+`sp_PerfCheck/` (not Markdown), `Install-All/`, `.github/sql/`, or the
+workflow file. It reconfigures the
 instance and restores it, which is acceptable against a throwaway per-job
 container but is still a "run it on a box you control" tool by nature -- it always
 restores every option it touches and drops every database it creates, but do not
