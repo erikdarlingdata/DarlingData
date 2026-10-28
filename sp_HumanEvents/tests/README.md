@@ -132,6 +132,20 @@ and then runs `sp_HumanEvents`. A running one-shot session whose spid is not
 running `sp_HumanEvents` is dropped at startup; a running session with no spid in
 its name is kept for 10 minutes; and the run raises no severe SQL error.
 
+**9. Blocking logged to a table with a different collation (10).** Real
+blocking is logged to a scratch database whose collation differs from master's
+(the harness picks CS or CI at run time). Run 1 (`@keep_alive = 1`, cancelled by
+the query timeout) creates the `keeper_HumanEvents_blocking` session and table.
+Two `sqlcmd` sessions then hold locks on two tables and a third transaction
+queues behind both, so one transaction is blocked on two objects. Run 2 is a
+pure collector run (`@keep_alive = 0`, which reads the existing session instead
+of recreating it) and lasts several passes. The case asserts no severe error
+and no Msg 468 (the collation conflict between the staged names and the output
+table), that rows were logged, that **both** objects have a blocked row, that
+the later passes added no duplicate episode rows, and that the longest blocked
+`wait_time` reached the blocked process threshold. Then `@cleanup = 1` and a
+check that the scratch database and session are gone. It takes about a minute.
+
 ### Session hygiene -- non-negotiable
 
 Extended Events sessions are server-global; a leaked running session is a real

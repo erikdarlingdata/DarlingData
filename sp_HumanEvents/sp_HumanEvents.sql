@@ -380,6 +380,7 @@ CREATE TABLE
 CREATE TABLE
     #human_events_xml_internal
 (
+    id bigint IDENTITY NOT NULL, /*a per-report key, the last tie-breaker when the blocking logger keeps one report per episode*/
     human_events_xml xml
 );
 
@@ -3221,37 +3222,37 @@ BEGIN
         database_name =
             COALESCE
             (
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+                NULLIF(pd.database_name, N''),
+                DB_NAME(NULLIF(pd.database_id, 0))
             ),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
         blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
         blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
-        blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
-        blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
+        blocked_spid = pa.blocked_spid,
+        blocked_ecid = pa.blocked_ecid,
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-        wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-        transaction_name = bd.value('(process/@transactionname)[1]', 'sysname'),
-        last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
+        wait_time = pa.wait_time,
+        transaction_name = pa.transaction_name,
+        last_transaction_started = pa.last_transaction_started,
         last_transaction_completed = CONVERT(datetime2, NULL),
-        wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
-        lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-        status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bd.value('(process/@priority)[1]', 'integer'),
-        transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-        client_app = bd.value('(process/@clientapp)[1]', 'sysname'),
-        host_name = bd.value('(process/@hostname)[1]', 'sysname'),
-        login_name = bd.value('(process/@loginname)[1]', 'sysname'),
-        isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-        log_used = bd.value('(process/@logused)[1]', 'bigint'),
-        clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
-        currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
-        currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
+        wait_resource = pa.wait_resource,
+        lock_mode = pa.lock_mode,
+        status = pa.status,
+        priority = pa.priority,
+        transaction_count = pa.transaction_count,
+        client_app = pa.client_app,
+        host_name = pa.host_name,
+        login_name = pa.login_name,
+        isolation_level = pa.isolation_level,
+        log_used = pa.log_used,
+        clientoption1 = pa.clientoption1,
+        clientoption2 = pa.clientoption2,
+        currentdbname = pa.currentdbname,
+        currentdbid = pa.currentdbid,
         blocking_level = 0,
         sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
@@ -3259,7 +3260,109 @@ BEGIN
     INTO #blocked
     FROM #human_events_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                        THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                        ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                    END
+            FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocked process attributes, PIVOTed by name.
+        It measures about the same as the 19 separate value() calls it
+        replaced: these attributes open the report, so each call was
+        cheap. It stays a PIVOT so the blocked and blocking statements
+        read the same way. The names compare in Latin1_General_BIN2, so
+        they stay case-sensitive the way the XPath was.
+        */
+        SELECT
+            blocked_spid = CONVERT(integer, p.spid),
+            blocked_ecid = CONVERT(integer, p.ecid),
+            wait_time = CONVERT(bigint, p.waittime),
+            transaction_name = CONVERT(sysname, p.transactionname),
+            last_transaction_started = CONVERT(datetime2, p.lasttranstarted),
+            wait_resource = CONVERT(nvarchar(100), p.waitresource),
+            lock_mode = CONVERT(nvarchar(10), p.lockMode),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            transaction_count = CONVERT(integer, p.trancount),
+            client_app = CONVERT(sysname, p.clientapp),
+            host_name = CONVERT(sysname, p.hostname),
+            login_name = CONVERT(sysname, p.loginname),
+            isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+            log_used = CONVERT(bigint, p.logused),
+            clientoption1 = CONVERT(bigint, p.clientoption1),
+            clientoption2 = CONVERT(bigint, p.clientoption2),
+            currentdbname = CONVERT(sysname, p.currentdbname),
+            currentdbid = CONVERT(integer, p.currentdb)
+        FROM
+        (
+            SELECT
+                name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                value = pat.a.value('.', 'nvarchar(1024)')
+            FROM bd.bd.nodes('process[1]/@*') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                waittime,
+                transactionname,
+                lasttranstarted,
+                waitresource,
+                lockMode,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel,
+                logused,
+                clientoption1,
+                clientoption2,
+                currentdbname,
+                currentdb
+            )
+        ) AS p
+    ) AS pa
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     OPTION(RECOMPILE);
 
@@ -3328,37 +3431,37 @@ BEGIN
         database_name =
             COALESCE
             (
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+                NULLIF(pd.database_name, N''),
+                DB_NAME(NULLIF(pd.database_id, 0))
             ),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
-        blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
-        blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+        blocking_spid = pa.blocking_spid,
+        blocking_ecid = pa.blocking_ecid,
         blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
         blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-        wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-        transaction_name = bg.value('(process/@transactionname)[1]', 'sysname'),
-        last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-        last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-        wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
-        lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-        status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bg.value('(process/@priority)[1]', 'integer'),
-        transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-        client_app = bg.value('(process/@clientapp)[1]', 'sysname'),
-        host_name = bg.value('(process/@hostname)[1]', 'sysname'),
-        login_name = bg.value('(process/@loginname)[1]', 'sysname'),
-        isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-        log_used = bg.value('(process/@logused)[1]', 'bigint'),
-        clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
-        currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
-        currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
+        wait_time = pa.wait_time,
+        transaction_name = pa.transaction_name,
+        last_transaction_started = pa.last_transaction_started,
+        last_transaction_completed = pa.last_transaction_completed,
+        wait_resource = pa.wait_resource,
+        lock_mode = pa.lock_mode,
+        status = pa.status,
+        priority = pa.priority,
+        transaction_count = pa.transaction_count,
+        client_app = pa.client_app,
+        host_name = pa.host_name,
+        login_name = pa.login_name,
+        isolation_level = pa.isolation_level,
+        log_used = pa.log_used,
+        clientoption1 = pa.clientoption1,
+        clientoption2 = pa.clientoption2,
+        currentdbname = pa.currentdbname,
+        currentdbid = pa.currentdbid,
         blocking_level = 0,
         sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
@@ -3366,7 +3469,111 @@ BEGIN
     INTO #blocking
     FROM #human_events_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                        THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                        ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                    END
+            FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocking process attributes, PIVOTed by name.
+        blocking-process comes after the blocked process and its stack
+        frames, and each of the 20 separate value() calls read past all
+        of that again, so this is where the one pass saves time. The
+        names compare in Latin1_General_BIN2, so they stay case-sensitive
+        the way the XPath was.
+        */
+        SELECT
+            blocking_spid = CONVERT(integer, p.spid),
+            blocking_ecid = CONVERT(integer, p.ecid),
+            wait_time = CONVERT(bigint, p.waittime),
+            transaction_name = CONVERT(sysname, p.transactionname),
+            last_transaction_started = CONVERT(datetime2, p.lastbatchstarted),
+            last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+            wait_resource = CONVERT(nvarchar(100), p.waitresource),
+            lock_mode = CONVERT(nvarchar(10), p.lockMode),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            transaction_count = CONVERT(integer, p.trancount),
+            client_app = CONVERT(sysname, p.clientapp),
+            host_name = CONVERT(sysname, p.hostname),
+            login_name = CONVERT(sysname, p.loginname),
+            isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+            log_used = CONVERT(bigint, p.logused),
+            clientoption1 = CONVERT(bigint, p.clientoption1),
+            clientoption2 = CONVERT(bigint, p.clientoption2),
+            currentdbname = CONVERT(sysname, p.currentdbname),
+            currentdbid = CONVERT(integer, p.currentdb)
+        FROM
+        (
+            SELECT
+                name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                value = pat.a.value('.', 'nvarchar(1024)')
+            FROM bg.bg.nodes('process[1]/@*') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                waittime,
+                transactionname,
+                lastbatchstarted,
+                lastbatchcompleted,
+                waitresource,
+                lockMode,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel,
+                logused,
+                clientoption1,
+                clientoption2,
+                currentdbname,
+                currentdb
+            )
+        ) AS p
+    ) AS pa
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     OPTION(RECOMPILE);
 
@@ -3735,6 +3942,11 @@ BEGIN
     WHERE b.n = 1
     AND   (b.contentious_object = @object_name
            OR @object_name = N'')
+    /*
+    spids are reused, so one blocking pair can show up again later
+    with the same sort_order. event_time puts those in order, and
+    transaction_id, unique per row with n = 1 above, ends the ties.
+    */
     ORDER BY
         b.sort_order,
         CASE
@@ -3743,7 +3955,9 @@ BEGIN
             ELSE +1
         END,
         b.spid,
-        b.ecid
+        b.ecid,
+        b.event_time,
+        b.transaction_id
     OPTION(RECOMPILE);
 
     SELECT DISTINCT
@@ -3924,6 +4138,7 @@ BEGIN
             ap.*,
             c.statement_start_offset,
             c.statement_end_offset,
+            c.plan_handle,
             c.creation_time,
             c.last_execution_time,
             c.execution_count,
@@ -3966,8 +4181,22 @@ BEGIN
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
+    /*
+    Plans with the same average CPU tie, so the rest of the plan key
+    follows: the statement, its plan, and the report row it came from.
+    */
     ORDER BY
-        ap.avg_worker_time_ms DESC
+        ap.avg_worker_time_ms DESC,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset,
+        ap.plan_handle,
+        ap.database_name,
+        ap.database_id,
+        ap.currentdbname,
+        ap.currentdbid,
+        ap.contentious_object,
+        ap.query_text
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 END;
 
@@ -4796,6 +5025,301 @@ AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;')
                         THEN CONVERT
                              (
                                  nvarchar(max),
+                             CONVERT(nvarchar(max), N'/*
+Parse every report once into a temp table. Sorted for the ROW_NUMBER straight
+from the XML readers, the estimate ran to millions of rows and the insert asked
+for a memory grant of many gigabytes on each fresh compile. The same estimate
+makes this parse go parallel, and serial costs less CPU.
+*/
+SELECT
+    x.*
+INTO #blocking_staging
+FROM
+(
+    SELECT
+        server_name = @@SERVERNAME,
+        report_id = xet.id,
+        event_time =
+            DATEADD
+            (
+                MINUTE,
+                DATEDIFF
+                (
+                    MINUTE,
+                    GETUTCDATE(),
+                    SYSDATETIME()
+                ), oa.c.value(''@timestamp'', ''datetime2'')
+            ),
+        activity = ''blocked'',
+        database_name =
+            COALESCE
+            (
+                NULLIF(pd.database_name, N''''),
+                DB_NAME(NULLIF(pd.database_id, 0))
+            ),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
+        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
+        spid = pa.spid,
+        ecid = pa.ecid,
+        text = bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
+        waittime = pa.waittime,
+        transactionname = pa.transactionname,
+        lasttranstarted = pa.lasttranstarted,
+        wait_resource = pa.wait_resource,
+        lockmode = pa.lockmode,
+        status = pa.status,
+        priority = pa.priority,
+        trancount = pa.trancount,
+        clientapp = pa.clientapp,
+        hostname = pa.hostname,
+        loginname = pa.loginname,
+        isolationlevel = pa.isolationlevel,
+        sqlhandle =
+            CONVERT
+            (
+                varbinary(64),
+                bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
+                1
+            ),
+        /* each #human_events_xml_internal row is this one event already, so no second copy */
+        process_report = xet.human_events_xml
+    FROM #human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value(''@name'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value(''@name'', ''sysname'') IN (N''resource_owner_type'')
+                        THEN d.d.value(''(text)[1]'', ''nvarchar(256)'')
+                        ELSE d.d.value(''(value/text())[1]'', ''nvarchar(256)'')
+                    END
+            FROM oa.c.nodes(''data[@name != "blocked_process"]'') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocked process attributes, PIVOTed by name.
+        It measures about the same as the 14 separate value() calls it
+        replaced: these attributes open the report, so each call was
+        cheap. It stays a PIVOT so the blocked and blocking statements
+        read the same way. The names compare in Latin1_General_BIN2, so
+        they stay case-sensitive the way the XPath was.
+        */
+        SELECT
+            spid = CONVERT(integer, p.spid),
+            ecid = CONVERT(integer, p.ecid),
+            waittime = CONVERT(bigint, p.waittime),
+            transactionname = CONVERT(sysname, p.transactionname),
+            lasttranstarted = CONVERT(datetime2, p.lasttranstarted),
+            wait_resource = CONVERT(nvarchar(100), p.waitresource),
+            lockmode = CONVERT(nvarchar(10), p.lockMode),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            trancount = CONVERT(integer, p.trancount),
+            clientapp = CONVERT(sysname, p.clientapp),
+            hostname = CONVERT(sysname, p.hostname),
+            loginname = CONVERT(sysname, p.loginname),
+            isolationlevel = CONVERT(nvarchar(50), p.isolationlevel)
+        FROM
+        (
+            SELECT
+                name = pat.a.value(''local-name(.)'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value = pat.a.value(''.'', ''nvarchar(1024)'')
+            FROM bd.bd.nodes(''process[1]/@*'') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                waittime,
+                transactionname,
+                lasttranstarted,
+                waitresource,
+                lockMode,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel
+            )
+        ) AS p
+    ) AS pa
+    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+
+    UNION ALL
+
+    SELECT
+        server_name = @@SERVERNAME,
+        report_id = xet.id,
+        event_time =
+            DATEADD
+            (
+                MINUTE,
+                DATEDIFF
+                (
+                    MINUTE,
+                    GETUTCDATE(),
+                    SYSDATETIME()
+                ),
+                oa.c.value(''@timestamp'', ''datetime2'')
+            ),
+        activity = ''blocking'',
+        database_name =
+            COALESCE
+            (
+                NULLIF(pd.database_name, N''''),
+                DB_NAME(NULLIF(pd.database_id, 0))
+            ),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
+        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
+        spid = pa.spid,
+        ecid = pa.ecid,
+        text = bg.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
+        waittime = NULL,
+        transactionname = NULL,
+        lasttranstarted = NULL,
+        wait_resource = NULL,
+        lockmode = NULL,
+        status = pa.status,
+        priority = pa.priority,
+        trancount = pa.trancount,
+        clientapp = pa.clientapp,
+        hostname = pa.hostname,
+        loginname = pa.loginname,
+        isolationlevel = pa.isolationlevel,
+        sqlhandle = NULL,
+        /* each #human_events_xml_internal row is this one event already, so no second copy */
+        process_report = xet.human_events_xml
+    FROM #human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value(''@name'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value(''@name'', ''sysname'') IN (N''resource_owner_type'')
+                        THEN d.d.value(''(text)[1]'', ''nvarchar(256)'')
+                        ELSE d.d.value(''(value/text())[1]'', ''nvarchar(256)'')
+                    END
+            FROM oa.c.nodes(''data[@name != "blocked_process"]'') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocking process attributes, PIVOTed by name.
+        blocking-process comes after the blocked process and its stack
+        frames, and each of the 9 separate value() calls read past all
+        of that again, so this is where the one pass saves time. The
+        names compare in Latin1_General_BIN2, so they stay case-sensitive
+        the way the XPath was.
+        */
+        SELECT
+            spid = CONVERT(integer, p.spid),
+            ecid = CONVERT(integer, p.ecid),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            trancount = CONVERT(integer, p.trancount),
+            clientapp = CONVERT(sysname, p.clientapp),
+            hostname = CONVERT(sysname, p.hostname),
+            loginname = CONVERT(sysname, p.loginname),
+            isolationlevel = CONVERT(nvarchar(50), p.isolationlevel)
+        FROM
+        (
+            SELECT
+                name = pat.a.value(''local-name(.)'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value = pat.a.value(''.'', ''nvarchar(1024)'')
+            FROM bg.bg.nodes(''process[1]/@*'') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel
+            )
+        ) AS p
+    ) AS pa
+    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+) AS x
+OPTION(MAXDOP 1);
+
+') +
                              N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +
                              N'( server_name, event_time, activity, database_name, database_id, object_id, ' + @nc10 +
                              N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + @nc10 +
@@ -4808,6 +5332,13 @@ SELECT server_name, event_time, activity, database_name, database_id, object_id,
        trancount, clientapp, hostname, loginname, isolationlevel, sqlhandle, process_report
 FROM
 (
+    /*
+    Keep the first report of each episode. ORDER BY the partition
+    columns themselves kept an arbitrary one; event_time, then the
+    staging row id, picks the same row every time. The partition
+    includes the database and object, the same key as the NOT EXISTS
+    below, so a transaction blocked on two objects in one pass logs both.
+    */
     SELECT
         x.*,
         x =
@@ -4815,138 +5346,49 @@ FROM
                 OVER
                 (
                     PARTITION BY
+                        x.database_id,
+                        x.object_id,
                         x.spid,
                         x.ecid,
                         x.transaction_id,
                         x.activity
                     ORDER BY
-                        x.spid,
-                        x.ecid,
-                        x.transaction_id,
-                        x.activity
+                        x.event_time,
+                        x.report_id
                 )
-    FROM
-    (
-        SELECT
-            server_name = @@SERVERNAME,
-            event_time =
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        GETUTCDATE(),
-                        SYSDATETIME()
-                    ), oa.c.value(''@timestamp'', ''datetime2'')
-                ),
-            activity = ''blocked'',
-            database_name =
-                COALESCE
-                (
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
-                ),
-            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
-            monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
-            spid = bd.value(''(process/@spid)[1]'', ''integer''),
-            ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
-            text = bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
-            waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
-            transactionname = bd.value(''(process/@transactionname)[1]'', ''sysname''),
-            lasttranstarted = bd.value(''(process/@lasttranstarted)[1]'', ''datetime2''),
-            wait_resource = bd.value(''(process/@waitresource)[1]'', ''nvarchar(100)''),
-            lockmode = bd.value(''(process/@lockMode)[1]'', ''nvarchar(10)''),
-            status = bd.value(''(process/@status)[1]'', ''nvarchar(10)''),
-            priority = bd.value(''(process/@priority)[1]'', ''integer''),
-            trancount = bd.value(''(process/@trancount)[1]'', ''integer''),
-            clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
-            hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
-            loginname = bd.value(''(process/@loginname)[1]'', ''sysname''),
-            isolationlevel = bd.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
-            sqlhandle =
-                CONVERT
-                (
-                    varbinary(64),
-                    bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
-                    1
-                ),
-            process_report = oa.c.query(''.'')
-        FROM #human_events_xml_internal AS xet
-        OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-        OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
-        WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-
-        UNION ALL
-
-        SELECT
-            server_name = @@SERVERNAME,
-            event_time =
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        GETUTCDATE(),
-                        SYSDATETIME()
-                    ),
-                    oa.c.value(''@timestamp'', ''datetime2'')
-                ),
-            activity = ''blocking'',
-            database_name =
-                COALESCE
-                (
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
-                ),
-            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
-            monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
-            spid = bg.value(''(process/@spid)[1]'', ''integer''),
-            ecid = bg.value(''(process/@ecid)[1]'', ''integer''),
-            text = bg.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
-            waittime = NULL,
-            transactionname = NULL,
-            lasttranstarted = NULL,
-            wait_resource = NULL,
-            lockmode = NULL,
-            status = bg.value(''(process/@status)[1]'', ''nvarchar(10)''),
-            priority = bg.value(''(process/@priority)[1]'', ''integer''),
-            trancount = bg.value(''(process/@trancount)[1]'', ''integer''),
-            clientapp = bg.value(''(process/@clientapp)[1]'', ''sysname''),
-            hostname = bg.value(''(process/@hostname)[1]'', ''sysname''),
-            loginname = bg.value(''(process/@loginname)[1]'', ''sysname''),
-            isolationlevel = bg.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
-            sqlhandle = NULL,
-            process_report = oa.c.query(''.'')
-        FROM #human_events_xml_internal AS xet
-        OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-        OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
-        WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-    ) AS x
+    FROM #blocking_staging AS x
 ) AS x
 WHERE NOT EXISTS
 (
     SELECT
         1/0
-    FROM ' + @object_name_check + N' AS x2
+    FROM ') + @object_name_check + N' AS x2
     WHERE x.database_id = x2.database_id
     AND   x.object_id = x2.object_id
     AND   x.transaction_id = x2.transaction_id
     AND   x.spid = x2.spid
     AND   x.ecid = x2.ecid
-    AND   x.clientapp = x2.client_app
-    AND   x.hostname = x2.host_name
-    AND   x.loginname = x2.login_name
+    /*
+    NULL-safe: parallel workers (ecid > 0) carry no loginname, so =
+    never matched them, and every later report of the same worker
+    was inserted again as a new row.
+    The staged names take the collation of this database, so they get
+    COLLATE DATABASE_DEFAULT: without it, an output database with a
+    different collation fails here with Msg 468.
+    */
+    AND   (x.clientapp COLLATE DATABASE_DEFAULT = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname COLLATE DATABASE_DEFAULT = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname COLLATE DATABASE_DEFAULT = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
 )
 AND x.x = 1;
 
+/*
+One row per episode with its largest wait, so a join that matched
+several reports no longer set wait_time from whichever came last.
+The same NULL-safe compare as the insert, and wait_time only grows.
+The blocked rows come from the staging table, so the reports are not
+parsed a second time.
+*/
 UPDATE x2
     SET
         x2.wait_time = x.waittime
@@ -4954,32 +5396,38 @@ FROM ' + @object_name_check + N' AS x2
 JOIN
 (
     SELECT
-        server_name = @@SERVERNAME,
-        activity = ''blocked'',
-        database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-        object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-        transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
-        spid = bd.value(''(process/@spid)[1]'', ''integer''),
-        ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
-        waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
-        clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
-        hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
-        loginname = bd.value(''(process/@loginname)[1]'', ''sysname'')
-    FROM #human_events_xml_internal AS xet
-    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
-    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+        b.database_id,
+        b.object_id,
+        b.transaction_id,
+        b.spid,
+        b.ecid,
+        b.clientapp,
+        b.hostname,
+        b.loginname,
+        waittime = MAX(b.waittime)
+    FROM #blocking_staging AS b
+    WHERE b.activity = N''blocked''
+    GROUP BY
+        b.database_id,
+        b.object_id,
+        b.transaction_id,
+        b.spid,
+        b.ecid,
+        b.clientapp,
+        b.hostname,
+        b.loginname
 ) AS x
     ON    x.database_id = x2.database_id
     AND   x.object_id = x2.object_id
     AND   x.transaction_id = x2.transaction_id
     AND   x.spid = x2.spid
     AND   x.ecid = x2.ecid
-    AND   x.clientapp = x2.client_app
-    AND   x.hostname = x2.host_name
-    AND   x.loginname = x2.login_name;
-'                                ))
+    AND   (x.clientapp COLLATE DATABASE_DEFAULT = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname COLLATE DATABASE_DEFAULT = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname COLLATE DATABASE_DEFAULT = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
+WHERE x.waittime > x2.wait_time
+OR    (x.waittime IS NOT NULL AND x2.wait_time IS NULL);
+'                                )
                        WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]quer%' /*Queries!*/
                        THEN
                             CONVERT
