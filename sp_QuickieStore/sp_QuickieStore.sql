@@ -21087,10 +21087,11 @@ BEGIN
                 CASE
                     /*
                     A table variable cannot take CREATE INDEX: the index goes in its DECLARE.
-                    Before SQL Server 2019 the inline index cannot take INCLUDE (Msg 102), so there the
-                    include columns go at the end of the key, and the temp table alternative is a separate
-                    CREATE INDEX ... INCLUDE. A table-valued parameter looks the same in the plan, and its
-                    index goes in its table type.
+                    Before SQL Server 2019 the inline index cannot take INCLUDE (Msg 102), and the include
+                    columns cannot go in the key (a max column fails with Msg 1919, a long one fails on
+                    insert with Msg 1946). So there the inline index lists the seek columns only, and the
+                    temp table alternative is a separate CREATE INDEX ... INCLUDE. A table-valued parameter
+                    looks the same in the plan, and its index goes in its table type.
                     */
                     WHEN LEFT(sk.col_table, 1) = N'@'
                     OR   LEFT(sk.col_table, 2) = N'[@'
@@ -21098,14 +21099,7 @@ BEGIN
                         N'The optimizer builds a temporary index on the table variable ' + st.table_name +
                         N' every time this runs. A table variable cannot take CREATE INDEX: declare it with the index, INDEX ' +
                         QUOTENAME(N'ix_' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'') + N'_spool') +
-                        N' (' + ISNULL(kl.key_list, N'<seek columns>') +
-                        CASE
-                            WHEN il.include_list IS NOT NULL
-                            AND  @product_version < 15
-                            AND  @azure = 0
-                            THEN N', ' + il.include_list
-                            ELSE N''
-                        END + N')' +
+                        N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
                         CASE
                             WHEN il.include_list IS NOT NULL
                             AND  NOT (@product_version < 15 AND @azure = 0)
@@ -21118,7 +21112,7 @@ BEGIN
                             AND  @product_version < 15
                             AND  @azure = 0
                             THEN
-                                N', or use a temp table and CREATE INDEX ' +
+                                N'. That index covers the seek columns only, because an inline index cannot INCLUDE before SQL Server 2019. To cover the other columns, use a temp table and CREATE INDEX ' +
                                 QUOTENAME(N'ix_' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'') + N'_spool') +
                                 N' ON ' + QUOTENAME(N'#' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'')) +
                                 N' (' + ISNULL(kl.key_list, N'<seek columns>') + N') INCLUDE (' + il.include_list + N');'

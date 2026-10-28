@@ -2122,6 +2122,12 @@ DECLARE @tv1 TABLE (a integer NOT NULL, b integer NOT NULL);
 INSERT @tv1 (a, b) SELECT h.a, h.b FROM dbo.pp_heap AS h;
 SELECT /*pp_r1tv*/ @j = MAX(x.m) FROM dbo.pp_small AS s CROSS APPLY (SELECT m = MAX(t.b) FROM @tv1 AS t WHERE t.a = s.a) AS x WHERE s.id < 2000 OPTION (LOOP JOIN, RECOMPILE);
 
+/* 1: the same, but the spool also outputs an nvarchar(max) and an nvarchar(1000) column. Before SQL Server 2019 those
+   cannot go in the inline key (Msg 1919 for max, Msg 1945 and then Msg 1946 on insert for the long one) */
+DECLARE @tv2 TABLE (a integer NOT NULL, b integer NOT NULL, c nvarchar(max) NULL, w nvarchar(1000) NULL);
+INSERT @tv2 (a, b, c, w) SELECT h.a, h.b, REPLICATE(N'c', 10), N'w' FROM dbo.pp_heap AS h;
+SELECT /*pp_r1tvmax*/ @j = SUM(LEN(x.c) + LEN(x.w)) FROM dbo.pp_small AS s CROSS APPLY (SELECT t.c, t.w FROM @tv2 AS t WHERE t.a = s.a AND t.b > s.id) AS x WHERE s.id < 2000 OPTION (LOOP JOIN, FORCE ORDER, RECOMPILE);
+
 /* 8, negative: the Filter compares a column with an aggregate (an Expr another operator
    computed), so it cannot move down to the scan */
 SELECT /*pp_r8expr*/ @i = s.id FROM dbo.pp_small AS s WHERE s.b <> ISNULL((SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a), 0);
@@ -2463,7 +2469,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r4self", "r5nn", "r5ne",
-            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r8semi", "r8semiL", "r8val", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r8semi", "r8semiL", "r8val", "r1tv", "r1tvmax", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2564,7 +2570,7 @@ def plan_parsing_tests(server, password, R):
         # range seek that also outputs a computed column (r1b). The harness
         # cuts wide columns at 200 characters, so read these at full width.
         out, combined, found_full = pp_run(server, password,
-                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r4self"], ids["r1tv"], ids["r2c"], ids["r8mix"]]
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r4self"], ids["r1tv"], ids["r1tvmax"], ids["r2c"], ids["r8mix"]]
                                            + ([ids["r8bat2"]] if "r8bat2" in ids else []),
                                            width=8000)
         found_full = found_full or []
@@ -2585,55 +2591,72 @@ def plan_parsing_tests(server, password, R):
                         not errs, str(errs[:1]) + " " + stmt)
 
         # Rule 1 on a table variable: the index goes in the DECLARE, not CREATE INDEX ... ON @t.
-        # Before SQL Server 2019 an inline INDEX cannot take INCLUDE (Msg 102), so there the
-        # include column goes at the end of the key and the temp table alternative is a
-        # separate CREATE INDEX ... INCLUDE. Every statement the text suggests must parse.
-        tv_text = full_text("r1tv", 1)
+        # Before SQL Server 2019 an inline INDEX cannot take INCLUDE (Msg 102), and the include columns cannot go
+        # in the key (an nvarchar(max) column is Msg 1919, a long one fails on insert), so there the inline index
+        # lists the seek columns only and the temp table alternative is a separate CREATE INDEX ... INCLUDE.
+        # Every statement the text suggests is run for real (not parse only), so binding errors show.
         vout, _ = _sqlcmd(server, password,
                           "SET NOCOUNT ON; SELECT 'VER:' + CONVERT(varchar(10), "
                           "SERVERPROPERTY('ProductMajorVersion'));")
         vm = re.search(r"VER:(\d+)", vout)
         server_major = int(vm.group(1)) if vm else 99
-        R.check(G, "rule 1 (r1tv) suggests an inline INDEX for the table variable, not CREATE INDEX",
-                "INDEX [ix_tv1_spool] ([a]" in tv_text and "in its DECLARE" in tv_text
-                and "CREATE INDEX [" not in tv_text.replace(", or use a temp table and CREATE INDEX [", "")
-                and " ON @" not in tv_text,
-                tv_text[:400])
-        inline = re.search(r"INDEX \[ix_tv1_spool\] \([^)]*\)(?: INCLUDE \([^)]*\))?", tv_text)
-        if server_major < 15:
-            R.check(G, "rule 1 (r1tv) on SQL Server before 2019 puts the include column in the key, "
-                       "no inline INCLUDE",
-                    inline is not None and inline.group(0) == "INDEX [ix_tv1_spool] ([a], [b])"
-                    and "INCLUDE" not in tv_text.split("in its DECLARE")[0],
-                    tv_text[:400])
-            temp_ix = re.search(r"CREATE INDEX \[ix_tv1_spool\] ON \[#tv1\] \(\[a\]\) INCLUDE \(\[b\]\);",
-                                tv_text)
-            R.check(G, "rule 1 (r1tv) on SQL Server before 2019 gives the temp table a separate "
-                       "CREATE INDEX ... INCLUDE",
-                    temp_ix is not None, tv_text[:400])
-        else:
-            R.check(G, "rule 1 (r1tv) on SQL Server 2019 and up keeps INCLUDE in the inline index",
-                    inline is not None
-                    and inline.group(0) == "INDEX [ix_tv1_spool] ([a]) INCLUDE ([b])",
-                    tv_text[:400])
+
+        def check_tv_advice(marker, cols, seek, other, long_cols):
+            """Run the advice of a rule 1 table variable finding: the DECLARE with the inline index, and (before
+            SQL Server 2019) the temp table CREATE TABLE + CREATE INDEX ... INCLUDE. long_cols are columns that
+            must stay out of the inline key. Returns the finding text."""
+            text = full_text(marker, 1)
+            tvn = "tv2" if marker.endswith("max") else "tv1"
+            R.check(G, "rule 1 (%s) suggests an inline INDEX for the table variable, not CREATE INDEX" % marker,
+                    "INDEX [ix_%s_spool] (%s" % (tvn, seek) in text
+                    and "in its DECLARE" in text
+                    and "CREATE INDEX [" not in text.replace(" and CREATE INDEX [", "")
+                    and " ON @" not in text,
+                    text[:400])
+            inline = re.search(r"INDEX \[ix_%s_spool\] \([^)]*\)(?: INCLUDE \([^)]*\))?" % tvn, text)
+            if server_major < 15:
+                R.check(G, "rule 1 (%s) before SQL Server 2019 lists the seek columns only in the inline index" % marker,
+                        inline is not None and inline.group(0) == "INDEX [ix_%s_spool] (%s)" % (tvn, seek)
+                        and "INCLUDE" not in text.split("in its DECLARE")[0]
+                        and not any(c in inline.group(0) for c in long_cols),
+                        text[:500])
+                temp_ix = re.search(r"CREATE INDEX \[ix_%s_spool\] ON \[#%s\] \(%s\) INCLUDE \(%s\);"
+                                    % (tvn, tvn, re.escape(seek), re.escape(other)), text)
+                R.check(G, "rule 1 (%s) before SQL Server 2019 gives the temp table a separate "
+                           "CREATE INDEX ... INCLUDE" % marker,
+                        temp_ix is not None, text[:500])
+            else:
+                R.check(G, "rule 1 (%s) on SQL Server 2019 and up keeps INCLUDE in the inline index" % marker,
+                        inline is not None
+                        and inline.group(0) == "INDEX [ix_%s_spool] (%s) INCLUDE (%s)" % (tvn, seek, other),
+                        text[:500])
+            if inline:
+                perr, perr2 = _sqlcmd(server, password,
+                                      "DECLARE @%s TABLE (%s, %s);" % (tvn, cols, inline.group(0)),
+                                      database=PP_DB)
+                errs = pp_sql_errors(perr + "\n" + perr2)
+                R.check(G, "rule 1 (%s) inline table variable INDEX runs on this version" % marker,
+                        not errs, str(errs[:1]) + " " + inline.group(0))
+            if server_major < 15:
+                temp_stmt = re.search(r"CREATE INDEX [^;]*;", text)
+                R.check(G, "rule 1 (%s) has a temp table CREATE INDEX to run" % marker,
+                        temp_stmt is not None, text[:400])
+                if temp_stmt:
+                    perr, perr2 = _sqlcmd(server, password,
+                                          "CREATE TABLE [#%s] (%s); %s DROP TABLE [#%s];"
+                                          % (tvn, cols, temp_stmt.group(0), tvn),
+                                          database=PP_DB)
+                    errs = pp_sql_errors(perr + "\n" + perr2)
+                    R.check(G, "rule 1 (%s) temp table CREATE INDEX ... INCLUDE runs on this version" % marker,
+                            not errs, str(errs[:1]) + " " + temp_stmt.group(0))
+            return text
+
+        tv_text = check_tv_advice("r1tv", "a integer NOT NULL, b integer NOT NULL", "[a]", "[b]", ())
         R.check(G, "rule 1 (r1tv) says a table-valued parameter takes the index in its table type",
                 "table-valued parameter" in tv_text and "table type" in tv_text, tv_text[:400])
-        if inline:
-            perr, perr2 = _sqlcmd(server, password,
-                                  "SET PARSEONLY ON; DECLARE @tv1 TABLE (a integer NOT NULL, "
-                                  "b integer NOT NULL, " + inline.group(0) + ");",
-                                  database=PP_DB)
-            errs = pp_sql_errors(perr + "\n" + perr2)
-            R.check(G, "rule 1 (r1tv) inline table variable INDEX parses on this version",
-                    not errs, str(errs[:1]) + " " + inline.group(0))
-        if server_major < 15:
-            temp_stmt = re.search(r"CREATE INDEX [^;]*;", tv_text)
-            if temp_stmt:
-                perr, perr2 = _sqlcmd(server, password,
-                                      "SET PARSEONLY ON; " + temp_stmt.group(0), database=PP_DB)
-                errs = pp_sql_errors(perr + "\n" + perr2)
-                R.check(G, "rule 1 (r1tv) temp table CREATE INDEX ... INCLUDE parses on this version",
-                        not errs, str(errs[:1]) + " " + temp_stmt.group(0))
+        # The spool also outputs an nvarchar(max) and an nvarchar(1000) column: they are INCLUDE columns, never key
+        check_tv_advice("r1tvmax", "a integer NOT NULL, b integer NOT NULL, c nvarchar(max) NULL, w nvarchar(1000) NULL",
+                        "[a], [b]", "[c], [w]", ("[c]", "[w]"))
 
         # Rule 4 lists the columns it fetches with commas, and the column its
         # own predicate reads (b) after "filters on"

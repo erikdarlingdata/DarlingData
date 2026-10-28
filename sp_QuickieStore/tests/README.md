@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 354 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 359 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -65,7 +65,7 @@ each run *executes* what it built:
   PhysicalOp/LogicalOp) from its Query Store plan. Regression fixtures cover
   the review findings: rule 1 must suggest the inline `INDEX` for a spool on a table variable, and must script a valid `CREATE INDEX` (bracketed,
   comma separated, no duplicates, no `Expr` columns, parses under
-  `PARSEONLY`), rule 4 must separate the fetched columns and name the column its own predicate reads, and stay quiet for a lookup into a system table, rule 5 must fire for a
+  `PARSEONLY`; the table variable advice is run for real), rule 4 must separate the fetched columns and name the column its own predicate reads, and stay quiet for a lookup into a system table, rule 5 must fire for a
   `NOT NULL` key `NOT IN` a nullable indexed column (the `IS NULL` test is the
   seek or its residual predicate), and stay quiet for `NOT IN` over `NOT NULL`
   keys, for `NOT EXISTS` with a time range on a nullable column, and for a
@@ -79,7 +79,7 @@ each run *executes* what it built:
   an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its
   phase (`10 (populate)`), the phase has that operator, and the `KEYSET`
   lookup finding names the right table, and in a self-join does not list the outer alias's column. Rule 1 on a table variable must
-  parse as suggested: before SQL Server 2019 with the include column at the end of the key. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
+  run as suggested (the `DECLARE`, and before SQL Server 2019 the temp table `CREATE TABLE` + `CREATE INDEX ... INCLUDE`): before SQL Server 2019 the inline index lists the seek columns only, also for a spool that outputs `nvarchar(max)` and `nvarchar(1000)` columns. Rule 8 must still fire for a late `Filter` that compares a column with a `VALUES` list value. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
   `MAXDOP 1`, because a small machine puts a spool over the scan. Rules
   15 (needs a linked server), 17 (needs Standard Edition) and 19 (needs a
   compile of 1 second or more) are not covered.
