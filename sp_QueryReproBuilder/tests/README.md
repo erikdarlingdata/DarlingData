@@ -165,7 +165,9 @@ once) after editing it.
 ## CI
 
 `.github/workflows/sql-tests.yml` runs `run_tests.py` on SQL Server 2017, 2019,
-2022, and 2025 for every pull request into `dev` or `main`. It also runs for every push to
-`dev` that changes SQL files, test files, `Install-All`, or the workflow files.
+2022, and 2025 for every pull request into `main`. A pull request into `dev` runs it
+only when it changes a file in `sp_QueryReproBuilder/` (not Markdown),
+`Install-All/`, `.github/sql/`, or the workflow file. It also runs for
+every push to `dev` that changes SQL files, test files, `Install-All`, or the workflow files.
 `mutation_check.py` does not run in CI. Run it yourself before shipping
 a change to `sp_QueryReproBuilder.sql`.

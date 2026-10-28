@@ -212,7 +212,9 @@ exercised.
 ## Wired into CI
 
 `.github/workflows/sql-tests.yml` runs this harness on every push to `dev` and
-on every pull request into `dev` or `main`. It runs once for each SQL Server
+on every pull request into `main`. A pull request into `dev` runs it only when
+it changes a file in `sp_HumanEvents/` (not Markdown),
+`Install-All/`, `.github/sql/`, or the workflow file. It runs once for each SQL Server
 version in the build matrix (2017, 2019, 2022, 2025). Each matrix job gets its
 own throwaway `mcr.microsoft.com/mssql/server` container and discards it
 afterward. No shared or persistent instance is involved, so nothing else can
