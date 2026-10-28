@@ -21,7 +21,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `346` (`347` on SQL Server 2017, which skips the rule 14 check at
+password). Expect `359` (`360` on SQL Server 2017, which skips the rule 14 check at
 compatibility level 150 and up but runs two more rule 1 checks, because before SQL Server 2019 the
 suggested table variable index has no inline INCLUDE).
 
