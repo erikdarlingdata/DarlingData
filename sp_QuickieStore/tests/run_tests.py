@@ -2150,6 +2150,10 @@ UPDATE /*pp_r8upd*/ dbo.pp_upd SET b = 1 WHERE a < 800 AND n IS NULL OPTION (QUE
 SELECT /*pp_r8semi*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3;
 SELECT /*pp_r8semiL*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3 OPTION (LOOP JOIN);
 
+/* 8, positive: the Filter compares a table column with a value from a VALUES list (UnionNNNN, which a Constant Scan
+   outputs and the joins above only pass up). It is a late Filter over the eager index spool, so rule 8 still fires. */
+SELECT /*pp_r8val*/ @c = MAX(y.c) FROM (SELECT c = (SELECT COUNT_BIG(*) FROM dbo.pp_heap AS h WHERE h.a >= d.d AND h.b >= r.r) FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24)) AS d (d) CROSS JOIN (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24)) AS r (r)) AS y OPTION (LOOP JOIN);
+
 /* 0, negative: a plan that is only an IF condition */
 EXECUTE dbo.pp_ifproc;
 """
@@ -2459,7 +2463,7 @@ def plan_parsing_tests(server, password, R):
         ids = pp_markers(server, password)
         want = {c[2] for c in PP_RULE_CASES} | {
             "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r4self", "r5nn", "r5ne",
-            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r8semi", "r8semiL", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r8semi", "r8semiL", "r8val", "r1tv", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
             "r5pk2", "r5tr", "r5wild", "r10tv"}
         missing = sorted(want - set(ids))
         R.check(G, "every fixture query is in Query Store", not missing,
@@ -2707,6 +2711,20 @@ def plan_parsing_tests(server, password, R):
         quiet("r8upd", 8, "rule 8 stays quiet for the index key change Filter over a Split in a wide UPDATE")
         quiet("r8semi", 8, "rule 8 stays quiet for a filter on a Merge Join semi join probe result")
         quiet("r8semiL", 8, "rule 8 stays quiet for a filter on a Nested Loops semi join probe result")
+        # The VALUES outer side passes UnionNNNN columns up through the joins; only a column no input outputs is a join's own
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'VALFILTER:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                         "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                         "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                         "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                         "//RelOp[@PhysicalOp = \"Filter\"][Filter/Predicate/ScalarOperator[contains(@ScalarString, \"[Union\")]]"
+                         "[Filter/RelOp/@PhysicalOp = \"Index Spool\"]') = 1;"
+                         % ids["r8val"], database=PP_DB)
+        R.check(G, "VALUES fixture has a Filter on a Union column over an Index Spool",
+                "VALFILTER:1" in out, out[:200] + pp_operators(server, password, ids["r8val"]))
+        R.check(G, "rule 8 fires for a late filter that compares a column with a VALUES list value",
+                pp_has(found, ids["r8val"], 8),
+                "no row" + pp_operators(server, password, ids["r8val"]))
         mix_text = full_text("r8mix", 8)
         R.check(G, "rule 8 fires for a mixed predicate and says part of it reads a window result",
                 pp_has(found, ids["r8mix"], 8) and "[b]=(3)" in mix_text

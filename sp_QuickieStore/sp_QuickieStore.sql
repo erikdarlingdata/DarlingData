@@ -19298,6 +19298,8 @@ BEGIN
         A batch mode Window Aggregate does the same for COUNT_BIG(*) OVER (...): its DefinedValues are empty.
         Only that operator can make such an Expr, so it counts as a result of the operator, like an aggregate:
         a Filter on it cannot run earlier.
+        An Expr that an input RelOp also outputs is only passed through (a Constant Scan or Concatenation
+        outputs the UnionNNNN columns of VALUES and UNION ALL without a DefinedValue), so it does not count.
         */
         WITH XMLNAMESPACES
         (
@@ -19353,7 +19355,8 @@ BEGIN
                       AND   jo.physical_op IN (N'Nested Loops', N'Merge Join', N'Hash Match', N'Adaptive Join', N'Window Aggregate')
                   )
         ) AS ps
-        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Nested Loops" or @PhysicalOp = "Merge Join" or @PhysicalOp = "Hash Match" or @PhysicalOp = "Adaptive Join" or @PhysicalOp = "Window Aggregate"]/OutputList/ColumnReference[not(@Table)]') AS c (col)
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Nested Loops" or @PhysicalOp = "Merge Join" or @PhysicalOp = "Hash Match" or @PhysicalOp = "Adaptive Join" or @PhysicalOp = "Window Aggregate"]') AS r (rel)
+        CROSS APPLY r.rel.nodes(N'OutputList/ColumnReference[not(@Table)]') AS c (col)
         CROSS APPLY
         (
             SELECT
@@ -19371,6 +19374,7 @@ BEGIN
                   AND   xd.qp_id = ps.qp_id
                   AND   xd.expr_name = cn.expr_name
               )
+        AND   r.rel.exist(N'*/RelOp/OutputList/ColumnReference[not(@Table)][@Column = sql:column("cn.expr_name")]') = 0
         OPTION(RECOMPILE, MAXDOP 1);
 
         WITH XMLNAMESPACES
