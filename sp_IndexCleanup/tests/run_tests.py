@@ -12,6 +12,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 
 def _sqlcmd_prefix():
@@ -140,7 +141,15 @@ def run_tests(rows, findings=()):
     """
     results = []
 
+    timing = {"t0": None, "group": None}
+
     def assert_test(group, name, condition, detail=""):
+        # Elapsed marker, printed when the group changes (flushed, so CI logs show it live).
+        if timing["t0"] is None:
+            timing["t0"] = time.monotonic()
+        if group != timing["group"]:
+            timing["group"] = group
+            print("[timing] +%.1fs entering %s" % (time.monotonic() - timing["t0"], group), flush=True)
         results.append({
             "group": group,
             "name": name,

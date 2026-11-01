@@ -47,6 +47,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -254,7 +255,15 @@ def run_tests(rows, script_results):
     """Run all assertions and return results."""
     results = []
 
+    timing = {"t0": None, "group": None}
+
     def assert_test(group, name, condition, detail=""):
+        # Elapsed marker, printed when the group changes (flushed, so CI logs show it live).
+        if timing["t0"] is None:
+            timing["t0"] = time.monotonic()
+        if group != timing["group"]:
+            timing["group"] = group
+            print("[timing] +%.1fs entering %s" % (time.monotonic() - timing["t0"], group), flush=True)
         results.append({
             "group": group,
             "name": name,

@@ -54,6 +54,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 
 
 # The Cost Threshold for Parallelism check (check_id 1004) fires when CTFP is
@@ -244,8 +245,19 @@ def results_header_columns_ok(stdout):
 class Results:
     def __init__(self):
         self.items = []
+        self._t0 = None
+        self._group = None
+
+    def _mark(self, group):
+        # Elapsed marker, printed when the group changes (flushed, so CI logs show it live).
+        if self._t0 is None:
+            self._t0 = time.monotonic()
+        if group != self._group:
+            self._group = group
+            print("[timing] +%.1fs entering %s" % (time.monotonic() - self._t0, group), flush=True)
 
     def check(self, group, name, condition, detail=""):
+        self._mark(group)
         self.items.append({
             "group": group,
             "name": name,

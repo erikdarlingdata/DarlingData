@@ -6,6 +6,7 @@ Welcome aboard! Thanks for taking the time to read this. I'll try to keep it sho
 * [Requesting Features](#requesting-features)
 * [Working On Code](#working-on-code)
 * [Code Standards](#code-standards)
+* [Optional Local Test Check](#optional-local-test-check)
 
 If you're new to GitHub, here's an excellent guide on contributing by Rob Sewell: 
  * [How to fork a GitHub repository and contribute to an open source project](https://blog.robsewell.com/blog/how-to-fork-a-github-repository-and-contribute-to-an-open-source-project/)
@@ -65,3 +66,24 @@ Please make sure that you fork the **dev** branch, and all pull requests point t
 
 [Github issues list]:https://github.com/erikdarlingdata/DarlingData/issues
 [closed issues list]: https://github.com/erikdarlingdata/DarlingData/issues?q=is%3Aissue+is%3Aclosed
+
+## Optional Local Test Check
+
+The repo has an optional pre-push hook. Before a push, it runs the test harness for each stored procedure folder that the push changes. It is off by default. If you do not turn it on, nothing changes for you.
+
+Use a throwaway SQL Server for this check. The harnesses create and drop scratch databases, and some change server settings.
+
+To turn it on, follow these steps:
+
+1. Install Python 3 and the go-based `sqlcmd`, and put both on your `PATH`.
+2. Set `DARLINGDATA_TEST_SERVER` to the host name of your test server. The hook logs in as `sa`.
+3. Set `DARLINGDATA_TEST_PASSWORD` to the `sa` password. Do not put the password in a file in the repo.
+4. In your clone, run `git config core.hooksPath .githooks`.
+
+If either variable is not set, the hook prints one line and the push goes ahead. If you need extra `sqlcmd` options, such as `-C -N disable`, set `SQLCMD_CONN_ARGS`. To use a different `sqlcmd` binary, set `SQLCMD_BIN`.
+
+On each push, the hook installs the changed procedure files into `master` on the test server. Then it runs the harness for each changed folder. A change to a Markdown file does not start a harness. A folder with no harness is skipped. If a harness fails, the push stops.
+
+Only one hook run can use a given server at a time. If another run holds the server, the hook waits. After 15 minutes, it skips the check. To change the wait, set `DARLINGDATA_LOCK_WAIT` to a number of seconds.
+
+To skip the check for one push, run `git push --no-verify`.
