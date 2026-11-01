@@ -1,0 +1,211 @@
+#!/bin/sh
+#
+# Opt-in pre-push check: run the assertion harness for each proc folder the
+# pushed commits changed, against a SQL Server you point it at.
+#
+# Enable it once per clone:   git config core.hooksPath .githooks
+# Skip it for one push:       git push --no-verify
+#
+# Settings (environment variables):
+#   DARLINGDATA_TEST_SERVER    host of a test SQL Server (login sa). Required.
+#   DARLINGDATA_TEST_PASSWORD  the sa password. Required. Never put it in a file
+#                              that is committed.
+#   SQLCMD_BIN                 sqlcmd to use (default: sqlcmd on PATH). The
+#                              harnesses expect the go-based sqlcmd.
+#   SQLCMD_CONN_ARGS           extra sqlcmd connection arguments, for example
+#                              "-C -N disable" (same meaning as in the harnesses).
+#   DARLINGDATA_LOCK_WAIT      seconds to wait for another run on the same
+#                              server to finish (default 900). After that the
+#                              check is skipped, not failed.
+#
+# The harnesses create and drop scratch databases and change server settings, so
+# point this at a throwaway test instance, never a server you care about.
+# If either connection variable is unset, the hook prints one line and lets the
+# push go ahead.
+
+if [ -z "$DARLINGDATA_TEST_SERVER" ] || [ -z "$DARLINGDATA_TEST_PASSWORD" ]; then
+    echo "pre-push: SQL harness check skipped (DARLINGDATA_TEST_SERVER or DARLINGDATA_TEST_PASSWORD not set)."
+    exit 0
+fi
+
+server=$DARLINGDATA_TEST_SERVER
+password=$DARLINGDATA_TEST_PASSWORD
+sqlcmd_bin=${SQLCMD_BIN:-sqlcmd}
+export SQLCMD_BIN="$sqlcmd_bin"
+
+repo_root=$(git rev-parse --show-toplevel) || exit 0
+cd "$repo_root" || exit 0
+
+zero=0000000000000000000000000000000000000000
+
+# Collect the changed files from the refs being pushed (stdin: local ref, local
+# sha, remote ref, remote sha). A new branch is compared with its merge base on
+# origin/dev (or origin/main).
+changed=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$local_sha" = "$zero" ] && continue
+    base=$remote_sha
+    if [ "$base" = "$zero" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+        base=$(git merge-base "$local_sha" origin/dev 2>/dev/null || git merge-base "$local_sha" origin/main 2>/dev/null)
+    fi
+    if [ -z "$base" ]; then
+        echo "pre-push: no base commit found for $local_ref, SQL harness check skipped."
+        continue
+    fi
+    files=$(git diff --name-only --no-renames "$base...$local_sha")
+    changed="$changed
+$files"
+done
+
+# Map changed files to harness folders, using the same folder rules as the
+# changes job in .github/workflows/sql-tests.yml. Markdown never counts.
+folders=""
+add_folder() {
+    case " $folders " in
+        *" $1 "*) ;;
+        *) folders="$folders $1" ;;
+    esac
+}
+oldifs=$IFS
+IFS='
+'
+for f in $changed; do
+    case "$f" in
+        *.md) ;;
+        sp_PerfCheck/*) add_folder sp_PerfCheck ;;
+        sp_HumanEvents/*) add_folder sp_HumanEvents ;;
+        sp_IndexCleanup/*) add_folder sp_IndexCleanup ;;
+        sp_QueryReproBuilder/*) add_folder sp_QueryReproBuilder ;;
+        sp_LogHunter/*) add_folder sp_LogHunter ;;
+        sp_QuickieStore/*) add_folder sp_QuickieStore ;;
+        sp_QueryStoreCleanup/*) add_folder sp_QueryStoreCleanup ;;
+    esac
+done
+IFS=$oldifs
+
+if [ -z "$folders" ]; then
+    echo "pre-push: no proc folder with a harness changed, SQL harness check skipped."
+    exit 0
+fi
+
+# Python 3 under whichever name this machine has (python on Windows, usually
+# python3 on Linux).
+py=""
+for c in python python3; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(sys.version_info[0] < 3)' >/dev/null 2>&1; then
+        py=$c
+        break
+    fi
+done
+if [ -z "$py" ]; then
+    echo "pre-push: Python 3 not found, SQL harness check skipped."
+    exit 0
+fi
+
+# One harness run at a time per server: the harnesses change server
+# configuration, and parallel worktrees can push at the same moment. The lock
+# lives in the shared git dir so every worktree of this clone sees it.
+common_dir=$(git rev-parse --git-common-dir)
+case "$common_dir" in
+    /* | [A-Za-z]:*) ;;
+    *) common_dir="$repo_root/$common_dir" ;;
+esac
+lock_name=$(printf '%s' "$server" | tr -c 'A-Za-z0-9._-' '_')
+lock_dir="$common_dir/darlingdata-harness-$lock_name.lock"
+wait_max=${DARLINGDATA_LOCK_WAIT:-900}
+waited=0
+while ! mkdir "$lock_dir" 2>/dev/null; do
+    holder=$(cat "$lock_dir/pid" 2>/dev/null)
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+        # The run that took the lock is gone (killed before it could clean up).
+        rm -rf "$lock_dir"
+        continue
+    fi
+    if [ "$waited" -ge "$wait_max" ]; then
+        echo "pre-push: another harness run on $server is still going after ${wait_max}s, SQL harness check skipped."
+        exit 0
+    fi
+    if [ "$waited" -eq 0 ]; then
+        echo "pre-push: another harness run on $server is in progress, waiting (up to ${wait_max}s)..."
+    fi
+    sleep 5
+    waited=$((waited + 5))
+done
+echo $$ > "$lock_dir/pid"
+trap 'rm -rf "$lock_dir"' EXIT
+trap 'exit 130' INT TERM
+
+# Run sqlcmd with the shared connection settings. SQLCMD_CONN_ARGS is split on
+# purpose: it holds several arguments.
+run_sqlcmd() {
+    # shellcheck disable=SC2086
+    "$sqlcmd_bin" $SQLCMD_CONN_ARGS -S "$server" -U sa -P "$password" "$@"
+}
+
+# Install a proc source file into master, where the harnesses EXECUTE it.
+install_proc() {
+    echo "pre-push: installing $1 into master on $server"
+    run_sqlcmd -d master -b -i "$1" >/dev/null || {
+        echo "pre-push: installing $1 failed."
+        return 1
+    }
+}
+
+failed=0
+for folder in $folders; do
+    case "$folder" in
+        sp_HumanEvents) procs="sp_HumanEvents sp_HumanEventsBlockViewer" ;;
+        sp_QueryStoreCleanup) procs="" ;; # its harness installs the proc itself
+        *) procs=$folder ;;
+    esac
+
+    folder_ok=1
+    for p in $procs; do
+        install_proc "$folder/$p.sql" || folder_ok=0
+    done
+
+    if [ "$folder_ok" -eq 1 ] && [ "$folder" = "sp_IndexCleanup" ]; then
+        # The harness needs a StackOverflow2013 with a Users table. The fixture
+        # drops and rebuilds that database, so build it only when it is missing:
+        # a box that already has the real one keeps it.
+        has_db=$(run_sqlcmd -h -1 -W -Q "SET NOCOUNT ON; SELECT CASE WHEN DB_ID(N'StackOverflow2013') IS NULL THEN 0 ELSE 1 END;" 2>/dev/null | tr -d '[:space:]')
+        if [ "$has_db" = "0" ]; then
+            echo "pre-push: building the StackOverflow2013 fixture on $server"
+            run_sqlcmd -b -i "sp_IndexCleanup/tests/fixture_stackoverflow2013.sql" >/dev/null || {
+                echo "pre-push: the StackOverflow2013 fixture failed."
+                folder_ok=0
+            }
+        elif [ "$has_db" != "1" ]; then
+            echo "pre-push: could not check for StackOverflow2013 on $server."
+            folder_ok=0
+        fi
+    fi
+
+    if [ "$folder_ok" -ne 1 ]; then
+        failed=1
+        continue
+    fi
+
+    case "$folder" in
+        sp_IndexCleanup)
+            scripts="run_tests.py fixture_cases_test.py rule_coverage_test.py no_access_test.py"
+            ;;
+        *)
+            scripts="run_tests.py"
+            ;;
+    esac
+    for s in $scripts; do
+        echo "pre-push: running $folder/tests/$s"
+        "$py" "$folder/tests/$s" --server "$server" --password "$password" || {
+            echo "pre-push: $folder/tests/$s FAILED."
+            failed=1
+        }
+    done
+done
+
+if [ "$failed" -ne 0 ]; then
+    echo "pre-push: SQL harness check failed, push stopped. Use git push --no-verify to skip it."
+    exit 1
+fi
+echo "pre-push: SQL harness check passed."
+exit 0

@@ -16,7 +16,9 @@ on:
   # What runs on a pull request (the changes job decides, see its case block):
   #   - The matrix runs when a non-Markdown file changed that the tests use
   #     (.sql, tests/, Install-All/, .github/sql/, this workflow, or a harness
-  #     proc folder). A change to Markdown files only does not run it.
+  #     proc folder). A change to Markdown files only does not run it, and
+  #     neither does an edit to this workflow that touches only comment lines
+  #     (lines starting with #): the changes job checks that with git diff -I.
   #   - The always-on steps (install, verify, help output, basic execution) run
   #     on every matrix run.
   #   - Each assertion harness has its own flag (perfcheck, humanevents,
@@ -40,6 +42,12 @@ on:
   pull_request:
     branches: [dev, main]
 
+# A new push to a pull request cancels the run still going for the old commit.
+# Push runs are never cancelled: each one is the record for that commit on dev.
+concurrency:
+  group: sql-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Detect SQL changes
@@ -54,9 +62,12 @@ jobs:
       quickiestore: ${{ steps.filter.outputs.quickiestore }}
       querystorecleanup: ${{ steps.filter.outputs.querystorecleanup }}
     steps:
+      # Full history (the diff below needs the merge base) but no file contents
+      # up front: blobs are fetched on demand, and only for the files diffed.
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - name: Check whether the pull request touches anything the SQL tests use
         id: filter
@@ -86,7 +97,9 @@ jobs:
 
           # Three dots: diff against the merge base, so commits that landed on
           # the base branch after this branch was cut do not count as changes.
-          git diff --name-only "$BASE_SHA...$HEAD_SHA" > changed_files.txt
+          # --no-renames keeps this a tree-only diff: rename detection would
+          # fetch file contents from the blobless clone.
+          git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" > changed_files.txt
           echo "Changed files:"
           cat changed_files.txt
 
@@ -114,6 +127,13 @@ jobs:
                 ;;
               # Shared inputs: the workflow, the smoke tests, and the bundle.
               .github/workflows/sql-tests.yml | .github/sql/* | Install-All/*)
+                # A change to this workflow that only touches comment lines
+                # does not change what runs, so it is not a shared input.
+                if [ "$f" = ".github/workflows/sql-tests.yml" ] \
+                  && git diff --quiet -I'^[[:space:]]*#' "$BASE_SHA...$HEAD_SHA" -- "$f"; then
+                  echo "Skipped (comment-only change): $f"
+                  continue
+                fi
                 echo "Matched (shared input, all harnesses): $f"
                 sql=true
                 perfcheck=true
@@ -183,6 +203,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sql == 'true'
     runs-on: ubuntu-latest
+    env:
+      # Unbuffered Python output, so harness logs carry per-line timestamps
+      # instead of arriving in one lump when the process exits.
+      PYTHONUNBUFFERED: 1
     strategy:
       fail-fast: false
       matrix:
@@ -213,27 +237,20 @@ jobs:
           --health-retries 15
 
     steps:
+      - name: Print CPU model
+        run: lscpu | grep -E 'Model name|^CPU\(s\):'
+
       - uses: actions/checkout@v7
 
-      - name: Install sqlcmd tools
-        run: |
-          # Ubuntu 24.04 runners have Microsoft repo pre-configured; avoid Signed-By conflicts
-          if ! grep -rql 'packages.microsoft.com' /etc/apt/sources.list.d/ 2>/dev/null; then
-            curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
-            source /etc/os-release
-            echo "deb [arch=amd64,signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/${VERSION_ID}/prod ${VERSION_CODENAME} main" | sudo tee /etc/apt/sources.list.d/mssql-release.list
-          fi
-          sudo apt-get update
-          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18
-
-      - name: Install go-sqlcmd (for the assertion harnesses)
+      - name: Install go-sqlcmd
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The Python assertion harnesses were written and validated against the
-          # go-based sqlcmd, not mssql-tools18, so install that to avoid
-          # output-parsing differences. It is not in the apt repo for these
-          # runners, so pull the latest linux-amd64 release binary.
+          # Every sqlcmd call in this job uses the go-based sqlcmd: the Python
+          # assertion harnesses were written and validated against it, and using
+          # one tool everywhere avoids output-parsing differences. It is not in
+          # the apt repo for these runners, so pull the latest linux-amd64
+          # release binary.
           set -euxo pipefail
           assets=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
             https://api.github.com/repos/microsoft/go-sqlcmd/releases/latest \
@@ -253,8 +270,8 @@ jobs:
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -Q "CREATE DATABASE DarlingData_CI_Test;"
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -Q "ALTER DATABASE DarlingData_CI_Test SET QUERY_STORE = ON;"
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -Q "CREATE DATABASE DarlingData_CI_Test;"
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -d DarlingData_CI_Test -Q "ALTER DATABASE DarlingData_CI_Test SET QUERY_STORE = ON;"
 
       - name: Regenerate DarlingData.sql from current branch
         shell: pwsh
@@ -267,13 +284,13 @@ jobs:
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -i "Install-All/DarlingData.sql"
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -d DarlingData_CI_Test -i "Install-All/DarlingData.sql"
 
       - name: Verify procedures exist
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -Q "
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -d DarlingData_CI_Test -Q "
             SET NOCOUNT ON;
             DECLARE @missing int = 0;
             IF OBJECT_ID(N'dbo.sp_HealthParser', N'P') IS NULL BEGIN SET @missing += 1; PRINT 'MISSING: sp_HealthParser'; END;
@@ -296,13 +313,13 @@ jobs:
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -i ".github/sql/test_help_output.sql"
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -d DarlingData_CI_Test -i ".github/sql/test_help_output.sql"
 
       - name: Test basic execution
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -i ".github/sql/test_basic_execution.sql"
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -d DarlingData_CI_Test -i ".github/sql/test_basic_execution.sql"
 
       # The harnesses connect to master and run EXECUTE dbo.sp_... there (as they
       # do on a local box, where these procs live in master), so install the
@@ -311,7 +328,7 @@ jobs:
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d master -i "Install-All/DarlingData.sql"
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -d master -i "Install-All/DarlingData.sql"
 
       # Assertion harnesses. These EXECUTE the output the procedures generate
       # (findings, session DDL) rather than just running them, which is what
@@ -319,11 +336,12 @@ jobs:
       # above cannot. They are self-contained (build and drop their own scratch
       # databases, sessions, and config), except sp_IndexCleanup, which needs a
       # StackOverflow2013.dbo.Users table that the fixture step below creates.
-      # They use the go-based sqlcmd via the SQLCMD_* environment overrides.
-      # Encryption is disabled (-N disable): the modern Go TLS stack rejects the
-      # SQL Server 2017 container's self-signed certificate outright, and -C
-      # (trust cert) does not bypass that; there is nothing to secure on a
-      # localhost throwaway container.
+      # They use the go-based sqlcmd via the SQLCMD_* environment overrides, the
+      # same binary as every other step in this job. Encryption is disabled
+      # everywhere (-N disable): the modern Go TLS stack rejects the SQL Server
+      # 2017 container's self-signed certificate outright, and -C (trust cert)
+      # does not bypass that; there is nothing to secure on a localhost
+      # throwaway container.
       - name: sp_PerfCheck assertion harness
         if: needs.changes.outputs.perfcheck == 'true'
         env:
@@ -352,7 +370,7 @@ jobs:
         env:
           SA_PASSWORD: CI_Test#2026!
         run: |
-          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -i "sp_IndexCleanup/tests/fixture_stackoverflow2013.sql"
+          /usr/local/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -N disable -b -i "sp_IndexCleanup/tests/fixture_stackoverflow2013.sql"
 
       # Four runners: adversarial synthetic tables, the Users dedupe cases
       # (which also EXECUTE every generated MERGE/DISABLE script), rule coverage
