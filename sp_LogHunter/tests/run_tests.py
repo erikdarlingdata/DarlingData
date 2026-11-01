@@ -69,6 +69,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 
 # Written to the error log via RAISERROR ... WITH LOG, then searched for.
@@ -231,8 +232,19 @@ def marker_found(stdout, marker):
 class Results:
     def __init__(self):
         self.items = []
+        self._t0 = None
+        self._group = None
+
+    def _mark(self, group):
+        # Elapsed marker, printed when the group changes (flushed, so CI logs show it live).
+        if self._t0 is None:
+            self._t0 = time.monotonic()
+        if group != self._group:
+            self._group = group
+            print("[timing] +%.1fs entering %s" % (time.monotonic() - self._t0, group), flush=True)
 
     def check(self, group, name, condition, detail=""):
+        self._mark(group)
         self.items.append({
             "group": group,
             "name": name,

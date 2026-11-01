@@ -43,9 +43,11 @@ on:
     branches: [dev, main]
 
 # A new push to a pull request cancels the run still going for the old commit.
-# Push runs are never cancelled: each one is the record for that commit on dev.
+# Push runs do not wait on or cancel each other: each gets its own group (the
+# run id), because a shared group allows one running and one pending run, and a
+# newer push replaces a still-pending one, which then never runs.
 concurrency:
-  group: sql-tests-${{ github.event.pull_request.number || github.ref }}
+  group: sql-tests-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
