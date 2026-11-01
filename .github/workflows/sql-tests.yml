@@ -42,7 +42,7 @@ on:
   pull_request:
     branches: [dev, main]
 
-# A new push to a pull request cancels the run still going for the old commit.
+# A new push to a pull request cancels the run still going for its older commit.
 # Push runs do not wait on or cancel each other: each gets its own group (the
 # run id), because a shared group allows one running and one pending run, and a
 # newer push replaces a still-pending one, which then never runs.
