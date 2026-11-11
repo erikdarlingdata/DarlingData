@@ -53,6 +53,9 @@ You don't have time to track down a bunch of DMVs, figure out Extended Events, w
 
 These scripts aren't a replacement for a mature monitoring tool, but they do a good job of capturing important issues and reporting on existing diagnostic data
 
+## Training and consulting
+I teach database teams to work with AI agents on their own databases, in a [one-day workshop](https://erikdarling.com/ai-for-database-teams-workshop/) and a [video course](https://training.erikdarling.com/work-with-your-databases-the-way-i-do). I also do [SQL Server performance consulting](https://erikdarling.com/sql-server-performance-consulting/).
+
 ## Support
 Right now, all support and Q&A is handled on GitHub. Please be patient; it's just me over here answering questions, fixing bugs, and adding new features.
 
