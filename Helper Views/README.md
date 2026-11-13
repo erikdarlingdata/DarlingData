@@ -22,6 +22,7 @@ A view that provides detailed information about index sizes in the current datab
 - Displays database, schema, table, and index names
 - Shows in-row pages size in MB
 - Shows LOB (Large Object) pages size in MB
+- Shows row-overflow pages size in MB
 - Reports number of in-row used pages
 - Displays row count for each index
 - Filters out system objects and table-valued functions
@@ -32,7 +33,7 @@ SELECT
     w.*
 FROM dbo.WhatsUpIndexes AS w
 ORDER BY
-    w.in_row_mb DESC;
+    w.in_row_pages_mb DESC;
 ```
 
 ### WhatsUpLocks Function
@@ -45,23 +46,31 @@ A table-valued function that provides information about locks taken by specific 
 | @outsider | bit | 'false' | Applies only when @spid is not NULL. If 'false', returns only the locks that belong to the current request and transaction of the calling session. If 'true', also returns locks for @spid from other requests and transactions |
 
 **Functionality**:
+- Shows only locks held in the current database, so run it in the database you want to look at
 - Displays session ID and blocking session ID information
 - Shows lock modes, resource types, and lock status
 - Identifies locked objects and associated index names
+- Lists locks that do not belong to an object (for example APPLICATION and METADATA locks) with a NULL locked_object
 - Counts different lock types (HOBT, object, page, and row locks)
 - Reports total lock count
 
 Usage:
 ```sql
 -- Check locks for a specific session
+-- A function call has no parameter names, so use DEFAULT to take the default for @outsider
 SELECT
     wul.*
-FROM dbo.WhatsUpLocks(51) AS wul;
+FROM dbo.WhatsUpLocks(51, DEFAULT) AS wul;
+
+-- Check locks for a specific session, including locks from its other requests and transactions
+SELECT
+    wul.*
+FROM dbo.WhatsUpLocks(51, 'true') AS wul;
 
 -- Check locks for all sessions
 SELECT
     wul.*
-FROM dbo.WhatsUpLocks(NULL) AS wul;
+FROM dbo.WhatsUpLocks(NULL, DEFAULT) AS wul;
 ```
 
 ### WhatsUpMemory View
@@ -70,6 +79,7 @@ A view that examines what's in SQL Server memory.
 
 **Functionality**:
 - Shows database, schema, object, and index information
+- Counts only the pages cached for the current database
 - Calculates in-row pages in MB (for data types 1 and 3)
 - Calculates LOB pages in MB (for data type 2)
 - Reports total buffer cache pages
@@ -80,7 +90,7 @@ SELECT
     wum.*
 FROM dbo.WhatsUpMemory AS wum
 ORDER BY
-    wum.pages DESC;
+    wum.buffer_cache_pages_total DESC;
 ```
 
 ### tempdb_tester Procedure
