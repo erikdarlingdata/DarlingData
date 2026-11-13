@@ -4046,13 +4046,28 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
         IF @log_to_table = 1
         BEGIN
-            /* Get the maximum sample_time from the CPU events table */
+            /*
+            Get the cutoff for new samples from the CPU events table: the
+            newest logged sample_time plus a 2 second margin.
+
+            sample_time is the run's SYSDATETIME() plus a whole-second offset
+            from the ring buffer, so the same ring buffer record gets a time
+            that differs by up to a second from one run to the next. Without
+            the margin, the newest record looks newer than the logged copy of
+            itself and is logged again on every run. Ring buffer records are
+            about 60 seconds apart, so the margin never hides a new record.
+            */
             SET @insert_sql = N'
                 SELECT
                     @max_sample_time_out =
                         ISNULL
                         (
-                            MAX(sample_time),
+                            DATEADD
+                            (
+                                SECOND,
+                                2,
+                                MAX(sample_time)
+                            ),
                             ''19000101''
                         )
                 FROM ' + @log_table_cpu_events + N'

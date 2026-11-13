@@ -97,7 +97,7 @@ BEGIN
                     WHEN N'@min_age_days'
                     THEN 'only remove queries whose last execution is older than this many days; NULL = no age filter'
                     WHEN N'@report_only'
-                    THEN 'report what would be removed without removing: one summary row, then one row per query_hash, biggest first. @debug = 1 also lists every query_id'
+                    THEN 'report what would be removed without removing: one summary row, then one row per query_hash, biggest first. @debug = 1 also lists every query_id. NULL is treated as 1, never as remove'
                     WHEN N'@sort_direction'
                     THEN 'removal order by query_id. to split a long removal, run two sessions at once, one ASC and one DESC. each skips queries the other already removed'
                     WHEN N'@compact_tables'
@@ -125,7 +125,7 @@ BEGIN
                     WHEN N'@min_age_days'
                     THEN 'any positive integer, e.g. 7, 30, 90'
                     WHEN N'@report_only'
-                    THEN '0 or 1'
+                    THEN '0 or 1; NULL is treated as 1'
                     WHEN N'@sort_direction'
                     THEN 'ASC, DESC'
                     WHEN N'@compact_tables'
@@ -551,6 +551,14 @@ OPTION(RECOMPILE);';
         RAISERROR('@sort_direction must be ASC or DESC. You passed: %s', 16, 1, @sort_direction) WITH NOWAIT;
         RETURN;
     END;
+
+    /*
+    Validate @report_only
+    Only 1 reports, and every other branch removes or compacts, so a NULL
+    would remove queries. A NULL never means remove: it means report only.
+    */
+    SELECT
+        @report_only = ISNULL(@report_only, 1);
 
     /*
     A READ_ONLY Query Store only gets here with @compact_tables = 1:
