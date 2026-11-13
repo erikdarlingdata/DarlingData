@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 359 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 364 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -21,7 +21,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `359` (`360` on SQL Server 2017, which skips the rule 14 check at
+password). Expect `364` (`365` on SQL Server 2017, which skips the rule 14 check at
 compatibility level 150 and up but runs two more rule 1 checks, because before SQL Server 2019 the
 suggested table variable index has no inline INCLUDE).
 
@@ -91,7 +91,9 @@ each run *executes* what it built:
   underscore is not a wildcard.
 - **Multiple databases**: `@get_all_databases = 1` with `@expert_mode` against
   two scratch databases whose Query Store ids collide. The output must have
-  the compilation stats row of every query.
+  the compilation stats row of every query. A third listed database is held in
+  single-user mode by a second session, so the caller cannot enter it. The run
+  must skip it, name it in the footer, and still return the other two.
 
 On top of that, **bidirectional** assertions prove the filters actually filter
 rather than being silently ignored — `@query_text_search` on a known string vs
