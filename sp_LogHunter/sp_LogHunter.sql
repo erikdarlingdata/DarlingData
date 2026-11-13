@@ -94,7 +94,7 @@ BEGIN
                      WHEN N'@days_back' THEN 'how many days back you want to search the logs'
                      WHEN N'@start_date' THEN 'if you want to search a specific time frame'
                      WHEN N'@end_date' THEN 'if you want to search a specific time frame'
-                     WHEN N'@custom_message' THEN 'if you want to search for a custom string'
+                     WHEN N'@custom_message' THEN 'if you want to search for a custom string. the built-in noise filter never removes the lines it finds'
                      WHEN N'@custom_message_only' THEN 'only search for the custom string'
                      WHEN N'@first_log_only' THEN 'only search through the first error log'
                      WHEN N'@language_id' THEN 'does not translate the search strings; they are English literals. Use @custom_message on non-English servers'
@@ -365,6 +365,8 @@ BEGIN
     /*variables for the variable gods*/
     DECLARE
         @c nvarchar(4000) /*holds the command to execute*/,
+        @is_custom bit = 0 /*1 when the current command is the @custom_message search*/,
+        @last_id integer = 0 /*highest #error_log id before the current search ran*/,
         @l_log integer = 0 /*low log file id*/,
         @h_log integer = 0 /*high log file id*/,
         @t_searches bigint = 0 /*total number of searches to run*/,
@@ -380,9 +382,22 @@ BEGIN
     CREATE TABLE
         #error_log
     (
+        /*
+        id lets the loop below find the rows one search just added: an
+        INSERT ... EXECUTE cannot add a constant column of its own.
+        */
+        id integer
+           IDENTITY
+           PRIMARY KEY CLUSTERED,
         log_date datetime,
         process_info nvarchar(100),
-        text nvarchar(4000)
+        text nvarchar(4000),
+        /*
+        1 for a row found by the caller's @custom_message search. The
+        noise filter below skips these: the caller asked for that text by
+        name, so a built-in "dumb message" pattern must not hide it.
+        */
+        is_custom bit NOT NULL DEFAULT 0
     );
 
     CREATE TABLE
@@ -444,6 +459,8 @@ BEGIN
             DEFAULT N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, 1, SYSDATETIME()), 112) + N'''',
         search_order nvarchar(10)
             DEFAULT N'N''DESC''',
+        /*1 for the @custom_message search, 0 for the canned searches*/
+        is_custom bit NOT NULL DEFAULT 0,
         command AS
             CONVERT
             (
@@ -719,13 +736,15 @@ BEGIN
         search_string,
         days_back,
         start_date,
-        end_date
+        end_date,
+        is_custom
     )
     SELECT
         x.search_string,
         x.days_back,
         x.start_date,
-        x.end_date
+        x.end_date,
+        is_custom = 1
     FROM
     (
         VALUES
@@ -788,8 +807,9 @@ BEGIN
             READ_ONLY
         FOR
         SELECT
-            command
-        FROM #search;
+            s.command,
+            s.is_custom
+        FROM #search AS s;
 
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
 
@@ -797,7 +817,7 @@ BEGIN
 
         FETCH FIRST
         FROM @cs
-        INTO @c;
+        INTO @c, @is_custom;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
         WHILE @@FETCH_STATUS = 0
@@ -837,6 +857,14 @@ BEGIN
             IF @debug = 1 BEGIN RAISERROR('Inserting to error log', 0, 1) WITH NOWAIT; END;
             BEGIN
                 BEGIN TRY
+                    /*Note where #error_log ends, so a custom search can tag the rows it adds*/
+                    IF @is_custom = 1
+                    BEGIN
+                        SELECT
+                            @last_id = ISNULL(MAX(el.id), 0)
+                        FROM #error_log AS el;
+                    END;
+
                     /*Insert any log entries we find that match the search*/
                     INSERT
                         #error_log
@@ -847,6 +875,17 @@ BEGIN
                     )
                     EXECUTE sys.sp_executesql
                         @c;
+
+                    /*Tag the rows the custom search found, so the noise filter below leaves them alone*/
+                    IF @is_custom = 1
+                    BEGIN
+                        UPDATE
+                            el
+                        SET
+                            el.is_custom = 1
+                        FROM #error_log AS el
+                        WHERE el.id > @last_id;
+                    END;
                 END TRY
                 BEGIN CATCH
                     /*Insert any searches that throw an error here, and why they failed*/
@@ -869,7 +908,7 @@ BEGIN
             /*Get the next search command*/
             FETCH NEXT
             FROM @cs
-            INTO @c;
+            INTO @c, @is_custom;
 
             /*Increment our loop counter*/
             SELECT
@@ -902,40 +941,50 @@ BEGIN
     END;
     IF @debug = 1 BEGIN RAISERROR('Ended cursor', 0, 1) WITH NOWAIT; END;
 
-    /*get rid of some messages we don't care about*/
+    /*
+    get rid of some messages we don't care about.
+
+    Only rows the canned searches found are eligible. A row the caller's
+    @custom_message search found stays, even when it matches a pattern below:
+    searching for 'Login failed' must return the login failures, not nothing.
+    */
     IF @debug = 1 BEGIN RAISERROR('Delete dumb messages', 0, 1) WITH NOWAIT; END;
 
     DELETE
         el WITH(TABLOCKX)
     FROM #error_log AS el
-    WHERE el.text LIKE N'DBCC TRACEON 3604%'
-    OR    el.text LIKE N'DBCC TRACEOFF 3604%'
-    OR    el.text LIKE N'This instance of SQL Server has been using a process ID of%'
-    OR    el.text LIKE N'Could not connect because the maximum number of ''1'' dedicated administrator connections already exists%'
-    OR    el.text LIKE N'Login failed%'
-    OR    el.text LIKE N'Backup(%'
-    OR    el.text LIKE N'[[]INFO]%'
-    OR    el.text LIKE N'[[]DISK_SPACE_TO_RESERVE_PROPERTY]%'
-    OR    el.text LIKE N'[[]CFabricCommonUtils::GetFabricPropertyInternalWithRef]%'
-    OR    el.text LIKE N'CHECKDB for database % finished without errors%'
-    OR    el.text LIKE N'Parallel redo is shutdown for database%'
-    OR    el.text LIKE N'%This is an informational message only. No user action is required.%'
-    OR    el.text LIKE N'%SPN%'
-    OR    el.text LIKE N'Service Broker manager has started.%'
-    OR    el.text LIKE N'Parallel redo is started for database%'
-    OR    el.text LIKE N'Starting up database%'
-    OR    el.text LIKE N'Buffer pool extension is already disabled%'
-    OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
-    OR    el.text LIKE N'The client was unable to reuse a session with%'
-    OR    el.text LIKE N'SSPI%'
-    OR    el.text LIKE N'%Severity: 1[0-8]%'
-    OR    el.text LIKE N'Login succeeded for user%'
-    OR    el.text LIKE N'%query notification%'
-    OR    el.text IN
-          (
-              N'The Database Mirroring endpoint is in disabled or stopped state.',
-              N'The Service Broker endpoint is in disabled or stopped state.'
-          )
+    WHERE el.is_custom = 0
+    AND
+    (
+        el.text LIKE N'DBCC TRACEON 3604%'
+        OR    el.text LIKE N'DBCC TRACEOFF 3604%'
+        OR    el.text LIKE N'This instance of SQL Server has been using a process ID of%'
+        OR    el.text LIKE N'Could not connect because the maximum number of ''1'' dedicated administrator connections already exists%'
+        OR    el.text LIKE N'Login failed%'
+        OR    el.text LIKE N'Backup(%'
+        OR    el.text LIKE N'[[]INFO]%'
+        OR    el.text LIKE N'[[]DISK_SPACE_TO_RESERVE_PROPERTY]%'
+        OR    el.text LIKE N'[[]CFabricCommonUtils::GetFabricPropertyInternalWithRef]%'
+        OR    el.text LIKE N'CHECKDB for database % finished without errors%'
+        OR    el.text LIKE N'Parallel redo is shutdown for database%'
+        OR    el.text LIKE N'%This is an informational message only. No user action is required.%'
+        OR    el.text LIKE N'%Service Principal Name (SPN)%'
+        OR    el.text LIKE N'Service Broker manager has started.%'
+        OR    el.text LIKE N'Parallel redo is started for database%'
+        OR    el.text LIKE N'Starting up database%'
+        OR    el.text LIKE N'Buffer pool extension is already disabled%'
+        OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
+        OR    el.text LIKE N'The client was unable to reuse a session with%'
+        OR    el.text LIKE N'SSPI%'
+        OR    el.text LIKE N'%Severity: 1[0-8]%'
+        OR    el.text LIKE N'Login succeeded for user%'
+        OR    el.text LIKE N'%query notification%'
+        OR    el.text IN
+              (
+                  N'The Database Mirroring endpoint is in disabled or stopped state.',
+                  N'The Service Broker endpoint is in disabled or stopped state.'
+              )
+    )
     OPTION(RECOMPILE);
 
     /*get rid of duplicate messages we don't care about*/
@@ -967,7 +1016,9 @@ BEGIN
     SELECT
         table_name =
             '#error_log',
-        el.*
+        el.log_date,
+        el.process_info,
+        el.text
     FROM #error_log AS el
     ORDER BY
         el.log_date DESC

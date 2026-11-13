@@ -50,7 +50,20 @@ window 30 days in the past does not. Every absence assertion is paired with a
 presence assertion on the same machinery, so nothing can pass vacuously by
 returning an empty set.
 
-SIDE EFFECT: this harness writes two informational lines to the SQL Server
+A second group, NoiseFilter, covers the opposite risk: the "dumb message" DELETE
+removing rows the caller asked for. Its markers are written to look like the
+lines that DELETE exists to remove (a login failure, a database start-up line,
+an SPN registration message) plus one real error whose database name merely
+contains "spn" (ESPN_...). They are the only markers here that a canned search
+finds on purpose, because they prove two things at once:
+
+  * a canned-search hit that matches a noise pattern is still removed
+    (default run must NOT return it)
+  * the same text found by @custom_message is NEVER removed
+    (custom run MUST return it)
+  * a real error is not removed just because a name inside it contains "spn"
+
+SIDE EFFECT: this harness writes a handful of informational lines to the SQL Server
 error log (the markers). That cannot be undone without cycling the log, which
 would be far more disruptive than the two lines, so the harness does not try.
 The marker text is fixed rather than random so repeated runs do not accumulate
@@ -92,6 +105,29 @@ QUOTE_MARKER = 'DarlingDataLogHunter"Quoted"Canary'
 # into #errors, and returned an empty result set that read as "nothing wrong".
 # 150 characters puts this comfortably past the old ceiling.
 LONG_MARKER = "DarlingDataLogHunterLongCanary" + ("X" * 120)
+
+# Lines written for the NoiseFilter group. Each unique token is what the custom
+# search looks for. The text is built to hit BOTH a canned search string (so a
+# default run reaches it) AND a noise pattern (so a default run then deletes it).
+#   - Login line: canned 'fail', noise 'Login failed%' (the README's own example)
+#   - Start-up line: canned 'error', noise 'Starting up database%'
+#   - SPN line: canned 'service', noise '%Service Principal Name (SPN)%'
+NOISE_LINES = [
+    ("DarlingDataLogHunterNoiseLogin",
+     "Login failed for user 'DarlingDataLogHunterNoiseLogin'. "
+     "Reason: harness marker."),
+    ("DarlingDataLogHunterNoiseStart",
+     "Starting up database 'DarlingDataLogHunterNoiseStart' (harness error marker)."),
+    ("DarlingDataLogHunterNoiseSpn",
+     "The SQL Server Network Interface library could not register the "
+     "Service Principal Name (SPN) [ MSSQLSvc/DarlingDataLogHunterNoiseSpn ] "
+     "for the SQL Server service. Windows return code: 0x2098, state: 15."),
+]
+
+# A real error (canned 'corrupt') for a database whose name contains "spn". The
+# old '%SPN%' noise pattern matched it anywhere in the line and hid it.
+ESPN_TOKEN = "DarlingDataLogHunterEspn"
+ESPN_LINE = "Detected corrupt page in database ESPN_%s, run DBCC CHECKDB." % ESPN_TOKEN
 
 # Columns expected in the #error_log result set (shape-regression guard).
 LOG_COLUMNS = ["table_name", "log_date", "process_info", "text"]
@@ -387,6 +423,63 @@ def canary_tests(server, password, R):
             % (len(rows_only), len(rows_both)))
 
 
+def noise_filter_tests(server, password, R):
+    """The noise filter must delete canned-search hits that match a noise
+    pattern, must never delete what @custom_message found, and must not delete
+    a real error just because a name inside it contains "spn"."""
+    grp = "NoiseFilter"
+
+    for _token, line in NOISE_LINES:
+        write_marker(server, password, line)
+    write_marker(server, password, ESPN_LINE)
+
+    # One default run covers every "must be filtered" assertion. The ESPN line
+    # is the positive control: it is found by the same canned sweep, so a run
+    # that returned nothing at all would fail here rather than pass vacuously.
+    out, err = run_loghunter(server, password)
+    clean_run(R, grp, "default run", out, err)
+    R.check(grp, "default run: real error for an ESPN_ database PRESENT "
+            "(the unanchored '%SPN%' pattern used to hide it)",
+            marker_found(out, ESPN_TOKEN),
+            "ESPN_ error line missing from the default run")
+    for token, _line in NOISE_LINES:
+        R.check(grp, "default run: noise line %s ABSENT "
+                "(canned hits that match a noise pattern are still removed)" % token,
+                not marker_found(out, token),
+                "noise line returned by a canned search")
+
+    # The same lines found by a custom search must all come back.
+    for token, _line in NOISE_LINES + [(ESPN_TOKEN, ESPN_LINE)]:
+        out, err = run_loghunter(
+            server, password,
+            "@custom_message = N'%s', @custom_message_only = 1" % token)
+        clean_run(R, grp, "custom search %s" % token, out, err, expect_rows=False)
+        R.check(grp, "custom search %s: row PRESENT "
+                "(the noise filter must not hide what was asked for)" % token,
+                marker_found(out, token),
+                "custom search returned nothing for text the noise filter matches")
+
+    # Custom + canned together: the custom copy is kept and the canned copy of
+    # the same line is removed, so each line shows up once. The harness writes
+    # fresh marker lines on every run, so the count is compared with what the
+    # custom-only search returns for the same token rather than fixed at one.
+    token = NOISE_LINES[-1][0]
+    out, err = run_loghunter(
+        server, password,
+        "@custom_message = N'%s', @custom_message_only = 1" % token)
+    only_hits = [r for r in log_rows(out) if token in r[-1]]
+    out, err = run_loghunter(
+        server, password,
+        "@custom_message = N'%s', @custom_message_only = 0" % token)
+    rows = clean_run(R, grp, "custom + canned", out, err)
+    hits = [r for r in rows if token in r[-1]]
+    R.check(grp, "custom + canned: noise line returned once per log line "
+            "(no canned duplicate)",
+            len(hits) > 0 and len(hits) == len(only_hits),
+            "custom + canned returned %d row(s), custom only returned %d"
+            % (len(hits), len(only_hits)))
+
+
 def date_range_tests(server, password, R):
     """Bidirectional proof that the date arguments actually bound the search.
 
@@ -602,6 +695,7 @@ def main():
     R = Results()
     smoke_tests(args.server, args.password, R)
     canary_tests(args.server, args.password, R)
+    noise_filter_tests(args.server, args.password, R)
     date_range_tests(args.server, args.password, R)
     generated_command_tests(args.server, args.password, R)
     validation_tests(args.server, args.password, R)
