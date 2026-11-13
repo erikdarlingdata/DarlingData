@@ -17,6 +17,8 @@ Check out the [Github issues list], just in case someone already opened a simila
 
 You should use the template for reporting bugs, to provide as much detail as possible. All of my stored procedures should have a `@debug` parameter that can help you track down more detail, too.
 
+The [monthly releases](https://github.com/erikdarlingdata/DarlingData/releases) are the stable way to install. To try a fix before the next release, use the [dev-latest pre-release](https://github.com/erikdarlingdata/DarlingData/releases/tag/dev-latest). It holds the current dev build.
+
 Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 
 ## Requesting Features
@@ -39,6 +41,8 @@ There is a template for feature requests that asks some important questions, and
 
 I am guilty of not doing that at times, but it's my repo, and I abuse the issues feature a bit to make notes for myself.
 
+Do not change `Install-All/DarlingData.sql` in a pull request, and do not run `Install-All/Merge-All.ps1` to update it. A GitHub Action rebuilds that file from the procedure files on **main** after each merge. The copy on **dev** is out of date on purpose. Change the procedure file in its own folder, and the build picks it up.
+
 Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 
 ## Code Standards
@@ -52,15 +56,11 @@ Your code should be set up to handle
 * Unicode object names
 
 I have a particular formatting style that I stick to. You can code things however you are comfortable, but don't be surprised or angry if I format things my way.
-* Trailing commas
-* Spaces, not tabs
-* Reasonable casing (not all upper, not all lower)
-* Keywords on new lines (from, join, on, where, and, or, order by, group by)
-* Indenting things appropriately
-* Using AS in table aliases
-* Column aliases using the "column = expression" format
-* Parentheses in TOP expressions, e.g. TOP (1000)
-* Aligning parentheses 
+
+The full T-SQL style guide is in [CLAUDE.md](CLAUDE.md). Please read it. These are three of its rules:
+* All SQL keywords in UPPERCASE (SELECT, FROM, WHERE, JOIN)
+* All data types lowercase and never abbreviated (integer, not int)
+* 4 spaces for each level of indentation (NEVER use tabs)
 
 Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 

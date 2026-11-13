@@ -11,12 +11,14 @@ body:
       options:
         - sp_HealthParser
         - sp_HumanEvents
+        - sp_HumanEventsBlockViewer
         - sp_IndexCleanup
         - sp_LogHunter
         - sp_PerfCheck
         - sp_PressureDetector
         - sp_QueryReproBuilder
         - sp_QueryStoreCleanup
+        - sp_QuickieCache
         - sp_QuickieStore
         - Other
     validations:
@@ -27,7 +29,7 @@ body:
     attributes:
       label: Script Version
       description: All scripts have a version and version date near the top. Make sure you're on a recent version.
-      placeholder: "e.g., 2026.03.15, v4.2"
+      placeholder: "e.g., 6.11, 20261101"
     validations:
       required: true
 
