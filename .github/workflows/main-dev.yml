@@ -8,16 +8,25 @@ on:
       - reopened
       - synchronize
       - edited
+# This job only compares branch names. It checks out nothing and calls no API,
+# so it gets no token permissions at all.
+permissions: {}
 jobs:
   check-branches:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check branches
         env:
           HEAD_REF: ${{ github.head_ref }}
           BASE_REF: ${{ github.base_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
         run: |
-          if [ "$HEAD_REF" != "dev" ] && [ "$BASE_REF" = "main" ]; then
-            echo "Merge requests to main branch are only allowed from dev branch."
+          # The head branch must be named dev AND live in this repository: a
+          # fork can have a branch called dev too. HEAD_REPO is empty when the
+          # fork was deleted, which also fails the check.
+          if [ "$BASE_REF" = "main" ] && { [ "$HEAD_REF" != "dev" ] || [ "$HEAD_REPO" != "$THIS_REPO" ]; }; then
+            echo "Merge requests to main branch are only allowed from the dev branch of this repository."
             exit 1
           fi

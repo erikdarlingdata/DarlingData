@@ -10,8 +10,9 @@ on:
   # Keep this list and the case patterns in the changes job in step. Beyond the
   # .sql and tests/ files, the matrix reads only Install-All/Merge-All.ps1 (which
   # builds the bundle from sp_*/sp_*.sql), .github/sql/*.sql, and this workflow.
-  # The Python harnesses use only the standard library, and go-sqlcmd is pulled
-  # from its latest release, so there is no requirements file to watch.
+  # The Python harnesses use only the standard library, and go-sqlcmd is pinned
+  # to a release tag and a sha256 in the Install go-sqlcmd step (to upgrade,
+  # change both together), so there is no requirements file to watch.
   #
   # What runs on a pull request (the changes job decides, see its case block):
   #   - The matrix runs when a non-Markdown file changed that the tests use
@@ -42,6 +43,12 @@ on:
   pull_request:
     branches: [dev, main]
 
+# Read-only token. This workflow runs a downloaded binary (go-sqlcmd), so the
+# token it can reach must not be able to write to the repository. Checkout is
+# the only thing here that uses the token, and it only needs to read.
+permissions:
+  contents: read
+
 # A new push to a pull request cancels the run still going for the old commit.
 # Push runs do not wait on or cancel each other: each gets its own group (the
 # run id), because a shared group allows one running and one pending run, and a
@@ -54,6 +61,7 @@ jobs:
   changes:
     name: Detect SQL changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       sql: ${{ steps.filter.outputs.sql }}
       perfcheck: ${{ steps.filter.outputs.perfcheck }}
@@ -205,6 +213,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.sql == 'true'
     runs-on: ubuntu-latest
+    # Runs take about 13 minutes (the slowest seen is about 30). A hung harness
+    # should stop here, not at the 360 minute default.
+    timeout-minutes: 45
     env:
       # Unbuffered Python output, so harness logs carry per-line timestamps
       # instead of arriving in one lump when the process exits.
@@ -246,23 +257,26 @@ jobs:
 
       - name: Install go-sqlcmd
         env:
-          GH_TOKEN: ${{ github.token }}
+          # To upgrade, change both values together: the sha256 is the one for
+          # sqlcmd-linux-amd64.tar.bz2 on that release (shown as the asset
+          # digest on the release page, or run sha256sum on the download).
+          GO_SQLCMD_VERSION: v1.10.0
+          GO_SQLCMD_SHA256: 92516d98c63d99b0994de5b61350c91f6915f9b76f139a59039fbcb225c2e987
         run: |
           # Every sqlcmd call in this job uses the go-based sqlcmd: the Python
           # assertion harnesses were written and validated against it, and using
           # one tool everywhere avoids output-parsing differences. It is not in
-          # the apt repo for these runners, so pull the latest linux-amd64
-          # release binary.
+          # the apt repo for these runners, so download the pinned linux-amd64
+          # release binary. It is pinned because the harnesses parse its output,
+          # so a new upstream release must not change what the required check
+          # sees. The download is checked against the sha256 above before it is
+          # unpacked, and no token is needed or passed.
           set -euxo pipefail
-          assets=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
-            https://api.github.com/repos/microsoft/go-sqlcmd/releases/latest \
-            | grep -oE 'https://[^"]+' | grep -iE 'linux[-_]amd64.*\.tar\.(bz2|gz)$')
-          echo "$assets"
-          url=$(echo "$assets" | head -1)
-          test -n "$url"
+          url="https://github.com/microsoft/go-sqlcmd/releases/download/${GO_SQLCMD_VERSION}/sqlcmd-linux-amd64.tar.bz2"
           mkdir -p /tmp/gosqlcmd
-          curl -fsSL -o /tmp/gosqlcmd.tar "$url"
-          tar -xf /tmp/gosqlcmd.tar -C /tmp/gosqlcmd
+          curl -fsSL -o /tmp/gosqlcmd.tar.bz2 "$url"
+          echo "${GO_SQLCMD_SHA256}  /tmp/gosqlcmd.tar.bz2" | sha256sum -c -
+          tar -xf /tmp/gosqlcmd.tar.bz2 -C /tmp/gosqlcmd
           bin=$(find /tmp/gosqlcmd -type f -name sqlcmd | head -1)
           test -n "$bin"
           sudo install "$bin" /usr/local/bin/sqlcmd
@@ -449,11 +463,18 @@ jobs:
   # would skip the matrix and still pass) or if any matrix job failed or was
   # cancelled, and passes when the matrix succeeded or was skipped because no
   # SQL-relevant file changed.
+  #
+  # The job is named SQL Tests only on pull_request, which is the check the
+  # rulesets require. A push run to dev reports SQL Tests (push) instead. With
+  # the same name on both, the push run on a commit could stand in for the pull
+  # request run on that commit, and the dev to main promotion pull request is
+  # the run that tests the merge with main.
   summary:
-    name: SQL Tests
+    name: ${{ github.event_name == 'pull_request' && 'SQL Tests' || 'SQL Tests (push)' }}
     needs: [changes, test]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Evaluate results
         env:
