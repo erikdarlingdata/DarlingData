@@ -980,6 +980,104 @@ def group_collector_blocking(server, password, R, caps):
 
 # ---------------------------------------------------------------- main
 
+def group_collector_collision(server, password, R, caps):
+    """Logging-to-table mode when a view or synonym already holds the name of an
+    output table. The collector has to stop with a clear message and leave the
+    object's target alone: it must not insert into it, and its hourly retention
+    DELETE must not run against it. The target holds one seed row dated far past
+    the retention window, so a DELETE through the name would remove it and an
+    INSERT through the name would add to it. A scratch database holds everything."""
+    db = "sp_HumanEvents_test_collision"
+    sname = "keeper_HumanEvents_waits"
+    drop_db = (
+        "IF DB_ID('" + db + "') IS NOT NULL BEGIN "
+        "ALTER DATABASE [" + db + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+        "DROP DATABASE [" + db + "]; END;"
+    )
+    out, err = _sqlcmd(server, password,
+                       "SET NOCOUNT ON; " + drop_db + " CREATE DATABASE [" + db + "];")
+    setup_err = find_sql_errors(out) + find_sql_errors(err)
+    R.check("Collision", "setup: scratch database created", not setup_err, str(setup_err))
+    if setup_err:
+        _sqlcmd(server, password, "SET NOCOUNT ON; " + drop_db)
+        return
+
+    def count_of(text, key):
+        m = re.search(r"RESULT\|" + key + r"\|(\d+)", text)
+        return int(m.group(1)) if m else None
+
+    try:
+        for kind in ("synonym", "view"):
+            if kind == "synonym":
+                make_name = "CREATE SYNONYM dbo.keeper_HumanEvents_waits FOR dbo.collision_target;"
+            else:
+                make_name = ("EXECUTE (N'CREATE VIEW dbo.keeper_HumanEvents_waits AS "
+                             "SELECT * FROM dbo.collision_target;');")
+            fixture = (
+                "SET NOCOUNT ON;\n"
+                "IF OBJECT_ID(N'dbo.keeper_HumanEvents_waits', N'SN') IS NOT NULL "
+                "DROP SYNONYM dbo.keeper_HumanEvents_waits;\n"
+                "IF OBJECT_ID(N'dbo.keeper_HumanEvents_waits', N'V') IS NOT NULL "
+                "DROP VIEW dbo.keeper_HumanEvents_waits;\n"
+                "IF OBJECT_ID(N'dbo.collision_target', N'U') IS NOT NULL "
+                "DROP TABLE dbo.collision_target;\n"
+                "CREATE TABLE dbo.collision_target ( id bigint PRIMARY KEY IDENTITY, "
+                "server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL, "
+                "database_name sysname NULL, wait_type nvarchar(60) NULL, duration_ms bigint NULL, "
+                "signal_duration_ms bigint NULL, wait_resource sysname NULL, "
+                "query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, "
+                "plan_handle varbinary(64) NULL );\n"
+                "INSERT INTO dbo.collision_target (server_name, event_time, event_type, "
+                "database_name, wait_type, duration_ms) "
+                "VALUES (N'seed', '20000101', N'seed', N'seed', N'SEED', 1);\n"
+                + make_name + "\n"
+            )
+            out, err = _sqlcmd(server, password, fixture, database=db)
+            fix_err = find_sql_errors(out) + find_sql_errors(err)
+            R.check("Collision", "%s: fixture created" % kind, not fix_err, str(fix_err))
+            if fix_err:
+                continue
+
+            # The proc stops quickly with the fix; without it the loop runs until
+            # the query timeout cancels it.
+            collector = (
+                "SET NOCOUNT ON; EXECUTE dbo.sp_HumanEvents "
+                "@event_type = N'waits', @keep_alive = 1, @wait_duration_ms = 1, "
+                "@output_database_name = N'" + db + "', @output_schema_name = N'dbo';"
+            )
+            out, err = _sqlcmd(server, password, collector,
+                               query_timeout=15, subprocess_timeout=60)
+            combined = out + "\n" + err
+            R.check("Collision", "%s: collector stops with a clear 'is not a table' message" % kind,
+                    "is not a table" in combined,
+                    "output did not contain the message: %s" % combined.strip()[:200])
+
+            out2, _ = _sqlcmd(server, password,
+                              "SET NOCOUNT ON;\n"
+                              "SELECT line = 'RESULT|total|' + CONVERT(varchar(20), COUNT_BIG(*)) "
+                              "FROM dbo.collision_target AS ct;\n"
+                              "SELECT line = 'RESULT|seed|' + CONVERT(varchar(20), COUNT_BIG(*)) "
+                              "FROM dbo.collision_target AS ct WHERE ct.event_type = N'seed';\n",
+                              database=db)
+            total, seed = count_of(out2, "total"), count_of(out2, "seed")
+            R.check("Collision", "%s: no rows were inserted through the name" % kind,
+                    total == 1, "rows in target = %s" % total)
+            R.check("Collision", "%s: the target's old row survived (no DELETE through the name)" % kind,
+                    seed == 1, "seed rows = %s" % seed)
+    finally:
+        _sqlcmd(server, password,
+                "SET NOCOUNT ON; "
+                "IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'" + sname + "') "
+                "DROP EVENT SESSION " + sname + " ON SERVER; " + drop_db)
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT line = 'RESULT|after|' + CONVERT(varchar(11), "
+                         "(SELECT COUNT_BIG(*) FROM sys.databases WHERE name = N'" + db + "') + "
+                         "(SELECT COUNT_BIG(*) FROM sys.server_event_sessions WHERE name = N'" + sname + "'));")
+        left = parse_results(out)["after"]
+        R.check("Collision", "cleanup: scratch database and keeper session dropped",
+                left == 0, "residual objects = %s" % left)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="SQL2022")
@@ -1037,6 +1135,7 @@ def main():
         group_orphan_cleanup(args.server, args.password, R, caps)
         group_collector(args.server, args.password, R, caps)
         group_collector_blocking(args.server, args.password, R, caps)
+        group_collector_collision(args.server, args.password, R, caps)
     finally:
         # ----- session hygiene: measure leaks, then sweep ----------------
         after_tests = list_he_sessions(args.server, args.password)
