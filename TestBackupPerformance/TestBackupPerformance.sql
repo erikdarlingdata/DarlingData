@@ -125,6 +125,7 @@ BEGIN
     SELECT ' * encryption (on/off)' UNION ALL
     SELECT ' * buffer count' UNION ALL
     SELECT ' * max transfer size' UNION ALL
+    SELECT 'all test backups are COPY_ONLY, so they do not change the differential base or the backup chain' UNION ALL
     SELECT 'results are stored in dbo.backup_performance_results' UNION ALL
     SELECT 'from https://erikdarling.com';
 
@@ -936,10 +937,15 @@ END; /*End help section*/
 
             /*
                 Build WITH clause
+
+                COPY_ONLY keeps these test backups out of the backup chain:
+                a normal full backup, even one written to NUL or deleted
+                right after, becomes the differential base, and the next
+                scheduled differential could not be restored.
             */
             SET @backup_cmd +=
                 NCHAR(13) + NCHAR(10)
-                + N'WITH INIT, SKIP, FORMAT, STATS = '
+                + N'WITH COPY_ONLY, INIT, SKIP, FORMAT, STATS = '
                 + CONVERT(nvarchar(10), @stats);
 
             IF @compression = 1
