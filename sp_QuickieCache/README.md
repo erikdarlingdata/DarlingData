@@ -61,7 +61,7 @@ EXECUTE dbo.sp_QuickieCache;
 EXECUTE dbo.sp_QuickieCache
     @database_name = N'YourDatabase';
 
--- Only plans created today
+-- Only plans created or cached on or after a date
 EXECUTE dbo.sp_QuickieCache
     @start_date = '20260403';
 
