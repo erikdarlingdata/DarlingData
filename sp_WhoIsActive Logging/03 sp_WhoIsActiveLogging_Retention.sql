@@ -45,6 +45,17 @@ BEGIN
     SET XACT_ABORT OFF;
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
+    /*
+    A retention of 0 or less puts the cutoff at or after right now,
+    so every logging table, including today's, would be dropped.
+    Stop with an error instead of guessing what was meant.
+    */
+    IF @RetentionPeriod < 1
+    BEGIN
+        RAISERROR('@RetentionPeriod must be 1 or more days. You passed: %d. Nothing was dropped.', 16, 1, @RetentionPeriod) WITH NOWAIT;
+        RETURN;
+    END;
+
     IF EXISTS
     (
         SELECT

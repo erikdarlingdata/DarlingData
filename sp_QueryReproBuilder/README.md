@@ -134,6 +134,8 @@ Warnings are displayed in the executable_query script header and indicate potent
 * **restricted text**: Query text is restricted (contains passwords or sensitive information)
 * **missing parameter values**: Parameters declared in the query text were not found in the plan. Their value is set to ? and must be filled in by hand
 * **truncated parameter value**: A compiled parameter value is as long as a plan keeps, and its type can hold more. It was probably cut off
+* **spatial parameter SRID**: A geography or geometry parameter value is in the plan as text with no SRID. The repro uses the type default (4326 for geography, 0 for geometry). If the original was different, set the SRID by hand
+* **sql_variant parameter**: A sql_variant parameter value is in the plan as text with no base type. The repro binds it as nvarchar. If the original was another type, such as int or datetime, change it by hand
 * **dispatcher plan**: The plan is a dispatcher plan for parameter sensitive plan optimization. No executable query can be made for it, so the warning lists the variant query ids to use
 * **PSP variant**: The query is a parameter sensitive plan variant. The PLAN PER VALUE hint in the Query Store text was removed from the repro
 * **control characters**: The query text has control characters that XML cannot show. They were replaced with ? in the repro

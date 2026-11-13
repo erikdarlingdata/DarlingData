@@ -107,7 +107,7 @@ BEGIN
                     WHEN N'@what_to_check' THEN N'areas of system health to check'
                     WHEN N'@start_date' THEN N'earliest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
                     WHEN N'@end_date' THEN N'latest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
-                    WHEN N'@warnings_only' THEN N'only show rows where a warning was reported (the blocked process report is not filtered)'
+                    WHEN N'@warnings_only' THEN N'only show rows where a warning or error was reported (the blocked process report is not filtered)'
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
@@ -3468,7 +3468,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
         WHERE wi.component = 'QUERY_PROCESSING'
-        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[. = "WARNING" or . = "ERROR"]') = @warnings_only OR @warnings_only = 0)
         /* Threshold is honored whether or not @warnings_only is set — the
            parameter documents "minimum pending tasks to display" and the
            previous `OR @warnings_only = 0` short-circuit silently ignored
@@ -4744,7 +4744,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
         WHERE wi.component = 'SYSTEM'
-        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[. = "WARNING" or . = "ERROR"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -5454,7 +5454,7 @@ AND   ca.utc_timestamp < @end_date';
     CROSS APPLY w.x.nodes('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') AS w2(x2)
     WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
     AND   w.x.exist('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') = 1
-    AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+    AND  (w.x.exist('(data[@name="state"]/text[. = "WARNING" or . = "ERROR"])') = @warnings_only OR @warnings_only = 0)
     OPTION(RECOMPILE, MAXDOP 1);
 
     IF @debug = 1

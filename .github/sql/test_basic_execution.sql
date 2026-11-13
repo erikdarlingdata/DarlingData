@@ -137,6 +137,20 @@ BEGIN CATCH
 END CATCH;
 GO
 
+/* sp_QuickieCache with both list modes at once, which returns both lists */
+BEGIN TRY
+    EXECUTE dbo.sp_QuickieCache
+        @find_single_use_plans = 1,
+        @find_duplicate_plans = 1;
+    INSERT #exec_results VALUES ('sp_QuickieCache (both plan lists)', 1);
+    PRINT 'PASS: sp_QuickieCache (both plan lists)';
+END TRY
+BEGIN CATCH
+    INSERT #exec_results VALUES ('sp_QuickieCache (both plan lists)', 0);
+    PRINT 'FAIL: sp_QuickieCache (both plan lists) - ' + ERROR_MESSAGE();
+END CATCH;
+GO
+
 /* sp_QuickieCache with NULL parameters, which take their defaults */
 BEGIN TRY
     EXECUTE dbo.sp_QuickieCache

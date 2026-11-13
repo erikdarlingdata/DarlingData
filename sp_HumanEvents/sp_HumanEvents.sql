@@ -973,8 +973,17 @@ BEGIN
     RETURN;
 END;
 
+/*
+@azure is only set for Azure SQL Database (EngineEdition 5). Managed Instance
+(EngineEdition 8) must keep taking the server-scoped path, so it is named here
+instead of widening @azure.
+*/
 IF LOWER(@target_output) = N'event_file'
-AND @azure = 1
+AND
+(
+     @azure = 1
+  OR CONVERT(integer, SERVERPROPERTY('EngineEdition')) = 8
+)
 BEGIN
     RAISERROR(N'The event_file target is not supported for Azure SQL Database or Azure SQL Managed Instance because additional setup is required that this procedure cannot complete. Please use ring_buffer instead.', 11, 1) WITH NOWAIT;
     RETURN;
@@ -4551,7 +4560,20 @@ BEGIN
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 0;
 
-            IF OBJECT_ID(@object_name_check) IS NULL
+            /*
+            An existing object with this name has to be a table. OBJECT_ID
+            without a type also finds a view or a synonym, and the inserts
+            and the retention delete would then run through it against
+            whatever it points at. Stop with a clear message instead.
+            */
+            IF  OBJECT_ID(@object_name_check) IS NOT NULL
+            AND OBJECT_ID(@object_name_check, N'U') IS NULL
+            BEGIN
+                RAISERROR(N'%s exists but is not a table. sp_HumanEvents will not log through a view or synonym. Drop or rename it so the procedure can create its own table.', 11, 1, @object_name_check) WITH NOWAIT;
+                RETURN;
+            END;
+
+            IF OBJECT_ID(@object_name_check, N'U') IS NULL
             BEGIN
                 IF @debug = 1 BEGIN RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
                 SELECT
@@ -4954,7 +4976,8 @@ END;
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 1;
 
-            IF OBJECT_ID(@object_name_check) IS NOT NULL
+            /* Typed check: a view or synonym with this name is not a logging table */
+            IF OBJECT_ID(@object_name_check, N'U') IS NOT NULL
             BEGIN
                 IF @debug = 1 BEGIN RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
                 SELECT
@@ -5888,7 +5911,17 @@ BEGIN
                                           (-1 * @delete_retention_days),
                                           SYSDATETIME()
                                       ); ' + @nc10
-        FROM #human_events_worker AS hew;
+        FROM #human_events_worker AS hew
+        /* Only delete from a real table, never through a view or synonym that took the name */
+        WHERE OBJECT_ID
+              (
+                  QUOTENAME(hew.output_database) +
+                  N'.' +
+                  QUOTENAME(hew.output_schema) +
+                  N'.' +
+                  QUOTENAME(hew.event_type),
+                  N'U'
+              ) IS NOT NULL;
 
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
 

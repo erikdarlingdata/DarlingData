@@ -89,7 +89,7 @@ ALTER PROCEDURE
     @expert_mode bit = 0, /*returns additional columns and results*/
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas and most decimals rounded away*/
-    @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them*/
+    @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access are skipped*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
@@ -194,7 +194,7 @@ BEGIN
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas and most decimals rounded away'
-                WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them'
+                WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access are skipped'
                 WHEN N'@include_databases' THEN 'comma-separated list of databases to include (only when @get_all_databases = 1)'
                 WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude (only when @get_all_databases = 1)'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
@@ -3943,6 +3943,7 @@ BEGIN
     AND   d.state = 0
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
+    AND   ISNULL(HAS_DBACCESS(d.name), 0) = 1
     AND   (
             @include_databases IS NULL
             OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -3981,6 +3982,8 @@ BEGIN
                     THEN 'Database is read-only'
                     WHEN d.database_id <= 4
                     THEN 'System database'
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    THEN 'No database access'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
@@ -4022,18 +4025,14 @@ BEGIN
     AND   d.state = 0
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
-    AND   NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM sys.dm_hadr_availability_replica_states AS s
-        JOIN sys.availability_databases_cluster AS c
-          ON  s.group_id = c.group_id
-          AND d.name = c.database_name
-        WHERE s.is_local <> 1
-        AND   s.role_desc <> N'PRIMARY'
-        AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-    )
+    /*
+    A database the caller cannot enter still shows ONLINE here, and querying
+    it fails the whole run with Msg 916 (the login has no user in it), Msg 924
+    (single-user and held by another session) or Msg 976 (an availability
+    group secondary the session cannot read). HAS_DBACCESS returns 0 for all
+    three, so those databases are skipped instead.
+    */
+    AND   ISNULL(HAS_DBACCESS(d.name), 0) = 1
     AND   (
             @include_databases IS NULL
             OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -4066,18 +4065,7 @@ BEGIN
                     WHEN d.is_in_standby = 1 THEN 'Database is in standby'
                     WHEN d.is_read_only = 1 THEN 'Database is read-only'
                     WHEN d.database_id <= 4 THEN 'System database'
-                    WHEN EXISTS
-                         (
-                             SELECT
-                                 1/0
-                             FROM sys.dm_hadr_availability_replica_states AS s
-                             JOIN sys.availability_databases_cluster AS c
-                               ON  s.group_id = c.group_id
-                               AND d.name = c.database_name
-                             WHERE s.is_local <> 1
-                             AND   s.role_desc <> N'PRIMARY'
-                             AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-                         ) THEN 'AG replica issues'
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0 THEN 'No database access'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id

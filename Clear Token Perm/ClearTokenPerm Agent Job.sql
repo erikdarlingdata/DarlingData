@@ -41,7 +41,8 @@ BEGIN TRANSACTION;
 DECLARE
     @ReturnCode int = 0,
     @jobId binary(16),
-    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112)));
+    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112))),
+    @owner sysname = SUSER_SNAME(0x01); /*sa can be renamed, so look it up by its fixed sid and not by name*/
 
 IF NOT EXISTS
 (
@@ -79,7 +80,7 @@ https://www.erikdarling.com/
 For support, head over to GitHub:
 https://code.erikdarling.com',
     @category_name = N'[Uncategorized (Local)]',
-    @owner_login_name = N'sa',
+    @owner_login_name = @owner,
     @job_id = @jobId OUTPUT;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
