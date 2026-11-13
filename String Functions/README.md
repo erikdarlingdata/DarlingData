@@ -90,6 +90,10 @@ FROM dbo.strip_characters_cte(N'abc123!@#', N'^a-z') AS sc;
 -- Returns: abc
 ```
 
+Spaces at the start and end of the string stay in the result unless the match expression removes them.
+
+The function builds its result with FOR XML, so the text it keeps must be valid XML text. If the kept text has a control character, the function fails with error 6841. Tab, carriage return, and line feed are fine. SQL Server 2016 has no code fix for this. To avoid the error, add the control character to the match expression so that the function removes it. For example, use `N'0-9' + NCHAR(1)` to also remove character 1.
+
 ## Implementation Notes
 
 - All functions are schema-bound for better performance
