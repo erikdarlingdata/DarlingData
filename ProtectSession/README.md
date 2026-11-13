@@ -113,7 +113,8 @@ The proc degrades gracefully without `KILL` permission -- it just logs the failu
 ## Notes
 
 * Run from a *separate* connection from the one you're protecting. The proc raises an error if you try to point it at its own `@@SPID`.
-* `SET XACT_ABORT ON` is **deliberately omitted**. The proc is a long-running watchdog; transient errors from a session dying between sample and kill, or brief DMV unavailability, are meant to be caught by the inner `BEGIN CATCH` and ignored so the next cycle can recover. `XACT_ABORT ON` would terminate the loop on the first such hiccup.
+* `SET XACT_ABORT ON` is **deliberately omitted**.
+* Error handling is narrow. Only the two `KILL` statements (the blocker `KILL` and the protected-session `KILL`) each have their own `BEGIN TRY/CATCH`. If a `KILL` fails (the session already ended, or you lack `ALTER ANY CONNECTION`), the proc prints the error and carries on to the next cycle. Any other error, such as one in the snapshot query, goes to the outer `CATCH`, which rolls back any open transaction and re-throws. That ends the proc, so the watchdog stops.
 * The proc loops until the protected session ends (commit, disconnect, or external kill). When it does, the outer `WHILE EXISTS` falls through and the proc returns.
 * `@check_interval_seconds = 1` is fine on idle systems but the per-cycle `dm_tran_locks` scan grows with lock-manager population; on very busy servers consider raising it.
 

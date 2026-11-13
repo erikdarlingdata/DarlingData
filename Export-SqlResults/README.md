@@ -31,17 +31,17 @@ Built for the scripts in this repo — sp_QuickieStore, sp_QuickieCache, sp_Pres
 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
-| @ServerInstance | string | required | Server or instance to connect to |
-| @Database | string | master | Database context for the query |
-| @Query | string | | T-SQL to run (this or -InputFile) |
-| @InputFile | string | | Path to a .sql file to run (GO batches are honored) |
-| @OutDir | string | required | Output folder; created if missing |
-| @InlineMaxChars | int | 8000 | Values longer than this spill to their own file; artifact XML (plans, deadlock graphs, blocked process reports) always spills |
-| @CommandTimeout | int | 600 | Command timeout in seconds |
-| @Credential | pscredential | | SQL auth; omit for Windows auth |
-| @ReadOnlyIntent | switch | off | Connect with ApplicationIntent=ReadOnly, for AG secondaries set to ALLOW_CONNECTIONS = READ_ONLY |
-| @FlattenNewlines | switch | off | Collapse newlines in CSV cells to spaces (quoted CSV carries newlines fine without it) |
-| @ExcelSafe | switch | off | Prefix cells starting with = + - @ so Excel does not evaluate them as formulas |
+| -ServerInstance | string | required | Server or instance to connect to |
+| -Database | string | master | Database context for the query |
+| -Query | string | | T-SQL to run (this or -InputFile) |
+| -InputFile | string | | Path to a .sql file to run (GO batches are honored) |
+| -OutDir | string | required | Output folder; created if missing |
+| -InlineMaxChars | int | 8000 | Values longer than this spill to their own file; artifact XML (plans, deadlock graphs, blocked process reports) always spills |
+| -CommandTimeout | int | 600 | Command timeout in seconds |
+| -Credential | pscredential | | SQL auth; omit for Windows auth |
+| -ReadOnlyIntent | switch | off | Connect with ApplicationIntent=ReadOnly, for AG secondaries set to ALLOW_CONNECTIONS = READ_ONLY |
+| -FlattenNewlines | switch | off | Collapse newlines in CSV cells to spaces (quoted CSV carries newlines fine without it) |
+| -ExcelSafe | switch | off | Prefix cells starting with = + - @ so Excel does not evaluate them as formulas |
 
 ## How values are classified
 
@@ -70,6 +70,8 @@ OutDir\
     manifest.csv           result set / row / column -> file correlation
     messages.log           RAISERROR WITH NOWAIT progress and PRINT output
 ```
+
+If a batch raises an error (severity 11 to 16), the script stops with that error. The CSV files and spilled files written so far stay on disk, and `manifest.csv` is still written for them.
 
 Spilled files are deduplicated by content hash. Procs like sp_HealthParser repeat the same deadlock graph on every process and frame row — identical values share one file on disk, and the manifest maps every referencing cell to it.
 

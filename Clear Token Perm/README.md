@@ -20,6 +20,8 @@ The directory includes three files:
 
 The main stored procedure monitors the size of the TokenAndPermUserStore cache and clears it when it exceeds a specified threshold.
 
+Install it in the master database. The script creates the procedure in whatever database you run it in, and the Agent job runs it in master. If you install it in another database, change `@database_name` in the job step to that database.
+
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
 | @CacheSizeGB | decimal(38,2) | None (required) | The threshold size in GB that triggers cache clearing |
@@ -34,7 +36,7 @@ The procedure:
 
 The Agent job script:
 - Creates a job named "Clear Security Cache Every 30 Minutes"
-- Runs the ClearTokenPerm procedure with a 1GB threshold
+- Runs the ClearTokenPerm procedure with a 1GB threshold, in the master database
 - Schedules execution every 30 minutes
 - Includes error handling and transaction support
 

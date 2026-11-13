@@ -63,11 +63,13 @@ WITH RECOMPILE
 AS
 BEGIN
     /*
-    No SET XACT_ABORT ON here. ProtectSession is a long-running watchdog with
-    BEGIN TRY/CATCH around its work; XACT_ABORT would terminate the loop on the
-    first transient error (a session dying between sampling and KILL, a brief
-    DMV unavailability) instead of letting the catch swallow it and the next
-    cycle recover. Deliberate omission, not a missing setting.
+    No SET XACT_ABORT ON here. Deliberate omission, not a missing setting.
+    Error handling is narrow. Only the two KILL statements (the blocker KILL and
+    the protected session KILL) each sit in their own BEGIN TRY/CATCH: a failed
+    KILL (the session already ended, or no ALTER ANY CONNECTION permission) is
+    printed and the loop goes on to the next cycle. Any other error, such as one
+    in the snapshot query, goes to the outer CATCH below, which rolls back any
+    open transaction and re-throws. That ends the proc, so the watchdog stops.
     */
     SET STATISTICS XML OFF;
     SET NOCOUNT ON;
