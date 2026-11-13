@@ -2985,6 +2985,258 @@ def plan_parsing_tests(server, password, R):
         _sqlcmd(server, password, CLEANUP_SQL.replace(TEST_DB, PP_DB))
 
 
+# ---------------------------------------------------------------------------
+# Last values and the @end_date default window
+
+LV_DB = TEST_DB + "_lv"
+LV_MARKER = "qs_lv_marker"
+
+LV_FIXTURE_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db};
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, INTERVAL_LENGTH_MINUTES = 1,
+     QUERY_CAPTURE_MODE = ALL, WAIT_STATS_CAPTURE_MODE = ON);
+""".format(db=LV_DB)
+
+# Wait for READ_WRITE and for capture to be live, then clear the plan cache so
+# lv_q compiles with capture on, as the regression window fixture does.
+LV_SCHEMA_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0, @rows bigint = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+CREATE TABLE dbo.lv_lock (id integer NOT NULL PRIMARY KEY, v integer NOT NULL);
+INSERT dbo.lv_lock (id, v) VALUES (1, 0);
+EXECUTE (N'CREATE PROCEDURE dbo.lv_q AS BEGIN SELECT /* qs_lv_marker */ l.v FROM dbo.lv_lock AS l WHERE l.id = 1; END;');
+SET @tries = 0;
+WHILE @tries < 10 AND @rows = 0
+BEGIN
+    EXECUTE (N'SELECT /* lv_warmup */ c = COUNT_BIG(*) FROM dbo.lv_lock AS l;');
+    EXECUTE sys.sp_query_store_flush_db;
+    SELECT @rows = COUNT_BIG(*) FROM sys.query_store_query_text AS qsqt
+    WHERE qsqt.query_sql_text LIKE N'%lv[_]warmup%';
+    IF @rows = 0 WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
+SELECT marker = 'LV_WARM:' + CONVERT(varchar(20), @rows) + ':' +
+    CONVERT(varchar(10), SERVERPROPERTY('ProductMajorVersion'));
+"""
+
+# The lock holder: takes an X lock on the row lv_q reads, waits until it sees
+# a request blocked behind it, then holds the lock {hold} more seconds.
+LV_HOLDER_SQL = """
+SET NOCOUNT ON;
+BEGIN TRANSACTION;
+UPDATE l SET l.v += 1 FROM dbo.lv_lock AS l WHERE l.id = 1;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_exec_requests AS der
+                  WHERE der.blocking_session_id = @@SPID)
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+WAITFOR DELAY '00:00:0{hold}';
+COMMIT TRANSACTION;
+"""
+
+# The waiter: runs lv_q once the holder's X lock on lv_lock is granted, so it
+# blocks. The check names the table because other sessions, such as Query
+# Store's own writes, can hold X key locks in the same database.
+LV_BLOCKED_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_tran_locks AS dtl
+                  JOIN sys.partitions AS p
+                    ON p.hobt_id = dtl.resource_associated_entity_id
+                  WHERE dtl.resource_database_id = DB_ID()
+                  AND   dtl.resource_type = N'KEY'
+                  AND   dtl.request_mode = N'X'
+                  AND   dtl.request_status = N'GRANT'
+                  AND   p.object_id = OBJECT_ID(N'dbo.lv_lock'))
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+EXECUTE dbo.lv_q;
+"""
+
+# Query Store's own numbers for lv_q: each runtime stats row with its last
+# execution time (UTC, sortable) and last duration in microseconds.
+LV_RUNS_SQL = """
+SET NOCOUNT ON;
+EXECUTE sys.sp_query_store_flush_db;
+SELECT t = 'LV|run|' + qsrs.execution_type_desc + '|' +
+    CONVERT(varchar(30), CONVERT(datetime2(7), SWITCHOFFSET(qsrs.last_execution_time, '+00:00')), 121) + '|' +
+    CONVERT(varchar(30), qsrs.last_duration)
+FROM sys.query_store_runtime_stats AS qsrs
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsrs.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.lv_q');
+"""
+
+# The same for the Lock wait rows, each with the last execution time of the
+# runtime stats row of the same plan, interval and execution type.
+LV_WAITS_SQL = """
+SET NOCOUNT ON;
+SELECT t = 'LV|wait|' + qsws.execution_type_desc + '|' +
+    CONVERT(varchar(30), CONVERT(datetime2(7), SWITCHOFFSET(qsrs.last_execution_time, '+00:00')), 121) + '|' +
+    CONVERT(varchar(30), qsws.last_query_wait_time_ms)
+FROM sys.query_store_wait_stats AS qsws
+JOIN sys.query_store_runtime_stats AS qsrs
+  ON  qsrs.plan_id = qsws.plan_id
+  AND qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+  AND qsrs.execution_type = qsws.execution_type
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsws.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.lv_q')
+AND   qsws.wait_category_desc = N'Lock';
+"""
+
+LV_CLEANUP_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+""".format(db=LV_DB)
+
+
+def lv_blocked(server, password, hold, timeout):
+    """One lv_q execution that waits on a lock held for `hold` seconds after
+    it is seen blocked. With a client timeout shorter than the hold, the
+    client cancels it and Query Store records an Aborted run; with a longer
+    one it finishes as a Regular run. Returns the errors found."""
+    holder = subprocess.Popen(
+        _sqlcmd_prefix() + ["-S", server, "-U", "sa", "-P", password,
+                            "-d", LV_DB, "-Q", LV_HOLDER_SQL.format(hold=hold)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        cmd = _sqlcmd_prefix() + ["-S", server, "-U", "sa", "-P", password,
+                                  "-d", LV_DB, "-t", str(timeout),
+                                  "-Q", LV_BLOCKED_SQL]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        out = (r.stdout or b"").decode("utf-8", errors="replace")
+        h_out, h_err = holder.communicate(timeout=120)
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+    text = out + "\n" + h_out.decode("utf-8", errors="replace") + "\n" + \
+        h_err.decode("utf-8", errors="replace")
+    errs = find_sql_errors(text)
+    if holder.returncode:
+        errs.append("lock holder exited %d: %s" % (holder.returncode, text.strip()[-200:]))
+    return errs
+
+
+def last_values_tests(server, password, R):
+    """The last_ columns come from the latest run of a plan, whatever its
+    execution type. An aborted run that took longer, then a newer regular run
+    of the same plan: last_duration_ms and the last wait have to be the
+    regular run's, not the largest across the types."""
+    G = "LastValues"
+    try:
+        _sqlcmd(server, password, LV_FIXTURE_SQL)
+        out, err = _sqlcmd(server, password, LV_SCHEMA_SQL, database=LV_DB, timeout=300)
+        m = re.search(r"LV_WARM:(\d+):(\d+)", out)
+        if find_sql_errors(out + "\n" + err) or not m or int(m.group(1)) == 0:
+            R.check(G, "last values fixture built", False,
+                    (out + "\n" + err).replace("\n", " ")[:200])
+            return
+        major = int(m.group(2))
+
+        # The aborted run waits about 3 seconds before the client gives up.
+        # The regular run, after it, waits about 1 second for a second holder.
+        errs = lv_blocked(server, password, hold=5, timeout=3)
+        errs += lv_blocked(server, password, hold=1, timeout=30)
+        R.check(G, "aborted run then regular run executed", not errs, str(errs[:2]))
+
+        out, err = _sqlcmd(server, password, LV_RUNS_SQL, database=LV_DB)
+        runs = re.findall(r"LV\|run\|(\w+)\|([\d\- :.]+)\|(\d+)", out)
+        by_type = {t: int(d) for t, _w, d in runs}
+        R.check(G, "Query Store has an aborted run longer than the regular run",
+                "Aborted" in by_type and "Regular" in by_type
+                and by_type["Aborted"] - by_type["Regular"] >= 500000,
+                "runs=%s" % runs)
+        if "Aborted" not in by_type or "Regular" not in by_type:
+            return
+        latest = max(runs, key=lambda r: r[1])
+        R.check(G, "the regular run is the latest run", latest[0] == "Regular",
+                "runs=%s" % runs)
+        expected_ms = int(latest[2]) / 1000.0
+
+        out, combined = run_qs(server, password,
+                               ", @query_text_search = '%s', @expert_mode = 1, "
+                               "@format_output = 0, @hide_help_table = 1" % LV_MARKER,
+                               database_name=LV_DB)
+        rows = source_rows(out, "runtime_stats")
+        R.check(G, "runs cleanly and returns the plan",
+                not find_sql_errors(combined) and len(rows) == 1,
+                "rows=%d errors=%s" % (len(rows), find_sql_errors(combined)[:2]))
+        if len(rows) == 1:
+            got = number(rows[0].get("last_duration_ms"))
+            R.check(G, "last_duration_ms is the latest run's, not the aborted run's",
+                    got is not None and abs(got - expected_ms) < 0.01,
+                    "got %s expected %s (runs %s)" % (got, expected_ms, runs))
+
+        if major >= 14:
+            wout, werr = _sqlcmd(server, password, LV_WAITS_SQL, database=LV_DB)
+            waits = re.findall(r"LV\|wait\|(\w+)\|([\d\- :.]+)\|(\d+)", wout)
+            types = sorted(set(t for t, _w, _l in waits))
+            R.check(G, "Query Store has Lock waits for both execution types",
+                    types == ["Aborted", "Regular"], "waits=%s" % waits)
+            if types == ["Aborted", "Regular"]:
+                latest_wait = max(waits, key=lambda w: w[1])
+                wrows = [r for r in source_rows(out, "query_store_wait_stats_by_query")
+                         if r.get("wait_category_desc") == "Lock"]
+                got = number(wrows[0].get("last_query_wait_time_ms")) if len(wrows) == 1 else None
+                R.check(G, "last_query_wait_time_ms is the latest run's, not the aborted run's",
+                        got is not None and got == float(latest_wait[2]),
+                        "got %s expected %s (waits %s)" % (got, latest_wait[2], waits))
+    finally:
+        _sqlcmd(server, password, LV_CLEANUP_SQL)
+
+
+def end_date_tests(server, password, R):
+    """Only @end_date given: the window is the seven days before it, with the
+    offset it was given in. It used to start at the default start date, which
+    an older @end_date is before, so the window moved to seven days after
+    that start date and the date asked for was ignored."""
+    G = "EndDateOnly"
+    out, combined = run_qs(server, password,
+                           ", @debug = 1, @end_date = '2020-10-01 12:00:00 -05:00'")
+    params = [dict(zip(h, r)) for h, rows in result_sets(out)
+              if h and h[0] == "parameter_type"
+              for r in rows if r and r[0] == "procedure_parameters"]
+    R.check(G, "runs cleanly with only an old @end_date",
+            completed(out) and not find_sql_errors(combined) and len(params) == 1,
+            str(find_sql_errors(combined)[:2]))
+    if len(params) != 1:
+        return
+    start, end = params[0].get("start_date", ""), params[0].get("end_date", "")
+    R.check(G, "@end_date is used as given", end.startswith("2020-10-01 17:00:00"),
+            "end_date=%s" % end)
+    R.check(G, "@start_date is seven days before @end_date",
+            start.startswith("2020-09-24 17:00:00"), "start_date=%s" % start)
+    R.check(G, "the period line shows the same window",
+            "query store data for period 2020-09-24 12:00:00 through 2020-10-01 12:00:00" in out,
+            "period line not found")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="SQL2022")
@@ -3046,9 +3298,11 @@ def main():
         if build_ok:
             multi_database_tests(args.server, args.password, R)
             id_list_tests(args.server, args.password, R)
+            end_date_tests(args.server, args.password, R)
+        last_values_tests(args.server, args.password, R)
         plan_parsing_tests(args.server, args.password, R)
     finally:
-        out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL + RM_CLEANUP_SQL)
+        out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL + RM_CLEANUP_SQL + LV_CLEANUP_SQL)
         R.check("Fixture", "scratch databases dropped",
                 not find_sql_errors(out + "\n" + err), "cleanup failed")
 
