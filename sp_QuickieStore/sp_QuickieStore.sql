@@ -61,7 +61,7 @@ ALTER PROCEDURE
     @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @timezone sysname = NULL, /*user specified time zone to override dates displayed in results*/
     @execution_count bigint = NULL, /*the minimum number of executions a query must have*/
-    @duration_ms bigint = NULL, /*the minimum duration a query must have to show up in results*/
+    @duration_ms bigint = NULL, /*a plan shows up if one of its intervals averaged this many ms or more. The results count all of its intervals in the time period*/
     @execution_type_desc nvarchar(60) = NULL, /*the type of execution you want to filter by (regular, aborted, exception, failed); failed bundles aborted and exception*/
     @procedure_schema sysname = NULL, /*the schema of the procedure you're searching for*/
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
@@ -166,7 +166,7 @@ BEGIN
                 WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@timezone' THEN 'user specified time zone to override dates displayed in results'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
-                WHEN N'@duration_ms' THEN 'the minimum duration a query must have to show up in results'
+                WHEN N'@duration_ms' THEN 'a plan shows up if one of its intervals averaged this many ms or more. The results count all of its intervals in the time period'
                 WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter by (regular, aborted, exception, failed); failed bundles aborted and exception'
                 WHEN N'@procedure_schema' THEN 'the schema of the procedure you''re searching for'
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
@@ -661,6 +661,20 @@ END; /*End @help section*/
 
 
 /*
+The values below are checked against fixed lists of lowercase words.
+When the database that holds this procedure has a case sensitive
+collation, 'Duration' or 'Improved' would miss those lists and fall
+back to a different value, so lowercase them once before any check.
+*/
+SELECT
+    @sort_order = LOWER(@sort_order),
+    @regression_comparator = LOWER(@regression_comparator),
+    @regression_direction = LOWER(@regression_direction),
+    @execution_type_desc = LOWER(@execution_type_desc),
+    @wait_filter = LOWER(@wait_filter);
+
+
+/*
 Normalize Sort Order.
 Allow avg/average prefix for backwards compatibility,
 e.g. 'avg cpu' or 'average cpu' maps to 'cpu'.
@@ -1150,6 +1164,16 @@ CREATE TABLE
     #plan_ids_having_enough_executions
 (
     plan_id bigint PRIMARY KEY CLUSTERED,
+);
+
+/*
+For filtering by @duration_ms.
+A plan is in here when any one of its intervals meets @duration_ms.
+*/
+CREATE TABLE
+    #plan_ids_having_enough_duration
+(
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -2668,7 +2692,13 @@ FROM
         is_include,
         requires_secondary_processing
     )
-WHERE v.parameter_value IS NOT NULL;
+/*
+A blank list is the same as no list. The NULLIF cleanup further down
+runs after this table is filled, so skip blank values here: a blank
+include list would otherwise add an EXISTS against an empty table and
+hide every row.
+*/
+WHERE NULLIF(v.parameter_value, N'') IS NOT NULL;
 
 /*
 Attempt at overloading procedure name so it can accept a schema.procedure or
@@ -4147,6 +4177,9 @@ TRUNCATE TABLE
 
 TRUNCATE TABLE
     #plan_ids_having_enough_executions;
+
+TRUNCATE TABLE
+    #plan_ids_having_enough_duration;
 
 TRUNCATE TABLE
     #include_plan_ids;
@@ -10243,12 +10276,6 @@ BEGIN
 END;
 
 /*Other filters*/
-IF @duration_ms IS NOT NULL
-BEGIN
-    SELECT
-        @where_clause += N'    AND   qsrs.avg_duration >= (@duration_ms * 1000.)' + @nc10;
-END;
-
 IF @execution_type_desc IS NOT NULL
 BEGIN
     IF @execution_type_desc = N'failed'
@@ -10360,6 +10387,135 @@ N'   OR CONVERT(time(0), qsrs.last_execution_time) BETWEEN ''00:00:00'' AND @wor
 N')' + @nc10;
     END; /*Work hours*/
 END; /*Final end*/
+
+/*
+@duration_ms filters plans, not intervals.
+A plan qualifies when any one of its runtime stats intervals in the
+time period meets @duration_ms. Every interval of a qualifying plan
+then counts, so its executions, totals and averages cover all of its
+runs. Filtering the intervals themselves dropped the fast runs of a
+plan before they were added up, which understated executions and
+totals and overstated averages.
+
+The interval filters built so far (time period, execution type, work
+hours) apply to the intervals that are looked at here. Plan level
+filters are added to @where_clause after this point.
+
+In regression mode, @where_clause is also used for the baseline time
+period, so a plan qualifies when it meets @duration_ms in either time
+period. Otherwise a plan that only ran in the baseline period could
+never qualify. The baseline version of the time period filter is made
+the same way @regression_where_clause is made further down.
+*/
+IF @duration_ms IS NOT NULL
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_having_enough_duration',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    SELECT
+        qsrs.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    WHERE qsrs.avg_duration >= (@duration_ms * 1000.)
+    AND
+    (
+        (
+            1 = 1
+            ' + @where_clause + N'
+        )' +
+    CASE
+        WHEN @regression_mode = 1
+        THEN N'
+     OR (
+            1 = 1
+            ' +
+            REPLACE
+            (
+                REPLACE
+                (
+                    @where_clause,
+                    '@start_date',
+                    '@regression_baseline_start_date'
+                ),
+                '@end_date',
+                '@regression_baseline_end_date'
+            ) + N'
+        )'
+        ELSE N''
+    END
+    + N'
+    )
+    GROUP BY
+        qsrs.plan_id
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #plan_ids_having_enough_duration
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    SELECT
+        @where_clause += N'    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #plan_ids_having_enough_duration AS enough_duration
+        WHERE enough_duration.plan_id = qsrs.plan_id
+    )' + @nc10;
+END;
 
 /*
 In this section we set up the filter if someone's searching for
@@ -11661,14 +11817,32 @@ qualifies keeps the filter from matching queries whose waits
 of this category happened entirely outside of it. Matches the
 date semantics of the main where clause and the wait sort
 order joins.
+In regression mode this table also filters the baseline time
+period, so a plan with waits of this category only in the
+baseline period has to qualify too.
 */
 JOIN  ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
   ON  qsws.plan_id = qsrs.plan_id
   AND qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
   AND qsws.execution_type = qsrs.execution_type
 WHERE 1 = 1
-AND   qsrs.last_execution_time >= @start_date
-AND   qsrs.last_execution_time <  @end_date
+AND
+(
+    (
+        qsrs.last_execution_time >= @start_date
+    AND qsrs.last_execution_time <  @end_date
+    )' +
+CASE
+    WHEN @regression_mode = 1
+    THEN N'
+ OR (
+        qsrs.last_execution_time >= @regression_baseline_start_date
+    AND qsrs.last_execution_time <  @regression_baseline_end_date
+    )'
+    ELSE N''
+END
++ N'
+)
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
@@ -11711,9 +11885,13 @@ OPTION(RECOMPILE);' + @nc10;
     EXECUTE sys.sp_executesql
         @sql,
       N'@start_date datetimeoffset(7),
-        @end_date datetimeoffset(7)',
+        @end_date datetimeoffset(7),
+        @regression_baseline_start_date datetimeoffset(7),
+        @regression_baseline_end_date datetimeoffset(7)',
         @start_date,
-        @end_date;
+        @end_date,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -11867,10 +12045,16 @@ about to see, but easier because we do not need to return or sort
 by the execution count.
 We just need to know that these plans have enough executions.
 
-The rows are summed per plan first, so the window sum per query
-runs over one row per plan instead of one row per interval, and
-query_id comes from sys.query_store_plan, which has it, instead of
-a join to sys.query_store_query.
+The rows are summed per query, and query_id comes from
+sys.query_store_plan, which has it, instead of a join to
+sys.query_store_query.
+
+The executions are counted in the current time period only, but
+every plan_id of a query that has enough of them goes into the
+table, whether or not that plan ran in the current period. In
+regression mode this table also filters the baseline time period,
+and a plan that only ran in the baseline would otherwise be
+filtered out of the comparison it belongs in.
 */
 IF @execution_count > 0
 BEGIN
@@ -11891,13 +12075,11 @@ BEGIN
     SELECT
         @sql += N'
     SELECT
-        unfiltered_execution_counts.plan_id
+        qsp_all.plan_id
     FROM
     (
        SELECT
-           qsp.plan_id,
-           total_executions_for_query_of_plan =
-               SUM(SUM(qsrs.count_executions)) OVER (PARTITION BY qsp.query_id)
+           qsp.query_id
        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
        JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
          ON qsp.plan_id = qsrs.plan_id
@@ -11905,11 +12087,12 @@ BEGIN
        ' + @where_clause
          + N'
        GROUP BY
-           qsp.query_id,
-           qsp.plan_id
-    ) AS unfiltered_execution_counts
-    WHERE
-        unfiltered_execution_counts.total_executions_for_query_of_plan >= @execution_count
+           qsp.query_id
+       HAVING
+           SUM(qsrs.count_executions) >= @execution_count
+    ) AS qualifying_queries
+    JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_all
+      ON qsp_all.query_id = qualifying_queries.query_id
     OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
@@ -23847,6 +24030,29 @@ BEGIN
             SELECT
                 result =
                     '#plan_ids_having_enough_executions is empty';
+        END;
+
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #plan_ids_having_enough_duration AS plans
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#plan_ids_having_enough_duration',
+                plans.*
+            FROM #plan_ids_having_enough_duration AS plans
+            ORDER BY
+                plans.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#plan_ids_having_enough_duration is empty';
         END;
 
         IF EXISTS

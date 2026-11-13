@@ -126,12 +126,15 @@ def find_sql_errors(text):
 
 
 def run_qs(server, password, extra="", timeout=300, database_name=TEST_DB,
-           width=200):
+           width=200, home="master"):
     """Run sp_QuickieStore against the scratch database, always naming it
-    explicitly, and return (stdout, combined-for-error-scanning)."""
+    explicitly, and return (stdout, combined-for-error-scanning). home is
+    the database the procedure runs from; its collation decides how the
+    procedure compares its own parameters."""
     sql = ("SET NOCOUNT ON; EXECUTE dbo.sp_QuickieStore "
            "@database_name = '%s'%s;" % (_esc(database_name), extra))
-    out, err = _sqlcmd(server, password, sql, timeout=timeout, width=width)
+    out, err = _sqlcmd(server, password, sql, database=home, timeout=timeout,
+                       width=width)
     return out, out + "\n" + err
 
 
@@ -319,6 +322,22 @@ BEGIN
     DROP DATABASE {db};
 END;
 """.format(db=CS_DB)
+
+
+# A copy of the installed procedure in the case-sensitive database, so its own
+# parameter checks run under a case-sensitive collation whatever master uses.
+CS_HOME_SQL = """
+SET NOCOUNT ON;
+DECLARE @d nvarchar(max);
+SELECT @d = m.definition
+FROM master.sys.sql_modules AS m
+WHERE m.object_id = OBJECT_ID(N'master.dbo.sp_QuickieStore');
+IF LEFT(LTRIM(@d), 5) = N'ALTER'
+BEGIN
+    EXECUTE (N'CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
+END;
+EXECUTE (@d);
+"""
 
 
 def build_fixture(server, password, R):
@@ -555,6 +574,45 @@ def case_sensitive_search_tests(server, password, R):
                     completed(out) and result_rows(out) == 0,
                     "completed=%s rows=%d errors=%s"
                     % (completed(out), result_rows(out), find_sql_errors(combined)))
+
+        # The checks on @sort_order, the regression parameters,
+        # @execution_type_desc and @wait_filter compare against lowercase
+        # lists. Run the procedure from the case-sensitive database, so that
+        # a value in any other case has to be accepted, not replaced by a
+        # default or rejected.
+        out, err = _sqlcmd(server, password, CS_HOME_SQL, database=CS_DB,
+                           timeout=600)
+        errs = find_sql_errors(out + "\n" + err)
+        R.check("CaseParameters", "procedure copied into the case-sensitive database",
+                not errs, str(errs[:2]))
+        if not errs:
+            regression = (", @regression_baseline_start_date = '20200101'"
+                          ", @regression_baseline_end_date = '20200102'")
+            cases = [
+                ("@sort_order = 'Duration'", ", @sort_order = 'Duration'",
+                 "so out of this world"),
+                ("@regression_comparator = 'Relative'",
+                 regression + ", @regression_comparator = 'Relative'",
+                 "regression_comparator"),
+                ("@regression_direction = 'Improved'",
+                 regression + ", @regression_direction = 'Improved'",
+                 "regression_direction"),
+                ("@execution_type_desc = 'Regular'",
+                 ", @execution_type_desc = 'Regular'",
+                 "can only take one of these four"),
+                ("@wait_filter = 'Lock'", ", @wait_filter = 'Lock'",
+                 "is invalid"),
+            ]
+            for label, extra, complaint in cases:
+                out, combined = run_qs(server, password, extra,
+                                       database_name=CS_DB, home=CS_DB)
+                R.check("CaseParameters",
+                        "%s is accepted in a case-sensitive database" % label,
+                        completed(out) and complaint not in out
+                        and not find_sql_errors(combined),
+                        "completed=%s complaint=%s errors=%s"
+                        % (completed(out), complaint in out,
+                           find_sql_errors(combined)))
     finally:
         _sqlcmd(server, password, CS_CLEANUP_SQL)
 
@@ -730,6 +788,19 @@ def id_list_tests(server, password, R):
                 completed(out) and result_rows(out) == baseline,
                 "rows=%d expected=%d errors=%s"
                 % (result_rows(out), baseline, find_sql_errors(combined)))
+
+    # A blank list means no list. A blank include list next to an ignore list
+    # used to leave nothing, because the blank list still filtered.
+    out, combined = run_qs(server, password,
+                           ", @ignore_plan_ids = N'%s'" % ids[0])
+    ignore_only = result_rows(out)
+    out, combined = run_qs(server, password,
+                           ", @include_plan_ids = N'', @ignore_plan_ids = N'%s'"
+                           % ids[0])
+    R.check("IdList", "a blank @include_plan_ids is ignored next to an ignore list",
+            completed(out) and ignore_only > 0 and result_rows(out) == ignore_only,
+            "rows=%d expected=%d errors=%s"
+            % (result_rows(out), ignore_only, find_sql_errors(combined)))
 
     # About 380 ids is 3,400 characters; the splitter adds six per comma, so
     # the expanded list passes 4,000 and used to fail with Msg 9400.
@@ -1061,6 +1132,7 @@ FROM
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q1 AS BEGIN SELECT /* qs_rm_marker */ l.v FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q2 AS BEGIN SELECT /* qs_rm_marker */ c = COUNT_BIG(*) FROM dbo.rm_scan AS s WHERE s.v = 5; END;');
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q3 AS BEGIN SELECT /* qs_rm_marker */ l.id, l.v FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
+EXECUTE (N'CREATE PROCEDURE dbo.rw_q5 AS BEGIN SELECT /* qs_rw_marker */ x = l.v + l.id FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
 SET @tries = 0;
 WHILE @tries < 10 AND @rows = 0
 BEGIN
@@ -1361,6 +1433,13 @@ def rm_plain(server, password, count):
     return find_sql_errors(out + "\n" + err)
 
 
+def rw_plain(server, password, count):
+    """rw_q5, `count` times, with nothing blocking it."""
+    sql = "SET NOCOUNT ON; " + " ".join(["EXECUTE dbo.rw_q5;"] * count)
+    out, err = _sqlcmd(server, password, sql, database=RM_DB)
+    return find_sql_errors(out + "\n" + err)
+
+
 def rm_blocked(server, password, proc="rm_q1"):
     """One execution of proc (rm_q1 or rm_q3) that waits on a lock for at
     least 2 seconds. Tries up to 3 times, so one run that Query Store does
@@ -1393,6 +1472,113 @@ def rm_blocked(server, password, proc="rm_q1"):
     return errs, added
 
 
+# rw_q5's runtime stats rows: plan, interval, executions, average duration in
+# microseconds, and the period, split the same way as RM_TRUTH_SQL does.
+RW_TRUTH_SQL = """
+SET NOCOUNT ON;
+SELECT marker = 'RW|' + CONVERT(varchar(20), qsp.plan_id) + '|' +
+    CONVERT(varchar(20), qsrs.runtime_stats_interval_id) + '|' +
+    CONVERT(varchar(20), qsrs.count_executions) + '|' +
+    CONVERT(varchar(30), CONVERT(bigint, qsrs.avg_duration)) + '|' +
+    CASE WHEN qsrs.last_execution_time >= CONVERT(datetimeoffset(7), '{split}', 127)
+         THEN 'No' ELSE 'Yes' END
+FROM sys.query_store_runtime_stats AS qsrs
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsrs.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.rw_q5');
+"""
+
+
+def regression_filter_tests(server, password, R, state, split, end, runs, q2_plans):
+    """@duration_ms, @wait_filter and @execution_count keep every plan of the
+    queries they pick, in both time periods. rw_q5 has one slow baseline
+    interval with a Lock wait, and only fast runs without waits in the current
+    period. rm_q2 changes plan between the periods: the first plan only ran in
+    the baseline, the second only in the current period."""
+    out, err = _sqlcmd(server, password, RW_TRUTH_SQL.format(split=split[1]),
+                       database=RM_DB)
+    rows = [(plan, int(n), int(avg), period) for plan, _, n, avg, period in
+            re.findall(r"RW\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|(Yes|No)", out)]
+    plans = sorted({r[0] for r in rows})
+    total = {period: sum(n for _, n, _, per in rows if per == period)
+             for period in ("Yes", "No")}
+    slow = any(avg >= 1000000 for _, _, avg, per in rows if per == "Yes")
+    fast = all(avg < 1000000 for _, _, avg, per in rows if per == "No")
+    R.check("RegressionFilter",
+            "rw_q5 has one plan, a slow baseline interval and only fast current "
+            "intervals", len(plans) == 1 and slow and fast and rows
+            and all(total.values()), "rows=%s" % rows)
+    if not (len(plans) == 1 and slow and fast and rows and all(total.values())):
+        return
+    plan = plans[0]
+    window = ", @query_text_search = 'qs_rw_marker', @expert_mode = 1, @format_output = 0"
+    regression = (", @regression_baseline_start_date = '%s'"
+                  ", @regression_baseline_end_date = '%s'"
+                  ", @start_date = '%s', @end_date = '%s'"
+                  % (state["start"][0], split[0], split[0], end[0]))
+
+    def counts(stdout):
+        return {(r.get("plan_id"), r.get("from_regression_baseline_time_period")):
+                r.get("count_executions") for r in source_rows(stdout, "runtime_stats")}
+
+    # Outside regression mode: one slow interval qualifies the plan, and then
+    # every run in the time period counts.
+    for label, extra in (("@duration_ms", ", @duration_ms = 1000"),
+                         ("@duration_ms with @execution_count = all runs",
+                          ", @duration_ms = 1000, @execution_count = %d"
+                          % (total["Yes"] + total["No"]))):
+        out, combined = run_qs(server, password,
+                               ", @start_date = '%s', @end_date = '%s'%s%s"
+                               % (state["start"][0], end[0], extra, window),
+                               database_name=RM_DB)
+        got = counts(out)
+        R.check("DurationFilter",
+                "%s counts every run of a plan with one slow interval" % label,
+                completed(out) and not find_sql_errors(combined)
+                and got == {(plan, None): str(total["Yes"] + total["No"])},
+                "got=%s expected=%d errors=%s"
+                % (got, total["Yes"] + total["No"], find_sql_errors(combined)))
+
+    # Regression mode: the slow baseline interval qualifies the plan, so its
+    # fast current runs are measured too.
+    out, combined = run_qs(server, password,
+                           regression + ", @duration_ms = 1000" + window,
+                           database_name=RM_DB)
+    got = counts(out)
+    R.check("RegressionFilter", "@duration_ms keeps both periods of a plan",
+            completed(out) and not find_sql_errors(combined)
+            and got == {(plan, "Yes"): str(total["Yes"]), (plan, "No"): str(total["No"])},
+            "got=%s expected=%s errors=%s" % (got, total, find_sql_errors(combined)))
+
+    # The Lock wait is only in the baseline period; the current-period runs
+    # still belong to the plan.
+    out, combined = run_qs(server, password,
+                           regression + ", @wait_filter = 'lock'" + window,
+                           database_name=RM_DB)
+    got = counts(out)
+    R.check("RegressionFilter", "@wait_filter keeps both periods of a plan",
+            completed(out) and not find_sql_errors(combined)
+            and got == {(plan, "Yes"): str(total["Yes"]), (plan, "No"): str(total["No"])},
+            "got=%s expected=%s errors=%s" % (got, total, find_sql_errors(combined)))
+
+    # rm_q2 has enough executions in the current period only. Its baseline
+    # plan has to stay, or there is nothing to compare with.
+    if len(q2_plans) == 2 and (q2_plans[1], "No") in runs:
+        enough = runs[(q2_plans[1], "No")][1]
+        out, combined = run_qs(server, password,
+                               regression + ", @execution_count = %d" % enough
+                               + ", @query_text_search = '%s'" % RM_MARKER
+                               + ", @expert_mode = 1, @format_output = 0",
+                               database_name=RM_DB)
+        got = counts(out)
+        R.check("RegressionFilter",
+                "@execution_count keeps the baseline plan of a query with enough "
+                "current executions",
+                completed(out) and not find_sql_errors(combined)
+                and (q2_plans[0], "Yes") in got and (q2_plans[1], "No") in got,
+                "got=%s errors=%s" % (got, find_sql_errors(combined)))
+
+
 def regression_window_setup(server, password, R):
     """Build the regression database and run slot A. Returns what slot B
     needs, or None if the fixture failed."""
@@ -1416,11 +1602,16 @@ def regression_window_setup(server, password, R):
     block_errs, waited = rm_blocked(server, password, "rm_q1")
     block_errs3, waited3 = rm_blocked(server, password, "rm_q3")
     errs += block_errs + block_errs3
+    # rw_q5 waits on a lock once here and runs without waiting in slot B, so
+    # its only baseline interval is slow and its current ones are fast.
+    block_errs5, waited5 = rm_blocked(server, password, "rw_q5")
+    errs += block_errs5
     end = rm_now(server, password)
-    ok = bool(not errs and waited >= 1000 and waited3 >= 1000 and start and end)
-    R.check("RegressionFixture", "slot A: rm_q1 and rm_q3 waited on a lock", ok,
-            "errors=%s lock wait added: rm_q1 %d ms, rm_q3 %d ms"
-            % (errs[:2], waited, waited3))
+    ok = bool(not errs and waited >= 1000 and waited3 >= 1000
+              and waited5 >= 1000 and start and end)
+    R.check("RegressionFixture", "slot A: rm_q1, rm_q3 and rw_q5 waited on a lock", ok,
+            "errors=%s lock wait added: rm_q1 %d ms, rm_q3 %d ms, rw_q5 %d ms"
+            % (errs[:2], waited, waited3, waited5))
     if not ok:
         return None
     return {"start": start, "slot_a_end": end}
@@ -1445,6 +1636,7 @@ def regression_window_tests(server, password, R, state):
     block_errs3, waited3 = rm_blocked(server, password, "rm_q3")
     block_errs, waited = rm_blocked(server, password, "rm_q1")
     errs += block_errs3 + block_errs + rm_plain(server, password, 5)
+    errs += rw_plain(server, password, 5)
     _sqlcmd(server, password,
             "SET NOCOUNT ON; EXECUTE sys.sp_query_store_flush_db; WAITFOR DELAY '00:00:01';",
             database=RM_DB)
@@ -1736,6 +1928,10 @@ def regression_window_tests(server, password, R, state):
             "got=%s expected=%d" % (got_lock, lock_ms()))
     one_per_query(out, "WaitWindow")
     totals_checks(out, "WaitWindow", {None: q1})
+
+    # After the whole-window checks: they read plan cache data for the
+    # fixture's queries, and these runs come after them.
+    regression_filter_tests(server, password, R, state, split, end, runs, q2_plans)
 
     # Regression mode logged to tables: once into tables the procedure
     # creates, once into older WaitStatsByQuery and WaitStatsTotal tables it
