@@ -37,10 +37,11 @@ DECLARE
         CONVERT
         (
             nvarchar(MAX),
-            N'SELECT x = '
+            N'SELECT x = '''
         ) +
         REPLICATE('A', 4000) +
-        REPLICATE('B', 4000), /*Faked long dynamic SQL*/
+        REPLICATE('B', 4000) +
+        N'''', /*Faked long dynamic SQL: selects one long quoted string literal, so it runs*/
     @len int = 0, /*Used to hold the length of the faked long dynamic SQL*/
     @block int = 1, /*Used for the dynamic SQL print loop*/
     @block_size int = 200, /*Same as above*/
@@ -168,11 +169,11 @@ BEGIN
         PRINT SUBSTRING(@s, @block, @block_size);
 
         SELECT
-            @block += @block_size -1;
+            @block += @block_size;
     END;
 
     /*
-    If you need to do this again, make sure to set @block back to zero
+    If you need to do this again, make sure to set @block back to 1
     */
 END;
 
