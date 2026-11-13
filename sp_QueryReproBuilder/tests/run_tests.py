@@ -99,6 +99,11 @@ CV = {
 # text but absent from the plan ParameterList (the documented '?' fill-in path).
 QMARK_WARNING = "were not found in the plan ParameterList"
 
+# Warning text for CLR spatial values (the plan does not record the SRID) and
+# sql_variant values (the plan does not record the base type).
+SRID_WARNING = "does not record its SRID"
+VARIANT_WARNING = "does not record the base type"
+
 
 # ------------------------------------------------------------------ plan builder
 
@@ -603,6 +608,80 @@ def build_cases():
                   params=[("@a", "int", "(-5)"), ("@b", "int", "(2147483647)")]),
         {"echo_expect": {"a": "-5", "s": "n", "b": "2147483647"}}, echo=True)
 
+    # ---------- CLR types and sql_variant -----------------------------------
+    # A plan writes a geography, geometry or hierarchyid value as bare text
+    # (POINT (1 1), /1/2/) and a sql_variant value as bare text with no base
+    # type. Pasted bare into the sp_executesql value list they are a syntax
+    # error (Msg 102). The repro quotes them as N'...' and the engine parses
+    # the text back into the type. Captured from real plans on SQL Server.
+    add("udt:spatial_hierarchyid_run",
+        make_plan("(@g sys.geography, @geo sys.geometry, @h sys.hierarchyid)"
+                  "SELECT c = COUNT_BIG(*) FROM sys.all_columns AS ac "
+                  "WHERE @g IS NOT NULL AND @geo IS NOT NULL AND @h IS NOT NULL AND ac.column_id > 0",
+                  params=[("@g", "sys.geography", "POINT (1 1)"),
+                          ("@geo", "sys.geometry", "LINESTRING (0 0, 1 1)"),
+                          ("@h", "sys.hierarchyid", "/1/2/")]),
+        {"must_exec": True,
+         "expect_params": [("@g", "sys.geography"), ("@geo", "sys.geometry"),
+                           ("@h", "sys.hierarchyid")],
+         "values_present": ["N'POINT (1 1)'", "N'LINESTRING (0 0, 1 1)'", "N'/1/2/'",
+                            SRID_WARNING]},
+        note="bare CLR values were Msg 102; spatial values also warn that the SRID is not carried")
+
+    add("udt:echo_values",
+        make_plan("(@g sys.geography, @h sys.hierarchyid, @geo sys.geometry)"
+                  "SELECT col_a = CONVERT(integer, @h.GetLevel()), "
+                  "col_s = @g.STAsText() + N'|' + @geo.STAsText(), "
+                  "col_b = CONVERT(integer, @g.STSrid)",
+                  params=[("@g", "sys.geography", "POINT (1 1)"),
+                          ("@h", "sys.hierarchyid", "/1/2/"),
+                          ("@geo", "sys.geometry", "LINESTRING (0 0, 1 1)")]),
+        {"echo_expect": {"a": "2", "s": "POINT (1 1)|LINESTRING (0 0, 1 1)", "b": "4326"}},
+        echo=True,
+        note="the value binds as the type: level, WKT and the default geography SRID")
+
+    add("udt:echo_null_values",
+        make_plan("(@g sys.geography, @h sys.hierarchyid)"
+                  "SELECT col_a = ISNULL(CONVERT(integer, @h.GetLevel()), -1), "
+                  "col_s = ISNULL(@g.STAsText(), N'null'), col_b = 3",
+                  params=[("@g", "sys.geography", "NULL"),
+                          ("@h", "sys.hierarchyid", "NULL")]),
+        {"echo_expect": {"a": "-1", "s": "null", "b": "3"}}, echo=True,
+        note="a NULL CLR value stays NULL; quoting it would bind the text NULL and fail to parse")
+
+    add("udt:other_clr_type_quoted",
+        make_plan("(@u dbo.SomeClrType)SELECT c = COUNT_BIG(*) FROM sys.all_columns AS ac "
+                  "WHERE ac.column_id > 0",
+                  params=[("@u", "dbo.SomeClrType", "it's 7")]),
+        {"values_present": ["N'it''s 7'"]},
+        note="any schema-qualified type is a CLR type: quoted, with embedded quotes doubled "
+             "(not executed: the type does not exist)")
+
+    add("variant:values_run",
+        make_plan("(@v1 sql_variant, @v2 sql_variant, @v3 sql_variant)"
+                  "SELECT c = COUNT_BIG(*) FROM sys.all_columns AS ac "
+                  "WHERE @v1 IS NOT NULL AND @v2 IS NOT NULL AND @v3 IS NOT NULL AND ac.column_id > 0",
+                  params=[("@v1", "sql_variant", "str"),
+                          ("@v2", "sql_variant", "20260101"),
+                          ("@v3", "sql_variant", "Jan  5 2026 10:00AM")]),
+        {"must_exec": True,
+         "values_present": ["N'str'", "N'20260101'", "N'Jan  5 2026 10:00AM'", VARIANT_WARNING]},
+        note="bare str was Msg 207 and bare 20260101 bound as an int; the base type is not in the "
+             "plan, so the value is quoted and the repro warns")
+
+    add("variant:echo_values",
+        make_plan("(@v1 sql_variant, @v2 sql_variant, @v3 sql_variant, @v4 sql_variant)"
+                  "SELECT col_a = CONVERT(integer, CONVERT(nvarchar(20), @v2)), "
+                  "col_s = CONVERT(nvarchar(50), @v1) + N'|' + CONVERT(nvarchar(50), @v3), "
+                  "col_b = ISNULL(CONVERT(integer, CONVERT(nvarchar(20), @v4)), -1)",
+                  params=[("@v1", "sql_variant", "str"),
+                          ("@v2", "sql_variant", "20260101"),
+                          ("@v3", "sql_variant", "Jan  5 2026 10:00AM"),
+                          ("@v4", "sql_variant", "NULL")]),
+        {"echo_expect": {"a": "20260101", "s": "str|Jan  5 2026 10:00AM", "b": "-1"},
+         "values_present": [VARIANT_WARNING]}, echo=True,
+        note="the values bind and read back; a NULL sql_variant stays NULL")
+
     # ---------- Negative: no repro should be built -------------------------
     add("negative:no_stmtsimple",
         '<ShowPlanXML xmlns="%s"><BatchSequence><Batch><Statements>'
@@ -664,6 +743,8 @@ def check_case(case, gen, ex):
         if got:
             for k in ("a", "s", "b"):
                 ck(got[k] == exp[k], "echo %s == %r" % (k, exp[k]), "got %r" % got[k])
+        for v in (checks.get("values_present") or []):
+            ck(v in repro, "value present: %s" % v, "not found in repro")
         return out
 
     # ----- normal cases ----------------------------------------------------

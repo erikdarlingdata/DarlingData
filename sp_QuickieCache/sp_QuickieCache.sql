@@ -127,9 +127,9 @@ BEGIN
                     WHEN N'@impact_threshold'
                     THEN N'minimum impact_score to surface in results'
                     WHEN N'@find_single_use_plans'
-                    THEN N'show single-use plans consuming the most memory'
+                    THEN N'show single-use plans consuming the most memory (with @find_duplicate_plans = 1 as well, both lists return)'
                     WHEN N'@find_duplicate_plans'
-                    THEN N'show query hashes with multiple cached plans'
+                    THEN N'show query hashes with multiple cached plans (with @find_single_use_plans = 1 as well, both lists return)'
                     WHEN N'@debug'
                     THEN N'print diagnostic information'
                     WHEN N'@help'
@@ -594,7 +594,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             sup.size_in_bytes DESC
         OPTION(RECOMPILE, MAXDOP 1);
 
-        RETURN;
+        /*
+        With @find_duplicate_plans = 1 as well, fall through so the
+        duplicate plans list returns after this one; this used to RETURN
+        here and the second list never ran, with no message.
+        */
+        IF @find_duplicate_plans = 0
+        BEGIN
+            RETURN;
+        END;
     END;
 
     /*

@@ -19,7 +19,7 @@ While QuickieStore digs into Query Store data, QuickieCache uses the same Pareto
 2. **High-impact queries**: Pareto-scored queries with resource shares and diagnostics
 3. **Plan cache health findings**: plan age distribution, single-use plan bloat per database, duplicate plan detection per database, USERSTORE_TOKENPERM memory pressure
 
-With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure returns only that list and skips the three result sets above. The lists are the largest single-use plans by cached size, or query hashes with more than one cached plan per database.
+With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure returns only that list and skips the three result sets above. The lists are the largest single-use plans by cached size, or query hashes with more than one cached plan per database. With both set to 1, it returns both lists, single-use plans first.
 
 ## Diagnostics Detected
 
@@ -44,8 +44,8 @@ With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure retu
 | @minimum_execution_count | bigint | minimum execution count to include a query | 2 |
 | @ignore_system_databases | bit | exclude system databases (master, model, msdb, tempdb), unless @database_name names one | 1 |
 | @impact_threshold | decimal(3,2) | minimum impact_score to surface | 0.50 |
-| @find_single_use_plans | bit | show single-use plans consuming the most memory | 0 |
-| @find_duplicate_plans | bit | show query hashes with multiple cached plans | 0 |
+| @find_single_use_plans | bit | show single-use plans consuming the most memory (with @find_duplicate_plans = 1 as well, both lists return) | 0 |
+| @find_duplicate_plans | bit | show query hashes with multiple cached plans (with @find_single_use_plans = 1 as well, both lists return) | 0 |
 | @debug | bit | print diagnostic information | 0 |
 | @help | bit | display parameter help | 0 |
 | @version | varchar | OUTPUT; for support | none; OUTPUT |
@@ -81,6 +81,11 @@ EXECUTE dbo.sp_QuickieCache
 
 -- Query hashes with more than one cached plan (returns only that list)
 EXECUTE dbo.sp_QuickieCache
+    @find_duplicate_plans = 1;
+
+-- Both lists: single-use plans first, then query hashes with more than one cached plan
+EXECUTE dbo.sp_QuickieCache
+    @find_single_use_plans = 1,
     @find_duplicate_plans = 1;
 ```
 
