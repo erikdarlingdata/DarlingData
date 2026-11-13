@@ -89,7 +89,7 @@ ALTER PROCEDURE
     @expert_mode bit = 0, /*returns additional columns and results*/
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas and most decimals rounded away*/
-    @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access are skipped*/
+    @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access, or cannot read Query Store in, are skipped*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
@@ -194,7 +194,7 @@ BEGIN
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas and most decimals rounded away'
-                WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access are skipped'
+                WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access, or cannot read Query Store in, are skipped'
                 WHEN N'@include_databases' THEN 'comma-separated list of databases to include (only when @get_all_databases = 1)'
                 WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude (only when @get_all_databases = 1)'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
@@ -3974,6 +3974,20 @@ BEGIN
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
     AND   ISNULL(HAS_DBACCESS(d.name), 0) = 1
+    /*
+    A database the caller can enter but cannot read Query Store in fails the whole
+    run on the first Query Store view (Msg 262 or Msg 297). Query Store needs VIEW
+    DATABASE PERFORMANCE STATE on SQL Server 2022 and later, and VIEW DATABASE STATE
+    before that. HAS_PERMS_BY_NAME returns NULL for a permission the server does
+    not know, so the first call decides where the permission exists and the second
+    call decides on older versions. Both calls count a permission that implies the
+    one asked for, such as CONTROL on the database or VIEW SERVER STATE.
+    */
+    AND   ISNULL
+          (
+              HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+              ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+          ) = 1
     AND   (
             @include_databases IS NULL
             OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -4014,6 +4028,12 @@ BEGIN
                     THEN 'System database'
                     WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
                     THEN 'No database access'
+                    WHEN ISNULL
+                         (
+                             HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+                             ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+                         ) = 0
+                    THEN 'No permission to read Query Store'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
@@ -4063,6 +4083,20 @@ BEGIN
     three, so those databases are skipped instead.
     */
     AND   ISNULL(HAS_DBACCESS(d.name), 0) = 1
+    /*
+    A database the caller can enter but cannot read Query Store in fails the whole
+    run on the first Query Store view (Msg 262 or Msg 297). Query Store needs VIEW
+    DATABASE PERFORMANCE STATE on SQL Server 2022 and later, and VIEW DATABASE STATE
+    before that. HAS_PERMS_BY_NAME returns NULL for a permission the server does
+    not know, so the first call decides where the permission exists and the second
+    call decides on older versions. Both calls count a permission that implies the
+    one asked for, such as CONTROL on the database or VIEW SERVER STATE.
+    */
+    AND   ISNULL
+          (
+              HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+              ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+          ) = 1
     AND   (
             @include_databases IS NULL
             OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -4096,6 +4130,12 @@ BEGIN
                     WHEN d.is_read_only = 1 THEN 'Database is read-only'
                     WHEN d.database_id <= 4 THEN 'System database'
                     WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0 THEN 'No database access'
+                    WHEN ISNULL
+                         (
+                             HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+                             ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+                         ) = 0
+                    THEN 'No permission to read Query Store'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id

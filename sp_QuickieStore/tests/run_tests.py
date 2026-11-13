@@ -755,6 +755,152 @@ def md_hold_single_user(server, password, db):
     return proc, False
 
 
+# A listed database the caller can enter but cannot read Query Store in. The
+# first login has VIEW SERVER STATE, so everything else in the run works, but
+# it is denied VIEW DATABASE STATE in one database. HAS_DBACCESS returns 1 for
+# that database, and its Query Store views fail with Msg 297 (Msg 262 for a
+# user with no grant at all), which ended the whole run before the permission
+# check. The second login has only VIEW SERVER PERFORMANCE STATE (SQL Server
+# 2022 and later), which covers Query Store without VIEW DATABASE STATE.
+MD_DENIED_DB = "quickiestore_test_md_denied"
+MD_PERM_LOGIN = "quickiestore_test_md_perm"
+MD_PERF_LOGIN = "quickiestore_test_md_perf"
+
+MD_PERM_LOGIN_SQL = """
+SET NOCOUNT ON;
+IF EXISTS (SELECT 1/0 FROM sys.database_principals AS dp WHERE dp.name = N'{login}')
+BEGIN
+    DROP USER {login};
+END;
+IF EXISTS (SELECT 1/0 FROM sys.server_principals AS sp WHERE sp.name = N'{login}')
+BEGIN
+    DROP LOGIN {login};
+END;
+CREATE LOGIN {login} WITH PASSWORD = N'Qs!perm_0123_Test', CHECK_POLICY = OFF;
+CREATE USER {login} FOR LOGIN {login};
+GRANT EXECUTE ON dbo.sp_QuickieStore TO {login};
+GRANT {server_permission} TO {login};
+"""
+
+MD_PERM_USER_SQL = """
+SET NOCOUNT ON;
+CREATE USER {login} FOR LOGIN {login};
+{extra}
+"""
+
+MD_PERM_CLEANUP_SQL = """
+SET NOCOUNT ON;
+IF EXISTS (SELECT 1/0 FROM sys.database_principals AS dp WHERE dp.name = N'{login}')
+BEGIN
+    DROP USER {login};
+END;
+IF EXISTS (SELECT 1/0 FROM sys.server_principals AS sp WHERE sp.name = N'{login}')
+BEGIN
+    DROP LOGIN {login};
+END;
+"""
+
+
+def md_run_as(server, password, login, include):
+    """Run @get_all_databases as a login that is not sysadmin. sa impersonates
+    it for one call, so permission checks see the login, not sa."""
+    return _sqlcmd(
+        server, password,
+        "SET NOCOUNT ON; EXECUTE AS LOGIN = N'%s'; EXECUTE dbo.sp_QuickieStore "
+        "@get_all_databases = 1, @include_databases = N'%s', @expert_mode = 1, "
+        "@top = 50; REVERT;" % (login, include))
+
+
+def md_permission_cleanup(server, password):
+    for login in (MD_PERM_LOGIN, MD_PERF_LOGIN):
+        _sqlcmd(server, password, MD_PERM_CLEANUP_SQL.format(login=login))
+
+
+def md_permission_tests(server, password, R):
+    """A database the caller can enter but cannot read Query Store in is
+    skipped and named in the footer, not an error. A login that can read it,
+    including one with only VIEW SERVER PERFORMANCE STATE on SQL Server 2022
+    and later, is not skipped."""
+    out, err = _sqlcmd(server, password,
+                       MD_LOCKED_SETUP_SQL.format(db=MD_DENIED_DB))
+    errs = find_sql_errors(out + "\n" + err)
+    R.check("MultiDb", "%s created" % MD_DENIED_DB, not errs, str(errs))
+    if errs:
+        return
+    out, err = _sqlcmd(server, password,
+                       MD_PERM_LOGIN_SQL.format(login=MD_PERM_LOGIN,
+                                                server_permission="VIEW SERVER STATE"))
+    errs = find_sql_errors(out + "\n" + err)
+    for db in MD_DBS:
+        out2, err2 = _sqlcmd(server, password,
+                             MD_PERM_USER_SQL.format(login=MD_PERM_LOGIN, extra=""),
+                             database=db)
+        errs += find_sql_errors(out2 + "\n" + err2)
+    out2, err2 = _sqlcmd(
+        server, password,
+        MD_PERM_USER_SQL.format(
+            login=MD_PERM_LOGIN,
+            extra="DENY VIEW DATABASE STATE TO %s;" % MD_PERM_LOGIN),
+        database=MD_DENIED_DB)
+    errs += find_sql_errors(out2 + "\n" + err2)
+    R.check("MultiDb", "%s created, denied VIEW DATABASE STATE in %s"
+            % (MD_PERM_LOGIN, MD_DENIED_DB), not errs, str(errs))
+    if errs:
+        return
+
+    out, err = md_run_as(server, password, MD_PERM_LOGIN,
+                         ",".join(MD_DBS + (MD_DENIED_DB,)))
+    combined = out + "\n" + err
+    runtime = sum(1 for line in out.splitlines()
+                  if line.startswith("runtime_stats"))
+    R.check("MultiDb",
+            "a database the caller cannot read Query Store in does not fail the run",
+            completed(out) and not find_sql_errors(combined),
+            "completed=%s %s" % (completed(out),
+                                 re.findall(r"Msg \d+, Level \d+[^\n]*", combined)[:2]))
+    R.check("MultiDb",
+            "the databases the caller can read still return their queries",
+            runtime >= 8, "runtime_stats rows=%d" % runtime)
+    R.check("MultiDb",
+            "the footer lists the database as skipped for no Query Store permission",
+            "%s (No permission to read Query Store)" % MD_DENIED_DB in out,
+            "skipped list missing from the footer")
+    R.check("MultiDb",
+            "the databases the caller can read are not listed as skipped",
+            completed(out) and not any("%s (No" % db in out for db in MD_DBS),
+            "a readable database is in the skipped list")
+
+    out, _ = _sqlcmd(server, password,
+                     "SET NOCOUNT ON; SELECT 'MAJOR:' + "
+                     "CONVERT(varchar(10), SERVERPROPERTY('ProductMajorVersion'));")
+    vm = re.search(r"MAJOR:(\d+)", out)
+    if not vm or int(vm.group(1)) < 16:
+        return
+    out, err = _sqlcmd(server, password,
+                       MD_PERM_LOGIN_SQL.format(login=MD_PERF_LOGIN,
+                                                server_permission="VIEW SERVER PERFORMANCE STATE"))
+    errs = find_sql_errors(out + "\n" + err)
+    out2, err2 = _sqlcmd(server, password,
+                         MD_PERM_USER_SQL.format(login=MD_PERF_LOGIN, extra=""),
+                         database=MD_DBS[0])
+    errs += find_sql_errors(out2 + "\n" + err2)
+    R.check("MultiDb", "%s created with only VIEW SERVER PERFORMANCE STATE"
+            % MD_PERF_LOGIN, not errs, str(errs))
+    if errs:
+        return
+    out, err = md_run_as(server, password, MD_PERF_LOGIN, MD_DBS[0])
+    combined = out + "\n" + err
+    runtime = sum(1 for line in out.splitlines()
+                  if line.startswith("runtime_stats"))
+    R.check("MultiDb",
+            "a login with only VIEW SERVER PERFORMANCE STATE is not skipped",
+            completed(out) and not find_sql_errors(combined) and runtime >= 4
+            and "(No permission to read Query Store)" not in out,
+            "completed=%s runtime_stats rows=%d %s"
+            % (completed(out), runtime,
+               re.findall(r"Msg \d+, Level \d+[^\n]*", combined)[:2]))
+
+
 def multi_database_tests(server, password, R):
     """Two databases whose Query Store ids collide, read in one
     @get_all_databases run: expert mode has to return the compilation stats
@@ -827,11 +973,14 @@ def multi_database_tests(server, password, R):
                 "the footer lists the database as skipped for no access",
                 "%s (No database access)" % MD_LOCKED_DB in out,
                 "skipped list missing from the footer")
+
+        md_permission_tests(server, password, R)
     finally:
         for proc in holders:
             proc.kill()
             proc.wait()
-        for db in MD_DBS + (MD_LOCKED_DB,):
+        md_permission_cleanup(server, password)
+        for db in MD_DBS + (MD_LOCKED_DB, MD_DENIED_DB):
             _sqlcmd(server, password, CLEANUP_SQL.replace(TEST_DB, db))
 
 
@@ -3563,7 +3712,8 @@ def main():
         try:
             multi_database_tests(args.server, args.password, R)
         finally:
-            for db in MD_DBS + (MD_LOCKED_DB,):
+            md_permission_cleanup(args.server, args.password)
+            for db in MD_DBS + (MD_LOCKED_DB, MD_DENIED_DB):
                 _sqlcmd(args.server, args.password, CLEANUP_SQL.replace(TEST_DB, db))
         for item in R.items:
             print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",

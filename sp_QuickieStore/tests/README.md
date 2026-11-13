@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 364 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 397 assertions. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -94,6 +94,12 @@ each run *executes* what it built:
   the compilation stats row of every query. A third listed database is held in
   single-user mode by a second session, so the caller cannot enter it. The run
   must skip it, name it in the footer, and still return the other two.
+- **Query Store permission**: a login with `VIEW SERVER STATE` is denied
+  `VIEW DATABASE STATE` in one more scratch database and runs `@get_all_databases = 1`.
+  The caller can enter that database but cannot read Query Store in it. The run
+  must skip it, name it in the footer, and still return the two readable
+  databases. On SQL Server 2022 and later, a login with only
+  `VIEW SERVER PERFORMANCE STATE` must not be skipped.
 
 On top of that, **bidirectional** assertions prove the filters actually filter
 rather than being silently ignored — `@query_text_search` on a known string vs
@@ -155,13 +161,16 @@ The harness creates its own `quickiestore_test` database with Query Store on,
 runs a small varied workload (ad hoc queries at different costs plus a stored
 procedure, so `@query_type` has both kinds to separate), flushes Query Store, and
 drops the database in a `finally` block that runs even if assertions fail.
-Five smaller scratch databases get the same `finally` cleanup. The `@debug`
+The smaller scratch databases get the same `finally` cleanup. The `@debug`
 check uses `quickiestore_test_empty`, which has Query Store on and no queries.
 The text search checks use `quickiestore_test_cs`, which is case sensitive.
 The regression and wait checks use `quickiestore_test_rm`, and the logging
 checks create their log tables there. The multi-database checks use
 `quickiestore_test_md1` and `quickiestore_test_md2`, which have colliding
-Query Store ids. Nothing outside these six databases is touched.
+Query Store ids. `quickiestore_test_md_locked` and `quickiestore_test_md_denied`
+hold the databases the caller cannot use, and the logins `quickiestore_test_md_perm`
+and `quickiestore_test_md_perf` run the permission checks. Nothing outside these
+databases and logins is touched.
 
 ## Known client limitation: `@debug = 1`
 
