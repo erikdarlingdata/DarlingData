@@ -625,6 +625,27 @@ JOIN sys.query_store_runtime_stats AS qsrs
 
 MD_MARKERS = ("md_q1", "md_q2", "md_q3", "md_q4")
 
+# A listed database the caller cannot enter. A second session holds it in
+# single-user mode, so the first session that tries to use it gets Msg 924
+# although sys.databases still says ONLINE. A login with no user in the
+# database fails the same way (Msg 916); HAS_DBACCESS returns 0 for both.
+MD_LOCKED_DB = "quickiestore_test_md_locked"
+
+MD_LOCKED_SETUP_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db};
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL);
+"""
+
+MD_LOCKED_HOLD_SQL = ("ALTER DATABASE CURRENT SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+                      "WAITFOR DELAY '00:10:00';")
+
 
 def md_missing_markers(server, password, db):
     """Markers with no captured query and runtime stats in the database."""
@@ -655,10 +676,33 @@ def md_build_database(server, password, db):
     return [], missing
 
 
+def md_hold_single_user(server, password, db):
+    """Start a second session that puts the database in single-user mode and
+    keeps the only connection. Returns (process, held), where held is True once
+    sys.databases reports SINGLE_USER."""
+    cmd = _sqlcmd_prefix() + [
+        "-S", server, "-U", "sa", "-P", password, "-d", db,
+        "-Q", MD_LOCKED_HOLD_SQL,
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    for _ in range(30):
+        out, _err = _sqlcmd(
+            server, password,
+            "SET NOCOUNT ON; SELECT d.user_access_desc FROM sys.databases AS d "
+            "WHERE d.name = N'%s';" % _esc(db))
+        if "SINGLE_USER" in out:
+            return proc, True
+        time.sleep(1)
+    return proc, False
+
+
 def multi_database_tests(server, password, R):
     """Two databases whose Query Store ids collide, read in one
     @get_all_databases run: expert mode has to return the compilation stats
-    row of every query, not one per colliding id."""
+    row of every query, not one per colliding id. A third listed database that
+    the caller cannot enter is skipped and named in the footer, not an error."""
+    holders = []
     try:
         for db in MD_DBS:
             errs, missing = md_build_database(server, password, db)
@@ -690,8 +734,46 @@ def multi_database_tests(server, password, R):
                 "when ids collide across databases",
                 compile_rows == runtime,
                 "runtime_stats=%d compilation_stats=%d" % (runtime, compile_rows))
+
+        # A listed database the caller cannot enter must be skipped and named,
+        # not fail the whole run.
+        out, err = _sqlcmd(server, password,
+                           MD_LOCKED_SETUP_SQL.format(db=MD_LOCKED_DB))
+        errs = find_sql_errors(out + "\n" + err)
+        R.check("MultiDb", "%s created" % MD_LOCKED_DB, not errs, str(errs))
+        if errs:
+            return
+        holder, held = md_hold_single_user(server, password, MD_LOCKED_DB)
+        holders.append(holder)
+        R.check("MultiDb", "%s is held in single-user mode by another session"
+                % MD_LOCKED_DB, held, "user_access_desc never became SINGLE_USER")
+        if not held:
+            return
+        out, err = _sqlcmd(
+            server, password,
+            "SET NOCOUNT ON; EXECUTE dbo.sp_QuickieStore @get_all_databases = 1, "
+            "@include_databases = N'%s,%s', @expert_mode = 1, @top = 50;"
+            % (",".join(MD_DBS), MD_LOCKED_DB))
+        combined = out + "\n" + err
+        runtime = sum(1 for line in out.splitlines()
+                      if line.startswith("runtime_stats"))
+        R.check("MultiDb",
+                "a database the caller cannot enter does not fail the run",
+                completed(out) and not find_sql_errors(combined),
+                "completed=%s %s" % (completed(out),
+                                     re.findall(r"Msg \d+, Level \d+[^\n]*", combined)[:2]))
+        R.check("MultiDb",
+                "the other databases still return their queries",
+                runtime >= 8, "runtime_stats rows=%d" % runtime)
+        R.check("MultiDb",
+                "the footer lists the database as skipped for no access",
+                "%s (No database access)" % MD_LOCKED_DB in out,
+                "skipped list missing from the footer")
     finally:
-        for db in MD_DBS:
+        for proc in holders:
+            proc.kill()
+            proc.wait()
+        for db in MD_DBS + (MD_LOCKED_DB,):
             _sqlcmd(server, password, CLEANUP_SQL.replace(TEST_DB, db))
 
 
@@ -3018,7 +3100,7 @@ def main():
         try:
             multi_database_tests(args.server, args.password, R)
         finally:
-            for db in MD_DBS:
+            for db in MD_DBS + (MD_LOCKED_DB,):
                 _sqlcmd(args.server, args.password, CLEANUP_SQL.replace(TEST_DB, db))
         for item in R.items:
             print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",
