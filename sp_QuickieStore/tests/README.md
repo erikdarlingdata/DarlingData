@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 397 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 397 assertions on SQL Server 2022 and 2025. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -21,9 +21,11 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `364` (`365` on SQL Server 2017, which skips the rule 14 check at
-compatibility level 150 and up but runs two more rule 1 checks, because before SQL Server 2019 the
-suggested table variable index has no inline INCLUDE).
+password). Expect `397` checks on SQL Server 2022 and 2025, `396` on 2017, and `395` on 2019.
+The count depends on the version, because some checks run on only some versions.
+Two permission checks need VIEW SERVER PERFORMANCE STATE, so they run on SQL Server 2022 and later.
+The rule 14 check for compatibility level 150 and up does not run on 2017.
+SQL Server 2017 runs two more rule 1 checks, because before SQL Server 2019 the suggested table variable index has no inline INCLUDE.
 
 The harness needs go-sqlcmd: it passes `-W` together with `-y`, which the older ODBC
 `sqlcmd` rejects.

@@ -3718,6 +3718,7 @@ def main():
         for item in R.items:
             print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",
                                            item["group"], item["name"], item["detail"]))
+        print("Total: %d passed, %d failed" % (R.passed, R.failed))
         sys.exit(1 if R.failed else 0)
     try:
         # Slot A of the regression fixture runs first, so the other tests
