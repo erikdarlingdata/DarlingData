@@ -23,7 +23,7 @@ sp_LogHunter needs EXECUTE permission on `master.dbo.xp_readerrorlog`, or `rdsad
 | @days_back           | integer   | how many days back you want to search the logs. Not used when @start_date or @end_date is given | an integer. It is converted to a negative number automatically. 0 is treated as -1 | -7           |
 | @start_date          | datetime  | if you want to search a specific time frame    | a datetime value. Must not be later than @end_date                           | NULL         |
 | @end_date            | datetime  | if you want to search a specific time frame    | a datetime value. Must not be earlier than @start_date                       | NULL         |
-| @custom_message      | nvarchar  | if you want to search for a custom string      | something specific you want to search for. no wildcards or substitutions.      | NULL         |
+| @custom_message      | nvarchar  | if you want to search for a custom string. The built-in noise filter never removes the lines it finds | something specific you want to search for. no wildcards or substitutions.      | NULL         |
 | @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1. NULL is treated as 0. 1 requires a non-empty @custom_message     | 0            |
 | @first_log_only      | bit       | only search through the first error log        | NULL, 0, 1                                                                   | 0            |
 | @language_id         | integer   | does not translate the search strings, which are English literals. Use @custom_message on non-English servers | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id. Any value other than 1033 only triggers a warning | 1033         |
