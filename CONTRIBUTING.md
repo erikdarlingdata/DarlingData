@@ -39,9 +39,9 @@ Please open an issue for any pull request that you're making. I do welcome all c
 
 There is a template for feature requests that asks some important questions, and it's usually a good idea to follow it.
 
-Do not change `Install-All/DarlingData.sql` in a pull request, and do not run `Install-All/Merge-All.ps1` to update it. A GitHub Action rebuilds that file from the procedure files on **main** after each merge. The copy on **dev** is out of date on purpose. Change the procedure file in its own folder, and the build picks it up.
-
 I am guilty of not doing that at times, but it's my repo, and I abuse the issues feature a bit to make notes for myself.
+
+Do not change `Install-All/DarlingData.sql` in a pull request, and do not run `Install-All/Merge-All.ps1` to update it. A GitHub Action rebuilds that file from the procedure files on **main** after each merge. The copy on **dev** is out of date on purpose. Change the procedure file in its own folder, and the build picks it up.
 
 Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 
