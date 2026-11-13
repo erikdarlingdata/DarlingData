@@ -33,10 +33,10 @@ These are some declared variables that we're going to use
 later on in the procedure at various points
 */
 DECLARE
-    @s nvarchar(MAX) =
+    @s nvarchar(max) =
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'SELECT x = '''
         ) +
         REPLICATE('A', 4000) +
@@ -102,7 +102,7 @@ you can use %i, %u, or %d, but bigger integers need to use %I64d.
 
 The alternative is ugly:
     DECLARE
-        @msg nvarchar(MAX) = N'';
+        @msg nvarchar(max) = N'';
 
     SELECT
         @msg = N'there were ' + CONVERT(nvarchar(11), ROWCOUNT_BIG()) + N' rows in sys.databases';
