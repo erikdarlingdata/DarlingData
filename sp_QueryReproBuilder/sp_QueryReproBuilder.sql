@@ -5362,6 +5362,25 @@ SELECT
         LTRIM(RTRIM(ps.param_data_type)),
     parameter_compiled_value =
         CASE
+            /*
+            CLR types (geography, geometry, hierarchyid, and any other
+            schema-qualified type) and sql_variant: the plan writes the bare
+            text of the value, such as POINT (1 1), /1/2/ or Jan  5 2026 10:00AM.
+            Pasted into the value list of sp_executesql that is a syntax
+            error, or for sql_variant a number where a string was, so the
+            value goes in as an N'...' string with its quotes doubled.
+            The engine parses the string into the type. This comes first so a
+            value with parentheses is not taken apart below. A NULL stays NULL.
+            */
+            WHEN ps.param_compiled_value COLLATE Latin1_General_100_BIN2 <> N'NULL'
+            AND
+            (
+                 ps.param_data_type LIKE N'%.%'
+              OR ps.param_data_type = N'sql_variant'
+            )
+            THEN N'N''' +
+                 REPLACE(ps.param_compiled_value, N'''', N'''''') +
+                 N''''
             /*Strip parentheses from values like (13)*/
             WHEN ps.param_compiled_value LIKE N'(%)'
             THEN SUBSTRING
@@ -5895,6 +5914,65 @@ AND qp.parameter_compiled_value LIKE N'0x%'
 AND t.type_length > 127
 AND DATALENGTH(qp.parameter_compiled_value) / 2 = 256
 )
+OPTION(RECOMPILE);
+
+/*
+Warn when a quoted value lost something the plan does not keep.
+
+A geography or geometry value is written as text with no SRID, so the repro
+binds it with the type default (4326 for geography, 0 for geometry). A
+sql_variant value is written with no base type, so the repro binds it as
+nvarchar: an int or a datetime in a sql_variant column or compare behaves
+differently from the same text. Only values that were quoted are named; a
+NULL, or a ? for a missing value, binds as is.
+*/
+SELECT
+    @current_table = N'checking for spatial and sql_variant parameter values';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'spatial parameter SRID',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is a ' +
+        qp.parameter_data_type +
+        N' value, and the plan does not record its SRID. The repro binds it with the type default ' +
+        N'(4326 for geography, 0 for geometry). If the original used another, set the SRID by hand.'
+FROM #query_parameters AS qp
+WHERE qp.parameter_data_type IN (N'sys.geography', N'sys.geometry')
+AND   qp.parameter_compiled_value LIKE N'N''%'
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'sql_variant parameter',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is a sql_variant value, and the plan does not record the base type of the value. ' +
+        N'The repro binds it as nvarchar. If the original was another type, such as int or datetime, change it by hand.'
+FROM #query_parameters AS qp
+WHERE qp.parameter_data_type = N'sql_variant'
+AND   qp.parameter_compiled_value LIKE N'N''%'
 OPTION(RECOMPILE);
 
 /*

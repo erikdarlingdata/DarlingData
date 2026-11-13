@@ -113,6 +113,10 @@ repro to both "is it correct?" and "does it run?":
 - **Parameter/value alignment** -- declaration order versus ParameterList order,
   asserting value *i* binds to declaration *i*.
 - **Control characters** (CR, LF) embedded in a parameter's sniffed value.
+- **CLR types and `sql_variant`** (`geography`, `geometry`, `hierarchyid`, any
+  schema-qualified type): the plan writes the bare value text, so the repro must
+  quote it, keep NULL as NULL, and warn about the lost SRID or base type (the
+  `udt:` and `variant:` cases).
 - **Echo cases** that execute the repro and read back the *actually-bound*
   values, catching a silent reorder or misbind that still runs.
 - **Wait stats over a whole window** of two Query Store intervals, checked

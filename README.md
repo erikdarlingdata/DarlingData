@@ -377,7 +377,7 @@ Results come in three result sets:
  * **High-impact queries**: Pareto-scored queries with impact scores, resource shares, and diagnostic signals (parameter sniffing, plan instability, wasteful grants, wait-bound queries, etc.)
  * **Plan cache health findings**: plan age distribution, single-use plan bloat, duplicate plan detection, USERSTORE_TOKENPERM pressure
 
-With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure returns only that list and skips the three result sets above. The lists are the largest single-use plans by cached size, or query hashes with more than one cached plan per database.
+With @find_single_use_plans = 1 or @find_duplicate_plans = 1, the procedure returns only that list and skips the three result sets above. The lists are the largest single-use plans by cached size, or query hashes with more than one cached plan per database. With both set to 1, it returns both lists, single-use plans first.
 
 Requires SQL Server 2016 SP1+ for full memory grant and spill analysis.
 
@@ -393,8 +393,8 @@ Current valid parameter details:
 | @minimum_execution_count    | bigint       | minimum execution count to include a query                                                           | a positive integer                       | 2          |
 | @ignore_system_databases    | bit          | exclude system databases (master, model, msdb, tempdb), unless @database_name names one              | 0 or 1                                   | 1          |
 | @impact_threshold           | decimal(3,2) | minimum impact_score (0.00-1.00) to surface in results                                               | 0.00 to 1.00                             | 0.50       |
-| @find_single_use_plans      | bit          | show single-use plans consuming the most memory                                                      | 0 or 1                                   | 0          |
-| @find_duplicate_plans       | bit          | show query hashes with multiple cached plans                                                         | 0 or 1                                   | 0          |
+| @find_single_use_plans      | bit          | show single-use plans consuming the most memory (with @find_duplicate_plans = 1 as well, both lists return) | 0 or 1                                   | 0          |
+| @find_duplicate_plans       | bit          | show query hashes with multiple cached plans (with @find_single_use_plans = 1 as well, both lists return) | 0 or 1                                   | 0          |
 | @debug                      | bit          | print diagnostic information                                                                         | 0 or 1                                   | 0          |
 | @help                       | bit          | display parameter help                                                                               | 0 or 1                                   | 0          |
 | @version                    | varchar      | OUTPUT; for support                                                                                  | none; OUTPUT                             | none; OUTPUT |
@@ -423,6 +423,11 @@ EXECUTE dbo.sp_QuickieCache
 
 -- Query hashes with more than one cached plan (returns only that list)
 EXECUTE dbo.sp_QuickieCache
+    @find_duplicate_plans = 1;
+
+-- Both lists: single-use plans first, then query hashes with more than one cached plan
+EXECUTE dbo.sp_QuickieCache
+    @find_single_use_plans = 1,
     @find_duplicate_plans = 1;
 ```
 
