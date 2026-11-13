@@ -34,7 +34,8 @@ DECLARE
     @ReturnCode integer = 0,
     @jobId binary(16),
     @active_start_date int = (SELECT CONVERT(integer, CONVERT(varchar(35), GETDATE(), 112))),
-    @schedule_uid nvarchar(36) = NEWID();
+    @schedule_uid nvarchar(36) = NEWID(),
+    @owner sysname = SUSER_SNAME(0x01); /*sa can be renamed, so look it up by its fixed sid and not by name*/
 
 
 IF NOT EXISTS
@@ -64,7 +65,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_job @job_name = N'sp_HumanEvents Logging',
         @delete_level = 0,
         @description = N'Used to log sp_HumanEvents session data to permanent tables.',
         @category_name = N'Data Collector',
-        @owner_login_name = N'sa',
+        @owner_login_name = @owner,
         @job_id = @jobId OUTPUT;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)

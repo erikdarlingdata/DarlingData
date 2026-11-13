@@ -28,6 +28,7 @@ isn't a valid parameter, that's a pretty good
 sign you need to update.
 
 To change the table retention period from 10 days, edit the below declare statement.
+The retention period must be 1 or more days.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -50,7 +51,8 @@ DECLARE
     @jobId binary(16),
     @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112))),
     @schedule_uid nvarchar(36) = NEWID(),
-    @RetentionPeriod nvarchar(10) = N'10';
+    @RetentionPeriod nvarchar(10) = N'10',
+    @owner sysname = SUSER_SNAME(0x01); /*sa can be renamed, so look it up by its fixed sid and not by name*/
 
 DECLARE
     @command nvarchar(MAX) = N'EXECUTE dbo.sp_WhoIsActiveLogging_Main ' + @RetentionPeriod + N';'
@@ -99,7 +101,7 @@ If you get an error message that @get_memory_info
 isn''t a valid parameter, that''s a pretty good
 sign you need to update.',
         @category_name = N'Data Collector',
-        @owner_login_name = N'sa',
+        @owner_login_name = @owner,
         @job_id = @jobId OUTPUT;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)

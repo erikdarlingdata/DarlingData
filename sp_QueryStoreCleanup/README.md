@@ -21,7 +21,7 @@ On SQL Server 2022 or later, a parameter sensitive plan (PSP) parent query canno
 | @custom_query_filter | nvarchar(1024) | custom LIKE pattern for query text filtering; also applied when @cleanup_targets = all | a valid LIKE pattern | NULL |
 | @dedupe_by | varchar(50) | deduplication strategy | all, query_hash, plan_hash, none | all |
 | @min_age_days | integer | only remove queries whose last execution is older than this many days | a positive integer | NULL; no age filter |
-| @report_only | bit | report what would be removed without removing; see Report Mode | 0 or 1 | 0 |
+| @report_only | bit | report what would be removed without removing (see Report Mode). NULL is treated as 1 | 0 or 1 | 0 |
 | @sort_direction | varchar(10) | removal order by query_id; see Splitting a Long Removal | ASC, DESC | ASC |
 | @compact_tables | bit | afterwards, compact Query Store's internal tables; see Compacting Query Store's Tables | 0 or 1 | 0 |
 | @debug | bit | prints dynamic sql and diagnostics | 0 or 1 | 0 |
@@ -64,7 +64,7 @@ Run the same command in two sessions at the same time, one with `@sort_direction
 
 ## Report Mode
 
-`@report_only = 1` removes nothing. It returns two result sets:
+`@report_only = 1` removes nothing. A NULL `@report_only` counts as 1, so it never removes. It returns two result sets:
 
 1. One summary row for the whole removal list: the number of queries, distinct query hashes, query texts, plans and plan hashes, how many queries belong to modules, the oldest and newest last execution, and the share of all Query Store queries.
 2. One row per query_hash, biggest first: the same counts for that hash, the module name if there is one, the oldest and newest last execution, and a sample query_id with the first 200 characters of its text.
