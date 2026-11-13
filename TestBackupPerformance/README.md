@@ -71,4 +71,5 @@ EXECUTE dbo.TestBackupPerformance
 
 * **BUFFERCOUNT** and **MAXTRANSFERSIZE** memory is allocated outside the buffer pool. The procedure warns when a combination will use more than 1 GB.
 * Backup files are automatically cleaned up after each test. NUL backups skip cleanup.
+* Every test backup uses `COPY_ONLY`. The tests do not change the differential base or the backup chain, so your next scheduled differential backup still works.
 * The `dbo.backup_performance_results` table is created automatically on first run.

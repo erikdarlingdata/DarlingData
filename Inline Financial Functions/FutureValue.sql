@@ -42,7 +42,7 @@ https://code.erikdarling.com
             FutureValue =
                 CASE
                     WHEN @Rate = 0
-                    THEN (p.Value + @Payment) * @Periods
+                    THEN p.Value + @Payment * @Periods
                     WHEN (@Rate <> 0
                            AND p.Type = 0)
                     THEN p.Value * p.Term + @Payment * (p.Term - 1) / @Rate
