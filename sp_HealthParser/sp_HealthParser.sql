@@ -107,7 +107,7 @@ BEGIN
                     WHEN N'@what_to_check' THEN N'areas of system health to check'
                     WHEN N'@start_date' THEN N'earliest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
                     WHEN N'@end_date' THEN N'latest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
-                    WHEN N'@warnings_only' THEN N'only show rows where a warning or error was reported (the blocked process report is not filtered)'
+                    WHEN N'@warnings_only' THEN N'only show rows where a warning or error was reported (the blocked process report is not filtered). Memory broker rows count as a warning only when the notification is SHRINK'
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
@@ -4024,7 +4024,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #memory_broker_info
         FROM #memory_broker AS mb
         CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
-        WHERE (w.x.exist('(data[@name="notification"]/value[.= "RESOURCE_MEMPHYSICAL_LOW"])') = @warnings_only OR @warnings_only = 0)
+        WHERE (w.x.exist('(data[@name="notification"]/value[.= "SHRINK"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
