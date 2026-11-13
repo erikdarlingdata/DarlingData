@@ -3299,21 +3299,36 @@ def end_date_tests(server, password, R):
     an older @end_date is before, so the window moved to seven days after
     that start date and the date asked for was ignored."""
     G = "EndDateOnly"
+    # The two dates are read from the @debug parameters row. @debug = 1 runs
+    # against master, which has no Query Store data, for the reason given in
+    # smoke_tests: against the fixture, debug mode returns the generated SQL
+    # as XML columns, go-sqlcmd renders those so slowly that the capture times
+    # out (it hung the 2022 and 2025 CI jobs for the full 300 seconds), and
+    # the parameters row is not worth that. The date logic runs before the
+    # database is checked, so master reaches the same row.
     out, combined = run_qs(server, password,
-                           ", @debug = 1, @end_date = '2020-10-01 12:00:00 -05:00'")
+                           ", @debug = 1, @end_date = '2020-10-01 12:00:00 -05:00'",
+                           database_name="master")
     params = [dict(zip(h, r)) for h, rows in result_sets(out)
               if h and h[0] == "parameter_type"
               for r in rows if r and r[0] == "procedure_parameters"]
-    R.check(G, "runs cleanly with only an old @end_date",
-            completed(out) and not find_sql_errors(combined) and len(params) == 1,
+    R.check(G, "@debug = 1 with only an old @end_date reaches the parameters row",
+            not find_sql_errors(combined) and len(params) == 1,
             str(find_sql_errors(combined)[:2]))
-    if len(params) != 1:
-        return
-    start, end = params[0].get("start_date", ""), params[0].get("end_date", "")
-    R.check(G, "@end_date is used as given", end.startswith("2020-10-01 17:00:00"),
-            "end_date=%s" % end)
-    R.check(G, "@start_date is seven days before @end_date",
-            start.startswith("2020-09-24 17:00:00"), "start_date=%s" % start)
+    if len(params) == 1:
+        start, end = params[0].get("start_date", ""), params[0].get("end_date", "")
+        R.check(G, "@end_date is used as given", end.startswith("2020-10-01 17:00:00"),
+                "end_date=%s" % end)
+        R.check(G, "@start_date is seven days before @end_date",
+                start.startswith("2020-09-24 17:00:00"), "start_date=%s" % start)
+
+    # The same call without @debug, against the fixture: a database with
+    # Query Store data runs to the end, and the period line shows the window.
+    out, combined = run_qs(server, password,
+                           ", @end_date = '2020-10-01 12:00:00 -05:00'")
+    R.check(G, "a database with Query Store data runs to the end with only an old @end_date",
+            completed(out) and not find_sql_errors(combined),
+            str(find_sql_errors(combined)[:2]))
     R.check(G, "the period line shows the same window",
             "query store data for period 2020-09-24 12:00:00 through 2020-10-01 12:00:00" in out,
             "period line not found")
