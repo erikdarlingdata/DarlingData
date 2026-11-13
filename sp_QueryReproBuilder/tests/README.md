@@ -56,6 +56,13 @@ later interval. In each slot, one `ww_q1` execution waits on a lock that a
 second session holds. `ww_q2` never waits. It gets a new index between the
 slots, so it has a different plan in each slot.
 
+The `lastvalues:` and `enddate:` cases build `qrb_lv_db`. In it, `lv_q` runs
+twice. The first run waits on a lock until the client gives up, so Query Store
+records an aborted run. The second run waits a shorter time and finishes, a
+regular run. `lastvalues:` checks that `last_duration_ms` is the regular run's,
+the latest, and not the longer aborted one. `enddate:` checks that with only
+`@end_date`, the search covers the seven days before it.
+
 One run over both slots must return one repro per plan. Its Lock wait for
 `ww_q1` must equal Query Store's total across both slots, and `ww_q2` must
 have no Lock wait. The database is dropped at the end, even when a step
@@ -121,6 +128,8 @@ repro to both "is it correct?" and "does it run?":
   values, catching a silent reorder or misbind that still runs.
 - **Wait stats over a whole window** of two Query Store intervals, checked
   against Query Store's own totals (the `waitwindow:` case).
+- **Last values and `@end_date`** against a real aborted run followed by a
+  regular run (the `lastvalues:` and `enddate:` cases).
 
 ### The documented `?` fill-in behavior
 

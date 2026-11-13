@@ -292,7 +292,7 @@ BEGIN
                 WHEN N'@database_name' THEN 'NULL; current database name if NULL'
                 WHEN N'@sort_order' THEN 'cpu'
                 WHEN N'@top' THEN '10'
-                WHEN N'@start_date' THEN 'the last seven days'
+                WHEN N'@start_date' THEN 'the last seven days, or the seven days before @end_date if you set only @end_date'
                 WHEN N'@end_date' THEN 'NULL'
                 WHEN N'@timezone' THEN 'NULL'
                 WHEN N'@execution_count' THEN 'NULL'
@@ -3682,6 +3682,30 @@ BEGIN
         END;
     END;
 END; /*End @log_to_table validation and setup*/
+
+
+/*
+With only @end_date given, search the seven days before it, the same
+length as the default window. Leaving @start_date at its default put
+it after an older @end_date, and the window was then quietly moved to
+seven days after the default start. @start_date keeps the offset of
+@end_date, so both are read the same way in the UTC conversion below.
+*/
+IF
+(
+    @start_date IS NULL
+AND @end_date IS NOT NULL
+)
+BEGIN
+    SELECT
+        @start_date =
+            DATEADD
+            (
+                DAY,
+                -7,
+                @end_date
+            );
+END;
 
 
 /*
@@ -13824,14 +13848,22 @@ FROM
         If it were after GROUP BY, then we would be dealing with already aggregated data.
         If it were inside the CROSS APPLY, then we would be dealing with windows of size one.
         Both are very wrong, so we need this.
+
+        Last values come from the row with the latest last_execution_time,
+        whatever its execution type, so an aborted or timed out run does
+        not hide a newer regular run. The windows are not partitioned by
+        execution type, and a tie on last_execution_time goes to the later
+        interval. Every row of a plan, or of a plan and time period in
+        regression mode, carries the same value, so the MAX in the select
+        list only picks it up.
         */
         partitioned_last_execution_time =
             LAST_VALUE(qsrs.last_execution_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13839,9 +13871,9 @@ FROM
             LAST_VALUE(qsrs.last_duration) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13849,9 +13881,9 @@ FROM
             LAST_VALUE(qsrs.last_cpu_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13859,9 +13891,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13869,9 +13901,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_writes) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13879,9 +13911,9 @@ FROM
             LAST_VALUE(qsrs.last_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13889,9 +13921,9 @@ FROM
             LAST_VALUE(qsrs.last_clr_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13899,9 +13931,9 @@ FROM
             LAST_VALUE(qsrs.last_dop) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13909,9 +13941,9 @@ FROM
             LAST_VALUE(qsrs.last_query_max_used_memory) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13919,9 +13951,9 @@ FROM
             LAST_VALUE(qsrs.last_rowcount) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),';
@@ -13934,9 +13966,9 @@ BEGIN
             LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13944,9 +13976,9 @@ BEGIN
             LAST_VALUE(qsrs.last_log_bytes_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -13954,9 +13986,9 @@ BEGIN
             LAST_VALUE(qsrs.last_tempdb_space_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )';
@@ -15323,6 +15355,9 @@ FROM
         We need this here to make sure that PARTITION BY runs before GROUP BY.
         If it were after GROUP BY, then we would be dealing with already aggregated data.
         In regression mode, each time period gets its own last value.
+        The last value comes from the row whose runtime stats row has the
+        latest last_execution_time, whatever its execution type, as for
+        the runtime stats above. A tie goes to the later interval.
         */
         partitioned_last_query_wait_time_ms =
             LAST_VALUE(qsws.last_query_wait_time_ms) OVER
@@ -15330,9 +15365,9 @@ FROM
                 PARTITION BY
                     qsws.plan_id,
                     qsrs_plans.from_regression_baseline,
-                    qsws.execution_type,
                     qsws.wait_category_desc
                 ORDER BY
+                    qsws.runtime_last_execution_time ASC,
                     qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
@@ -15354,9 +15389,26 @@ FROM
         category past the fifth. Query Store keeps a small, fixed set of
         wait categories, so pulling all of them does not blow up the
         row count.
-        */
+        */';
+
+    /*
+    A separate statement, not + inside the literal above: the pieces of one
+    expression are each shorter than 4000 characters, so their sum would be
+    cut to nvarchar(4000) before it ever reached @sql.
+    */
+    SELECT
+        @sql += N'
         SELECT
-            qsws.*
+            qsws.*,
+            runtime_last_execution_time =
+                (
+                    SELECT
+                        MAX(qsrs_last.last_execution_time)
+                    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs_last
+                    WHERE qsrs_last.plan_id = qsws.plan_id
+                    AND   qsrs_last.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+                    AND   qsrs_last.execution_type = qsws.execution_type
+                )
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
         WHERE qsws.plan_id = qsrs_plans.plan_id
         AND   qsws.wait_category > 0
