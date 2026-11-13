@@ -35,6 +35,8 @@
 ## Installing
 To install every procedure in the list above except sp_QueryStoreCleanup, run [Install-All/DarlingData.sql](Install-All/DarlingData.sql). To install one procedure, run the .sql file in its folder. sp_QueryStoreCleanup is not in the bundle because it removes queries from Query Store. Install it from its own folder.
 
+The [monthly releases](https://github.com/erikdarlingdata/DarlingData/releases) are the stable way to install. To try a fix before the next release, download DarlingData.sql from the [dev-latest pre-release](https://github.com/erikdarlingdata/DarlingData/releases/tag/dev-latest).
+
 ## Utility scripts
 These folders each have their own README:
  - [Clear Token Perm](Clear%20Token%20Perm): Monitor and clear the security token cache
