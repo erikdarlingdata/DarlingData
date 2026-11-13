@@ -3,7 +3,7 @@
 
     run from sqlcmd.exe using the following command-line:
 
-    sqlcmd -S {sql-server} -i .\install-pressure-detector.sql -v TargetDB = "{target-database}" -C
+    sqlcmd -S {sql-server} -i .\install-pressure-detector.sql -v TargetDB="{target-database}" -C
 
     {sql-server} is the name of the target SQL Server
     {target-database} is where we'll install the sp_PressureDetector procedures.
@@ -24,9 +24,9 @@ END
 
 IF N'$(TargetDB)' = N''
 BEGIN
-    SET @msg = N'You must specify the target database via the sqlcmd -V parameter (TargetDB = "{server-name}")';
+    SET @msg = N'You must specify the target database via the sqlcmd -v parameter (TargetDB="<database_name>")';
     RAISERROR (@msg, 10, 1) WITH NOWAIT;
-    SET @msg = N'sqlcmd.exe -S <servername> -E -i .\install-pressure-detector.sql -v TargetDB = "<database_name>"';
+    SET @msg = N'sqlcmd.exe -S <servername> -E -i .\install-pressure-detector.sql -v TargetDB="<database_name>"';
     RAISERROR (@msg, 10, 1) WITH NOWAIT;
     SET @msg = N'Aborting.';
     RAISERROR (@msg, 10, 127) WITH NOWAIT;

@@ -46,6 +46,15 @@ These folders each have their own README:
  - [String Functions](String%20Functions): Functions that extract or remove characters from strings
  - [TestBackupPerformance](TestBackupPerformance): Test backup settings to find the fastest combination
 
+## Other scripts
+These folders hold plain SQL scripts and have no README. Each file has a comment at the top.
+ - [Alerts](Alerts): Create SQL Agent alerts for severity 19 to 25 errors and for errors 823, 824 and 825. Set your operator name in the script first
+ - [Create Long IN List](Create%20Long%20IN%20List): A demo procedure that builds a very long IN list, to show how long IN lists hurt query performance
+ - [Dynamic SQL Logging](Dynamic%20SQL%20Logging): A procedure that logs CPU time, elapsed time and reads for dynamic SQL to a table
+ - [Inline Financial Functions](Inline%20Financial%20Functions): Inline table-valued functions for common financial calculations, such as Payment and FutureValue
+ - [SQL Debug Example](SQL%20Debug%20Example): An example procedure that shows one way to add debug output to a stored procedure
+ - [Stack Column Store Database](Stack%20Column%20Store%20Database): A personal demo build script that makes a columnstore copy of the Stack Overflow database. It has hard-coded file paths and is not meant to run as is
+
 ## Who are these scripts for?
 You need to troubleshoot performance problems with SQL Server, and you need to do it now. 
 
@@ -408,7 +417,7 @@ EXECUTE dbo.sp_QuickieCache;
 EXECUTE dbo.sp_QuickieCache
     @database_name = N'YourDatabase';
 
--- Only plans created today
+-- Only plans created or cached on or after a date
 EXECUTE dbo.sp_QuickieCache
     @start_date = '20260403';
 
@@ -639,7 +648,7 @@ Current valid parameter details:
 | @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
 | @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
 | @dedupe_only | bit | 0 | When set to 1, only performs index deduplication but does not mark unused indexes for removal |
-| @get_all_databases | bit | 0 | When set to 1, analyzes all eligible databases on the server |
+| @get_all_databases | bit | 0 | When set to 1, analyzes all eligible databases on the server. Not supported on Azure SQL Database: the procedure raises an error, so pass @database_name instead |
 | @include_databases | nvarchar(max) | NULL | Comma-separated list of databases to include (used with @get_all_databases = 1) |
 | @exclude_databases | nvarchar(max) | NULL | Comma-separated list of databases to exclude (used with @get_all_databases = 1) |
 | @sort_order | varchar(20) | default | Controls final result ordering: default groups by script type within each database, object groups all rows for the same index together (Key Subset disables sort under their replacement index) |

@@ -12,6 +12,7 @@ This directory contains two stored procedures for managing and analyzing Extende
 - [sp_HumanEvents](#sp_humanevents)
   - [Overview](#overview)
   - [Warning](#warning)
+  - [Install with sqlcmd](#install-with-sqlcmd)
   - [Parameters](#parameters)
   - [Usage Examples](#usage-examples)
   - [Resources](#resources)
@@ -43,6 +44,16 @@ Requires SQL Server 2012 SP4 or newer (the query_hash_signed action must exist).
 ## Warning
 
 Misuse of this procedure can harm performance. Be very careful about introducing observer overhead, especially when gathering query plans. Be even more careful when setting up permanent sessions!
+
+## Install with sqlcmd
+
+You can install both procedures (sp_HumanEvents and sp_HumanEventsBlockViewer) with sqlcmd instead of opening the .sql files. The target database must already exist. Run this from this folder:
+
+```
+sqlcmd -S {sql-server} -i install-human-events.sql -v TargetDB="{target-database}" -C
+```
+
+Add your own login options, such as -E for Windows authentication. The -C option trusts the server certificate.
 
 ## Parameters
 
@@ -218,10 +229,10 @@ The setup session above does not work in Azure SQL Database as written. There, c
 ## Usage Examples
 
 ```sql
--- Basic usage with default session name
+-- Basic usage: reads the default session, keeper_HumanEvents_blocking (sp_HumanEvents creates it with @event_type = 'blocking' and @keep_alive = 1)
 EXECUTE dbo.sp_HumanEventsBlockViewer;
 
--- Use with a custom extended event session name
+-- Read a different session, such as the blocked_process_report session from the Setup section above
 EXECUTE dbo.sp_HumanEventsBlockViewer
     @session_name = N'blocked_process_report';
 

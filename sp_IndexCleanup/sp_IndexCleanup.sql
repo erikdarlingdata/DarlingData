@@ -171,7 +171,7 @@ BEGIN TRY
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
                     WHEN N'@dedupe_only' THEN 'only perform index deduplication, do not mark unused indexes for removal'
-                    WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
+                    WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases. Not supported on Azure SQL Database: it raises an error, so pass @database_name instead'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
                     WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together (Key Subset disables sort under their replacement index)'
