@@ -150,6 +150,8 @@ INNER HASH JOIN
     AND   o.is_ms_shipped = 0
 ) AS x
   ON x.allocation_unit_id = obd.allocation_unit_id
+/*allocation unit ids repeat across databases, only count pages cached for this one*/
+WHERE obd.database_id = DB_ID()
 GROUP BY
     x.schema_name,
     x.object_name,

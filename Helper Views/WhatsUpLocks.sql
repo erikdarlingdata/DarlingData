@@ -127,6 +127,8 @@ SELECT TOP (9223372036854775807)
       AND   (dtl.request_request_id = CURRENT_REQUEST_ID() OR @spid IS NULL OR @outsider = 'true')
       AND   (dtl.request_owner_id = CURRENT_TRANSACTION_ID() OR @spid IS NULL OR @outsider = 'true')
       AND    dtl.resource_type <> N'DATABASE'
+      /*sys.dm_tran_locks is server-wide, but the joins below use this database's catalog*/
+      AND    dtl.resource_database_id = DB_ID()
       GROUP BY
           dtl.request_session_id,
           dtl.request_mode,
@@ -165,7 +167,8 @@ SELECT TOP (9223372036854775807)
       WHERE i.object_id = p.object_id
       AND   i.index_id = p.index_id
   ) AS i
-  WHERE l.locked_object <> N'WhatsUpLocks'
+  /*locks that do not resolve to an object (APPLICATION, METADATA) have a NULL locked_object, keep them*/
+  WHERE ISNULL(l.locked_object, N'') <> N'WhatsUpLocks'
   GROUP BY
       dtl.request_session_id,
       dtl.resource_type,
