@@ -39,9 +39,9 @@ GO
 BEGIN TRANSACTION;
 
 DECLARE
-    @ReturnCode int = 0,
+    @ReturnCode integer = 0,
     @jobId binary(16),
-    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112))),
+    @active_start_date integer = (SELECT CONVERT(integer, CONVERT(varchar(35), GETDATE(), 112))),
     @owner sysname = SUSER_SNAME(0x01); /*sa can be renamed, so look it up by its fixed sid and not by name*/
 
 IF NOT EXISTS
