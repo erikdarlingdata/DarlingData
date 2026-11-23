@@ -898,16 +898,21 @@ def group_collector_blocking(server, password, R, caps):
 
         # Blocking chain. A holds blk_a, C holds blk_b for longer. B takes blk_a
         # (blocked until A commits), then blk_b (blocked until C commits): one
-        # transaction, two objects. The hold times leave room for the 5 second
-        # sweep of the blocked process monitor to see each wait past the threshold.
+        # transaction, two objects. Each of B's two waits must stay past the
+        # threshold for longer than one sweep of the blocked process monitor
+        # (about 5 seconds), or that sweep can miss it. B starts about 2.5
+        # seconds after A, so A's hold of thr * 3.4 keeps B's blk_a wait past
+        # the threshold for about 9.5 seconds, and C's hold of thr * 7 does the
+        # same for blk_b. With thr * 2.4 the blk_a window was only about 4.5
+        # seconds, and one SQL Server 2022 run logged only blk_b.
         procs.append(_sqlcmd_popen(
             server, password,
             "BEGIN TRANSACTION; UPDATE dbo.blk_a SET v = v + 1; "
-            "WAITFOR DELAY '" + delay(thr * 2.4) + "'; COMMIT TRANSACTION;", db))
+            "WAITFOR DELAY '" + delay(thr * 3.4) + "'; COMMIT TRANSACTION;", db))
         procs.append(_sqlcmd_popen(
             server, password,
             "BEGIN TRANSACTION; UPDATE dbo.blk_b SET v = v + 1; "
-            "WAITFOR DELAY '" + delay(thr * 6) + "'; COMMIT TRANSACTION;", db))
+            "WAITFOR DELAY '" + delay(thr * 7) + "'; COMMIT TRANSACTION;", db))
         time.sleep(2)
         procs.append(_sqlcmd_popen(
             server, password,
