@@ -83,8 +83,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.11',
-        @version_date = N'20261101';
+        @version = N'2.12',
+        @version_date = N'20261201';
 
     /*
     Help section, for help.

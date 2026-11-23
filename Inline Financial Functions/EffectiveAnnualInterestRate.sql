@@ -28,8 +28,7 @@ https://code.erikdarling.com
             (
                 float,
                 CASE
-                    WHEN (@Rate <= 0)
-                      OR (@Periods < 1)
+                    WHEN (@Periods < 1)
                     THEN 0
                     ELSE POWER(1 + @Rate / @Periods, @Periods) - 1
                 END

@@ -129,8 +129,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.11',
-    @version_date = '20261101';
+    @version = '6.12',
+    @version_date = '20261201';
 
 /*
 Helpful section! For help.
@@ -18613,8 +18613,8 @@ BEGIN
     */
     INSERT
         #plan_parsing_xml
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18678,8 +18678,8 @@ BEGIN
 
     INSERT
         #plan_facts
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18824,8 +18824,8 @@ BEGIN
     )
     INSERT
         #plan_statements
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -18954,8 +18954,8 @@ BEGIN
     )
     INSERT
         #plan_operators
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19014,7 +19014,13 @@ BEGIN
     CREATE CLUSTERED INDEX
         c
     ON #plan_operators
-        (database_id, plan_id, stmt_id, qp_id, node_id);
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id
+    );
 
     /*
     Objects: one row per object under an operator (a wide DML operator lists one per index).
@@ -19027,8 +19033,8 @@ BEGIN
     )
     INSERT
         #plan_objects
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19153,8 +19159,8 @@ BEGIN
     )
     INSERT
         #plan_edges
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19255,7 +19261,14 @@ BEGIN
     CREATE CLUSTERED INDEX
         c
     ON #plan_edges
-        (database_id, plan_id, stmt_id, qp_id, parent_node_id, child_node_id);
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        parent_node_id,
+        child_node_id
+    );
 
     /*
     Predicates: only for the operators the rules look at (scans, filters, anti semi joins) that have one.
@@ -19271,8 +19284,8 @@ BEGIN
     )
     INSERT
         #plan_predicates
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19404,8 +19417,8 @@ BEGIN
         )
         INSERT
             #plan_filter_parts
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -19460,8 +19473,8 @@ BEGIN
         )
         INSERT
             #plan_filter_part_exprs
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -19490,8 +19503,8 @@ BEGIN
         )
         INSERT
             #plan_expr_defs
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -19570,8 +19583,8 @@ BEGIN
         )
         INSERT
             #plan_expr_defs
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -19646,8 +19659,8 @@ BEGIN
         )
         INSERT
             #plan_expr_refs
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -19733,8 +19746,8 @@ BEGIN
         )
         INSERT
             #plan_expr_class
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -19902,8 +19915,8 @@ BEGIN
     )
     INSERT
         #plan_anti_cols
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -19944,8 +19957,8 @@ BEGIN
         )
         INSERT
             #plan_anti_cols
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20019,8 +20032,8 @@ BEGIN
         )
         INSERT
             #plan_anti_cols
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20089,8 +20102,8 @@ BEGIN
         )
         INSERT
             #plan_anti_cols
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20161,8 +20174,8 @@ BEGIN
     )
     INSERT
         #plan_specials
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20226,8 +20239,8 @@ BEGIN
         )
         INSERT
             #plan_specials
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20278,8 +20291,8 @@ BEGIN
         )
         INSERT
             #plan_specials
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20337,8 +20350,8 @@ BEGIN
         )
         INSERT
             #plan_columns
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20400,8 +20413,8 @@ BEGIN
         )
         INSERT
             #plan_columns
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20469,8 +20482,8 @@ BEGIN
         )
         INSERT
             #plan_columns
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20559,8 +20572,8 @@ BEGIN
         )
         INSERT
             #plan_columns
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20652,8 +20665,8 @@ BEGIN
         )
         INSERT
             #plan_columns
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -20784,8 +20797,8 @@ BEGIN
     */
     INSERT
         #plan_relations
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20911,8 +20924,8 @@ BEGIN
     )
     INSERT
         #plan_warnings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -20939,8 +20952,8 @@ BEGIN
     )
     INSERT
         #plan_warnings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21013,8 +21026,8 @@ BEGIN
     )
     INSERT
         #plan_missing_indexes
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21226,8 +21239,8 @@ BEGIN
     BEGIN
         INSERT
             #plan_database_maxdop
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             maxdop
@@ -21276,8 +21289,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21322,8 +21335,8 @@ BEGIN
     BEGIN
         INSERT
             #plan_findings
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -21537,8 +21550,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21612,8 +21625,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21703,8 +21716,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -21926,8 +21939,8 @@ BEGIN
         )
         INSERT
             #plan_findings
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -21992,8 +22005,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22036,8 +22049,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22141,8 +22154,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22223,8 +22236,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22285,8 +22298,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22373,8 +22386,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22430,8 +22443,8 @@ BEGIN
     BEGIN
         INSERT
             #plan_findings
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -22563,8 +22576,8 @@ BEGIN
     BEGIN
         INSERT
             #plan_findings
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -22603,8 +22616,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22661,8 +22674,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22710,8 +22723,8 @@ BEGIN
     */
     INSERT
         #plan_dml_indexes
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22755,8 +22768,8 @@ BEGIN
 
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -22839,8 +22852,8 @@ BEGIN
     BEGIN
         INSERT
             #plan_findings
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -22954,8 +22967,8 @@ BEGIN
         )
         INSERT
             #plan_findings
-            WITH
-                (TABLOCK)
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_id,
@@ -23021,8 +23034,8 @@ BEGIN
     */
     INSERT
         #plan_findings
-        WITH
-            (TABLOCK)
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -23086,9 +23099,12 @@ BEGIN
     SET
         pfi.phase =
             CASE ps.operation_type
-                WHEN N'PopulateQuery' THEN 'populate'
-                WHEN N'FetchQuery' THEN 'fetch'
-                WHEN N'RefreshQuery' THEN 'refresh'
+                WHEN N'PopulateQuery'
+                THEN 'populate'
+                WHEN N'FetchQuery'
+                THEN 'fetch'
+                WHEN N'RefreshQuery'
+                THEN 'refresh'
             END
     FROM #plan_findings AS pfi
     JOIN #plan_statements AS ps
