@@ -33,7 +33,8 @@ RETURN
 
 WITH x AS
 (
-    SELECT TOP (LEN(ISNULL(@string, N'')))
+    /*DATALENGTH / 2 counts trailing spaces, which LEN ignores*/
+    SELECT TOP (DATALENGTH(ISNULL(@string, N'')) / 2)
         ROW_NUMBER() OVER
         (
             ORDER BY
@@ -127,7 +128,8 @@ WITH e1 (n) AS
 ),
      x AS
 (
-    SELECT TOP (LEN(ISNULL(@string, N'')))
+    /*DATALENGTH / 2 counts trailing spaces, which LEN ignores*/
+    SELECT TOP (DATALENGTH(ISNULL(@string, N'')) / 2)
          ROW_NUMBER() OVER
          (
              ORDER BY

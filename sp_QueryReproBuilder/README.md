@@ -20,7 +20,7 @@ You can filter queries by plan_id or query_id, and optionally specify a date ran
 | parameter_name         | data_type          | description                                                           | valid_inputs                                       | defaults                         |
 |------------------------|--------------------|-----------------------------------------------------------------------|----------------------------------------------------|----------------------------------|
 | @database_name         | sysname            | the name of the database you want to look at query store in           | a database name with query store enabled           | NULL; current database if NULL   |
-| @start_date            | datetimeoffset(7)  | the begin date of your search. No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally.    | January 1, 1753, through December 31, 9999         | the last seven days              |
+| @start_date            | datetimeoffset(7)  | the begin date of your search. No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally.    | January 1, 1753, through December 31, 9999         | the last seven days, or the seven days before @end_date if you set only @end_date |
 | @end_date              | datetimeoffset(7)  | the end date of your search. No offset (or +00:00) means server local time. Any other offset is used as given. Converted to UTC internally.      | January 1, 1753, through December 31, 9999         | NULL                             |
 | @include_plan_ids      | nvarchar(4000)     | a list of plan ids to search for                                      | a string; comma separated for multiple ids         | NULL                             |
 | @include_query_ids     | nvarchar(4000)     | a list of query ids to search for                                     | a string; comma separated for multiple ids         | NULL                             |
@@ -134,6 +134,8 @@ Warnings are displayed in the executable_query script header and indicate potent
 * **restricted text**: Query text is restricted (contains passwords or sensitive information)
 * **missing parameter values**: Parameters declared in the query text were not found in the plan. Their value is set to ? and must be filled in by hand
 * **truncated parameter value**: A compiled parameter value is as long as a plan keeps, and its type can hold more. It was probably cut off
+* **spatial parameter SRID**: A geography or geometry parameter value is in the plan as text with no SRID. The repro uses the type default (4326 for geography, 0 for geometry). If the original was different, set the SRID by hand
+* **sql_variant parameter**: A sql_variant parameter value is in the plan as text with no base type. The repro binds it as nvarchar. If the original was another type, such as int or datetime, change it by hand
 * **dispatcher plan**: The plan is a dispatcher plan for parameter sensitive plan optimization. No executable query can be made for it, so the warning lists the variant query ids to use
 * **PSP variant**: The query is a parameter sensitive plan variant. The PLAN PER VALUE hint in the Query Store text was removed from the repro
 * **control characters**: The query text has control characters that XML cannot show. They were replaced with ? in the repro

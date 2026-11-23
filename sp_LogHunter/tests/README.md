@@ -18,7 +18,7 @@ healthy server because it never managed to read the log.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Runs the parameter matrix, asserting `#errors` stays empty, plus bidirectional marker and date-range checks. 78 assertions. |
+| `run_tests.py` | Runs the parameter matrix, asserting `#errors` stays empty, plus bidirectional marker and date-range checks. 101 assertions. |
 
 Install `sp_LogHunter.sql` into `master` on the target server first. `run_tests.py` exits with code 1 if `dbo.sp_LogHunter` is not installed in `master`.
 
@@ -28,7 +28,7 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `78`. A full run takes a few seconds.
+password). Expect `101`. A full run takes a few seconds.
 
 ## What it actually covers
 
@@ -55,6 +55,8 @@ window 30 days earlier does not) and `@custom_message_only` (0 runs the canned
 sweep *and* the custom search; 1 returns strictly fewer rows). Every absence
 assertion is paired with a presence assertion on the same machinery, so nothing
 passes vacuously by returning an empty set.
+
+A NoiseFilter group checks the "dumb message" DELETE from both sides. It writes lines that look like what that DELETE removes (a login failure, a database start-up line, an SPN registration message) and one real error for a database named `ESPN_...`. A default run must not return the noise lines, because the canned searches find them and the filter removes them. A `@custom_message` search for the same text must return them, because the caller asked for it by name. The `ESPN_` error must survive the default run, because the filter used to match `%SPN%` anywhere in a line.
 
 A separate Validation group checks the parameter guards. An invalid `@language_id` is rejected. `@custom_message_only = 1` without a search string is rejected. A `@language_id` other than 1033 must print a warning. The harness skips that check when the server has no non-English message set installed.
 

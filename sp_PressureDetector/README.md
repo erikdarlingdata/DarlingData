@@ -19,6 +19,16 @@ All you need to do is hit F5 to get information about:
 * Blocking chains with lead blockers (@troubleshoot_blocking = 1)
 * Optional logging to permanent tables (@log_to_table = 1)
 
+## Install with sqlcmd
+
+You can install the procedure with sqlcmd instead of opening the .sql file. The target database must already exist. Run this from this folder:
+
+```
+sqlcmd -S {sql-server} -i install-pressure-detector.sql -v TargetDB="{target-database}" -C
+```
+
+Add your own login options, such as -E for Windows authentication. The -C option trusts the server certificate.
+
 ## Parameters
 
 |       parameter_name       | data_type |                                  description                                   |                     valid_inputs                     |   defaults   |

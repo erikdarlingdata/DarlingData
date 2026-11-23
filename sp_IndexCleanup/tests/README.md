@@ -75,7 +75,10 @@ over an existing one. Everything it creates is dropped, backup file included.
 
 ### CI
 
-All four runners run in CI on every 2017/2019/2022/2025 container. Three of them
+All four runners run in CI on every 2017/2019/2022/2025 container. They run for every
+pull request into `main`. A pull request into `dev` runs them only when it
+changes a file in `sp_IndexCleanup/` (not Markdown), `Install-All/`,
+`.github/sql/`, or the workflow file. Three of them
 (`run_tests.py`, `fixture_cases_test.py`, `no_access_test.py`) need a
 `StackOverflow2013` with a `Users` table, which the containers do not have, so CI
 first builds a faithful-schema synthetic one from `fixture_stackoverflow2013.sql`

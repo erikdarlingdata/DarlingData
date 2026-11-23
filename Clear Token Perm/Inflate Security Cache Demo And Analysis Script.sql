@@ -101,7 +101,7 @@ BEGIN
                 CONVERT
                 (
                     decimal(38, 2),
-                    (mc.pages_kb / 128. / 1024.)
+                    (mc.pages_kb / 1024. / 1024.) /*pages_kb to MB to GB, the same as ClearTokenPerm*/
                 ),
             run_date =
                 SYSDATETIME()

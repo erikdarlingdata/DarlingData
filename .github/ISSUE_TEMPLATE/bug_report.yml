@@ -11,12 +11,14 @@ body:
       options:
         - sp_HealthParser
         - sp_HumanEvents
+        - sp_HumanEventsBlockViewer
         - sp_IndexCleanup
         - sp_LogHunter
         - sp_PerfCheck
         - sp_PressureDetector
         - sp_QueryReproBuilder
         - sp_QueryStoreCleanup
+        - sp_QuickieCache
         - sp_QuickieStore
         - Other (specify in description)
     validations:
@@ -26,8 +28,8 @@ body:
     id: version
     attributes:
       label: Script Version
-      description: Look near the top of the stored procedure for the version date and number.
-      placeholder: "e.g., 2026.03.15, v4.2"
+      description: Look for the `@version` and `@version_date` lines near the top of the stored procedure.
+      placeholder: "e.g., 6.11, 20261101"
     validations:
       required: true
 
@@ -94,7 +96,7 @@ body:
     attributes:
       label: Debug Output
       description: |
-        If the script supports `@debug = 1` (sp_QuickieStore, sp_HealthParser, sp_PressureDetector, sp_PerfCheck, sp_IndexCleanup, sp_LogHunter, sp_HumanEvents, sp_QueryStoreCleanup, sp_QueryReproBuilder), please re-run with `@debug = 1` and paste the **Messages tab** output — especially the last `current_table` value and the failing dynamic SQL block. This pinpoints which section is broken and is usually all we need to ship a fix.
+        Every script has a `@debug` parameter. Please re-run with `@debug = 1` and paste the **Messages tab** output. Depending on the script, it shows the dynamic SQL, parameter and variable values, and diagnostic messages. Include the last messages before the error and the failing dynamic SQL, if the script prints it. This pinpoints which section is broken and is usually all we need to ship a fix.
       render: text
     validations:
       required: false

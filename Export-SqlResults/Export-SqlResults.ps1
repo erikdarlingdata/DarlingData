@@ -313,8 +313,10 @@ try {
             $reader = $cmd.ExecuteReader()
             try {
                 do {
-                    $setNo++
+                    # A statement with no result set (SET, PRINT, an empty batch) gets no number,
+                    # so resultset files and the manifest never skip one.
                     if ($reader.FieldCount -eq 0) { continue }
+                    $setNo++
 
                     $cols = @(0..($reader.FieldCount - 1) | ForEach-Object { $reader.GetName($_) })
                     # Columns whose declared type is xml; used alongside a content sniff below.
@@ -402,17 +404,19 @@ try {
 }
 finally {
     $conn.Dispose()
-}
+    $sha.Dispose()
 
-$sha.Dispose()
-
-if ($manifest.Count -gt 0) {
-    $manifest | Export-Csv (Join-Path $OutDir 'manifest.csv') -NoTypeInformation -Encoding UTF8
-    $uniqueFiles = @($manifest | Group-Object File)
-    $mb = [math]::Round((($uniqueFiles | ForEach-Object { $_.Group[0].Bytes }) | Measure-Object -Sum).Sum / 1MB, 1)
-    Write-Host ""
-    Write-Host "$($manifest.Count) values spilled into $($uniqueFiles.Count) files, ${mb}MB on disk" -ForegroundColor Yellow
-    Write-Host "manifest: manifest.csv" -ForegroundColor Yellow
+    # Written here, not after the try, so a batch that raises an error (severity 11-16)
+    # still leaves a manifest for the files already spilled. The error is not swallowed:
+    # the finally block runs and the error then propagates to the caller as before.
+    if ($manifest.Count -gt 0) {
+        $manifest | Export-Csv (Join-Path $OutDir 'manifest.csv') -NoTypeInformation -Encoding UTF8
+        $uniqueFiles = @($manifest | Group-Object File)
+        $mb = [math]::Round((($uniqueFiles | ForEach-Object { $_.Group[0].Bytes }) | Measure-Object -Sum).Sum / 1MB, 1)
+        Write-Host ""
+        Write-Host "$($manifest.Count) values spilled into $($uniqueFiles.Count) files, ${mb}MB on disk" -ForegroundColor Yellow
+        Write-Host "manifest: manifest.csv" -ForegroundColor Yellow
+    }
 }
 
 Write-Host ""

@@ -88,7 +88,7 @@ def _sqlcmd_prefix():
         os.environ.get("SQLCMD_CONN_ARGS", ""))
 
 
-def _sqlcmd(server, password, sql, database="master", timeout=300):
+def _sqlcmd(server, password, sql, database="master", timeout=300, width=200):
     """Run a batch and return (stdout, stderr) decoded as UTF-8.
 
     -y 200 truncates variable-length columns in the OUTPUT, which keeps the
@@ -101,7 +101,7 @@ def _sqlcmd(server, password, sql, database="master", timeout=300):
         "-d", database,
         "-W",            # trim trailing spaces
         "-w", "65535",   # do not wrap wide rows
-        "-y", "200",     # truncate wide columns (plan XML) so rendering is fast
+        "-y", str(width),  # truncate wide columns (plan XML) so rendering is fast
         "-s", "\t",      # tab delimiter
         "-Q", sql,
     ]
@@ -125,12 +125,16 @@ def find_sql_errors(text):
     return re.findall(pattern, text)
 
 
-def run_qs(server, password, extra="", timeout=300, database_name=TEST_DB):
+def run_qs(server, password, extra="", timeout=300, database_name=TEST_DB,
+           width=200, home="master"):
     """Run sp_QuickieStore against the scratch database, always naming it
-    explicitly, and return (stdout, combined-for-error-scanning)."""
+    explicitly, and return (stdout, combined-for-error-scanning). home is
+    the database the procedure runs from; its collation decides how the
+    procedure compares its own parameters."""
     sql = ("SET NOCOUNT ON; EXECUTE dbo.sp_QuickieStore "
            "@database_name = '%s'%s;" % (_esc(database_name), extra))
-    out, err = _sqlcmd(server, password, sql, timeout=timeout)
+    out, err = _sqlcmd(server, password, sql, database=home, timeout=timeout,
+                       width=width)
     return out, out + "\n" + err
 
 
@@ -148,8 +152,19 @@ def result_rows(stdout):
 class Results:
     def __init__(self):
         self.items = []
+        self._t0 = None
+        self._group = None
+
+    def _mark(self, group):
+        # Elapsed marker, printed when the group changes (flushed, so CI logs show it live).
+        if self._t0 is None:
+            self._t0 = time.monotonic()
+        if group != self._group:
+            self._group = group
+            print("[timing] +%.1fs entering %s" % (time.monotonic() - self._t0, group), flush=True)
 
     def check(self, group, name, condition, detail=""):
+        self._mark(group)
         self.items.append({"group": group, "name": name,
                            "passed": bool(condition), "detail": detail})
 
@@ -307,6 +322,22 @@ BEGIN
     DROP DATABASE {db};
 END;
 """.format(db=CS_DB)
+
+
+# A copy of the installed procedure in the case-sensitive database, so its own
+# parameter checks run under a case-sensitive collation whatever master uses.
+CS_HOME_SQL = """
+SET NOCOUNT ON;
+DECLARE @d nvarchar(max);
+SELECT @d = m.definition
+FROM master.sys.sql_modules AS m
+WHERE m.object_id = OBJECT_ID(N'master.dbo.sp_QuickieStore');
+IF LEFT(LTRIM(@d), 5) = N'ALTER'
+BEGIN
+    EXECUTE (N'CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
+END;
+EXECUTE (@d);
+"""
 
 
 def build_fixture(server, password, R):
@@ -543,6 +574,45 @@ def case_sensitive_search_tests(server, password, R):
                     completed(out) and result_rows(out) == 0,
                     "completed=%s rows=%d errors=%s"
                     % (completed(out), result_rows(out), find_sql_errors(combined)))
+
+        # The checks on @sort_order, the regression parameters,
+        # @execution_type_desc and @wait_filter compare against lowercase
+        # lists. Run the procedure from the case-sensitive database, so that
+        # a value in any other case has to be accepted, not replaced by a
+        # default or rejected.
+        out, err = _sqlcmd(server, password, CS_HOME_SQL, database=CS_DB,
+                           timeout=600)
+        errs = find_sql_errors(out + "\n" + err)
+        R.check("CaseParameters", "procedure copied into the case-sensitive database",
+                not errs, str(errs[:2]))
+        if not errs:
+            regression = (", @regression_baseline_start_date = '20200101'"
+                          ", @regression_baseline_end_date = '20200102'")
+            cases = [
+                ("@sort_order = 'Duration'", ", @sort_order = 'Duration'",
+                 "so out of this world"),
+                ("@regression_comparator = 'Relative'",
+                 regression + ", @regression_comparator = 'Relative'",
+                 "regression_comparator"),
+                ("@regression_direction = 'Improved'",
+                 regression + ", @regression_direction = 'Improved'",
+                 "regression_direction"),
+                ("@execution_type_desc = 'Regular'",
+                 ", @execution_type_desc = 'Regular'",
+                 "can only take one of these four"),
+                ("@wait_filter = 'Lock'", ", @wait_filter = 'Lock'",
+                 "is invalid"),
+            ]
+            for label, extra, complaint in cases:
+                out, combined = run_qs(server, password, extra,
+                                       database_name=CS_DB, home=CS_DB)
+                R.check("CaseParameters",
+                        "%s is accepted in a case-sensitive database" % label,
+                        completed(out) and complaint not in out
+                        and not find_sql_errors(combined),
+                        "completed=%s complaint=%s errors=%s"
+                        % (completed(out), complaint in out,
+                           find_sql_errors(combined)))
     finally:
         _sqlcmd(server, password, CS_CLEANUP_SQL)
 
@@ -613,6 +683,27 @@ JOIN sys.query_store_runtime_stats AS qsrs
 
 MD_MARKERS = ("md_q1", "md_q2", "md_q3", "md_q4")
 
+# A listed database the caller cannot enter. A second session holds it in
+# single-user mode, so the first session that tries to use it gets Msg 924
+# although sys.databases still says ONLINE. A login with no user in the
+# database fails the same way (Msg 916); HAS_DBACCESS returns 0 for both.
+MD_LOCKED_DB = "quickiestore_test_md_locked"
+
+MD_LOCKED_SETUP_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db};
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, QUERY_CAPTURE_MODE = ALL);
+"""
+
+MD_LOCKED_HOLD_SQL = ("ALTER DATABASE CURRENT SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+                      "WAITFOR DELAY '00:10:00';")
+
 
 def md_missing_markers(server, password, db):
     """Markers with no captured query and runtime stats in the database."""
@@ -643,10 +734,179 @@ def md_build_database(server, password, db):
     return [], missing
 
 
+def md_hold_single_user(server, password, db):
+    """Start a second session that puts the database in single-user mode and
+    keeps the only connection. Returns (process, held), where held is True once
+    sys.databases reports SINGLE_USER."""
+    cmd = _sqlcmd_prefix() + [
+        "-S", server, "-U", "sa", "-P", password, "-d", db,
+        "-Q", MD_LOCKED_HOLD_SQL,
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL)
+    for _ in range(30):
+        out, _err = _sqlcmd(
+            server, password,
+            "SET NOCOUNT ON; SELECT d.user_access_desc FROM sys.databases AS d "
+            "WHERE d.name = N'%s';" % _esc(db))
+        if "SINGLE_USER" in out:
+            return proc, True
+        time.sleep(1)
+    return proc, False
+
+
+# A listed database the caller can enter but cannot read Query Store in. The
+# first login has VIEW SERVER STATE, so everything else in the run works, but
+# it is denied VIEW DATABASE STATE in one database. HAS_DBACCESS returns 1 for
+# that database, and its Query Store views fail with Msg 297 (Msg 262 for a
+# user with no grant at all), which ended the whole run before the permission
+# check. The second login has only VIEW SERVER PERFORMANCE STATE (SQL Server
+# 2022 and later), which covers Query Store without VIEW DATABASE STATE.
+MD_DENIED_DB = "quickiestore_test_md_denied"
+MD_PERM_LOGIN = "quickiestore_test_md_perm"
+MD_PERF_LOGIN = "quickiestore_test_md_perf"
+
+MD_PERM_LOGIN_SQL = """
+SET NOCOUNT ON;
+IF EXISTS (SELECT 1/0 FROM sys.database_principals AS dp WHERE dp.name = N'{login}')
+BEGIN
+    DROP USER {login};
+END;
+IF EXISTS (SELECT 1/0 FROM sys.server_principals AS sp WHERE sp.name = N'{login}')
+BEGIN
+    DROP LOGIN {login};
+END;
+CREATE LOGIN {login} WITH PASSWORD = N'Qs!perm_0123_Test', CHECK_POLICY = OFF;
+CREATE USER {login} FOR LOGIN {login};
+GRANT EXECUTE ON dbo.sp_QuickieStore TO {login};
+GRANT {server_permission} TO {login};
+"""
+
+MD_PERM_USER_SQL = """
+SET NOCOUNT ON;
+CREATE USER {login} FOR LOGIN {login};
+{extra}
+"""
+
+MD_PERM_CLEANUP_SQL = """
+SET NOCOUNT ON;
+IF EXISTS (SELECT 1/0 FROM sys.database_principals AS dp WHERE dp.name = N'{login}')
+BEGIN
+    DROP USER {login};
+END;
+IF EXISTS (SELECT 1/0 FROM sys.server_principals AS sp WHERE sp.name = N'{login}')
+BEGIN
+    DROP LOGIN {login};
+END;
+"""
+
+
+def md_run_as(server, password, login, include):
+    """Run @get_all_databases as a login that is not sysadmin. sa impersonates
+    it for one call, so permission checks see the login, not sa."""
+    return _sqlcmd(
+        server, password,
+        "SET NOCOUNT ON; EXECUTE AS LOGIN = N'%s'; EXECUTE dbo.sp_QuickieStore "
+        "@get_all_databases = 1, @include_databases = N'%s', @expert_mode = 1, "
+        "@top = 50; REVERT;" % (login, include))
+
+
+def md_permission_cleanup(server, password):
+    for login in (MD_PERM_LOGIN, MD_PERF_LOGIN):
+        _sqlcmd(server, password, MD_PERM_CLEANUP_SQL.format(login=login))
+
+
+def md_permission_tests(server, password, R):
+    """A database the caller can enter but cannot read Query Store in is
+    skipped and named in the footer, not an error. A login that can read it,
+    including one with only VIEW SERVER PERFORMANCE STATE on SQL Server 2022
+    and later, is not skipped."""
+    out, err = _sqlcmd(server, password,
+                       MD_LOCKED_SETUP_SQL.format(db=MD_DENIED_DB))
+    errs = find_sql_errors(out + "\n" + err)
+    R.check("MultiDb", "%s created" % MD_DENIED_DB, not errs, str(errs))
+    if errs:
+        return
+    out, err = _sqlcmd(server, password,
+                       MD_PERM_LOGIN_SQL.format(login=MD_PERM_LOGIN,
+                                                server_permission="VIEW SERVER STATE"))
+    errs = find_sql_errors(out + "\n" + err)
+    for db in MD_DBS:
+        out2, err2 = _sqlcmd(server, password,
+                             MD_PERM_USER_SQL.format(login=MD_PERM_LOGIN, extra=""),
+                             database=db)
+        errs += find_sql_errors(out2 + "\n" + err2)
+    out2, err2 = _sqlcmd(
+        server, password,
+        MD_PERM_USER_SQL.format(
+            login=MD_PERM_LOGIN,
+            extra="DENY VIEW DATABASE STATE TO %s;" % MD_PERM_LOGIN),
+        database=MD_DENIED_DB)
+    errs += find_sql_errors(out2 + "\n" + err2)
+    R.check("MultiDb", "%s created, denied VIEW DATABASE STATE in %s"
+            % (MD_PERM_LOGIN, MD_DENIED_DB), not errs, str(errs))
+    if errs:
+        return
+
+    out, err = md_run_as(server, password, MD_PERM_LOGIN,
+                         ",".join(MD_DBS + (MD_DENIED_DB,)))
+    combined = out + "\n" + err
+    runtime = sum(1 for line in out.splitlines()
+                  if line.startswith("runtime_stats"))
+    R.check("MultiDb",
+            "a database the caller cannot read Query Store in does not fail the run",
+            completed(out) and not find_sql_errors(combined),
+            "completed=%s %s" % (completed(out),
+                                 re.findall(r"Msg \d+, Level \d+[^\n]*", combined)[:2]))
+    R.check("MultiDb",
+            "the databases the caller can read still return their queries",
+            runtime >= 8, "runtime_stats rows=%d" % runtime)
+    R.check("MultiDb",
+            "the footer lists the database as skipped for no Query Store permission",
+            "%s (No permission to read Query Store)" % MD_DENIED_DB in out,
+            "skipped list missing from the footer")
+    R.check("MultiDb",
+            "the databases the caller can read are not listed as skipped",
+            completed(out) and not any("%s (No" % db in out for db in MD_DBS),
+            "a readable database is in the skipped list")
+
+    out, _ = _sqlcmd(server, password,
+                     "SET NOCOUNT ON; SELECT 'MAJOR:' + "
+                     "CONVERT(varchar(10), SERVERPROPERTY('ProductMajorVersion'));")
+    vm = re.search(r"MAJOR:(\d+)", out)
+    if not vm or int(vm.group(1)) < 16:
+        return
+    out, err = _sqlcmd(server, password,
+                       MD_PERM_LOGIN_SQL.format(login=MD_PERF_LOGIN,
+                                                server_permission="VIEW SERVER PERFORMANCE STATE"))
+    errs = find_sql_errors(out + "\n" + err)
+    out2, err2 = _sqlcmd(server, password,
+                         MD_PERM_USER_SQL.format(login=MD_PERF_LOGIN, extra=""),
+                         database=MD_DBS[0])
+    errs += find_sql_errors(out2 + "\n" + err2)
+    R.check("MultiDb", "%s created with only VIEW SERVER PERFORMANCE STATE"
+            % MD_PERF_LOGIN, not errs, str(errs))
+    if errs:
+        return
+    out, err = md_run_as(server, password, MD_PERF_LOGIN, MD_DBS[0])
+    combined = out + "\n" + err
+    runtime = sum(1 for line in out.splitlines()
+                  if line.startswith("runtime_stats"))
+    R.check("MultiDb",
+            "a login with only VIEW SERVER PERFORMANCE STATE is not skipped",
+            completed(out) and not find_sql_errors(combined) and runtime >= 4
+            and "(No permission to read Query Store)" not in out,
+            "completed=%s runtime_stats rows=%d %s"
+            % (completed(out), runtime,
+               re.findall(r"Msg \d+, Level \d+[^\n]*", combined)[:2]))
+
+
 def multi_database_tests(server, password, R):
     """Two databases whose Query Store ids collide, read in one
     @get_all_databases run: expert mode has to return the compilation stats
-    row of every query, not one per colliding id."""
+    row of every query, not one per colliding id. A third listed database that
+    the caller cannot enter is skipped and named in the footer, not an error."""
+    holders = []
     try:
         for db in MD_DBS:
             errs, missing = md_build_database(server, password, db)
@@ -678,8 +938,49 @@ def multi_database_tests(server, password, R):
                 "when ids collide across databases",
                 compile_rows == runtime,
                 "runtime_stats=%d compilation_stats=%d" % (runtime, compile_rows))
+
+        # A listed database the caller cannot enter must be skipped and named,
+        # not fail the whole run.
+        out, err = _sqlcmd(server, password,
+                           MD_LOCKED_SETUP_SQL.format(db=MD_LOCKED_DB))
+        errs = find_sql_errors(out + "\n" + err)
+        R.check("MultiDb", "%s created" % MD_LOCKED_DB, not errs, str(errs))
+        if errs:
+            return
+        holder, held = md_hold_single_user(server, password, MD_LOCKED_DB)
+        holders.append(holder)
+        R.check("MultiDb", "%s is held in single-user mode by another session"
+                % MD_LOCKED_DB, held, "user_access_desc never became SINGLE_USER")
+        if not held:
+            return
+        out, err = _sqlcmd(
+            server, password,
+            "SET NOCOUNT ON; EXECUTE dbo.sp_QuickieStore @get_all_databases = 1, "
+            "@include_databases = N'%s,%s', @expert_mode = 1, @top = 50;"
+            % (",".join(MD_DBS), MD_LOCKED_DB))
+        combined = out + "\n" + err
+        runtime = sum(1 for line in out.splitlines()
+                      if line.startswith("runtime_stats"))
+        R.check("MultiDb",
+                "a database the caller cannot enter does not fail the run",
+                completed(out) and not find_sql_errors(combined),
+                "completed=%s %s" % (completed(out),
+                                     re.findall(r"Msg \d+, Level \d+[^\n]*", combined)[:2]))
+        R.check("MultiDb",
+                "the other databases still return their queries",
+                runtime >= 8, "runtime_stats rows=%d" % runtime)
+        R.check("MultiDb",
+                "the footer lists the database as skipped for no access",
+                "%s (No database access)" % MD_LOCKED_DB in out,
+                "skipped list missing from the footer")
+
+        md_permission_tests(server, password, R)
     finally:
-        for db in MD_DBS:
+        for proc in holders:
+            proc.kill()
+            proc.wait()
+        md_permission_cleanup(server, password)
+        for db in MD_DBS + (MD_LOCKED_DB, MD_DENIED_DB):
             _sqlcmd(server, password, CLEANUP_SQL.replace(TEST_DB, db))
 
 
@@ -718,6 +1019,19 @@ def id_list_tests(server, password, R):
                 completed(out) and result_rows(out) == baseline,
                 "rows=%d expected=%d errors=%s"
                 % (result_rows(out), baseline, find_sql_errors(combined)))
+
+    # A blank list means no list. A blank include list next to an ignore list
+    # used to leave nothing, because the blank list still filtered.
+    out, combined = run_qs(server, password,
+                           ", @ignore_plan_ids = N'%s'" % ids[0])
+    ignore_only = result_rows(out)
+    out, combined = run_qs(server, password,
+                           ", @include_plan_ids = N'', @ignore_plan_ids = N'%s'"
+                           % ids[0])
+    R.check("IdList", "a blank @include_plan_ids is ignored next to an ignore list",
+            completed(out) and ignore_only > 0 and result_rows(out) == ignore_only,
+            "rows=%d expected=%d errors=%s"
+            % (result_rows(out), ignore_only, find_sql_errors(combined)))
 
     # About 380 ids is 3,400 characters; the splitter adds six per comma, so
     # the expanded list passes 4,000 and used to fail with Msg 9400.
@@ -1049,6 +1363,7 @@ FROM
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q1 AS BEGIN SELECT /* qs_rm_marker */ l.v FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q2 AS BEGIN SELECT /* qs_rm_marker */ c = COUNT_BIG(*) FROM dbo.rm_scan AS s WHERE s.v = 5; END;');
 EXECUTE (N'CREATE PROCEDURE dbo.rm_q3 AS BEGIN SELECT /* qs_rm_marker */ l.id, l.v FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
+EXECUTE (N'CREATE PROCEDURE dbo.rw_q5 AS BEGIN SELECT /* qs_rw_marker */ x = l.v + l.id FROM dbo.rm_lock AS l WHERE l.id = 1; END;');
 SET @tries = 0;
 WHILE @tries < 10 AND @rows = 0
 BEGIN
@@ -1349,6 +1664,13 @@ def rm_plain(server, password, count):
     return find_sql_errors(out + "\n" + err)
 
 
+def rw_plain(server, password, count):
+    """rw_q5, `count` times, with nothing blocking it."""
+    sql = "SET NOCOUNT ON; " + " ".join(["EXECUTE dbo.rw_q5;"] * count)
+    out, err = _sqlcmd(server, password, sql, database=RM_DB)
+    return find_sql_errors(out + "\n" + err)
+
+
 def rm_blocked(server, password, proc="rm_q1"):
     """One execution of proc (rm_q1 or rm_q3) that waits on a lock for at
     least 2 seconds. Tries up to 3 times, so one run that Query Store does
@@ -1381,6 +1703,113 @@ def rm_blocked(server, password, proc="rm_q1"):
     return errs, added
 
 
+# rw_q5's runtime stats rows: plan, interval, executions, average duration in
+# microseconds, and the period, split the same way as RM_TRUTH_SQL does.
+RW_TRUTH_SQL = """
+SET NOCOUNT ON;
+SELECT marker = 'RW|' + CONVERT(varchar(20), qsp.plan_id) + '|' +
+    CONVERT(varchar(20), qsrs.runtime_stats_interval_id) + '|' +
+    CONVERT(varchar(20), qsrs.count_executions) + '|' +
+    CONVERT(varchar(30), CONVERT(bigint, qsrs.avg_duration)) + '|' +
+    CASE WHEN qsrs.last_execution_time >= CONVERT(datetimeoffset(7), '{split}', 127)
+         THEN 'No' ELSE 'Yes' END
+FROM sys.query_store_runtime_stats AS qsrs
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsrs.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.rw_q5');
+"""
+
+
+def regression_filter_tests(server, password, R, state, split, end, runs, q2_plans):
+    """@duration_ms, @wait_filter and @execution_count keep every plan of the
+    queries they pick, in both time periods. rw_q5 has one slow baseline
+    interval with a Lock wait, and only fast runs without waits in the current
+    period. rm_q2 changes plan between the periods: the first plan only ran in
+    the baseline, the second only in the current period."""
+    out, err = _sqlcmd(server, password, RW_TRUTH_SQL.format(split=split[1]),
+                       database=RM_DB)
+    rows = [(plan, int(n), int(avg), period) for plan, _, n, avg, period in
+            re.findall(r"RW\|(\d+)\|(\d+)\|(\d+)\|(\d+)\|(Yes|No)", out)]
+    plans = sorted({r[0] for r in rows})
+    total = {period: sum(n for _, n, _, per in rows if per == period)
+             for period in ("Yes", "No")}
+    slow = any(avg >= 1000000 for _, _, avg, per in rows if per == "Yes")
+    fast = all(avg < 1000000 for _, _, avg, per in rows if per == "No")
+    R.check("RegressionFilter",
+            "rw_q5 has one plan, a slow baseline interval and only fast current "
+            "intervals", len(plans) == 1 and slow and fast and rows
+            and all(total.values()), "rows=%s" % rows)
+    if not (len(plans) == 1 and slow and fast and rows and all(total.values())):
+        return
+    plan = plans[0]
+    window = ", @query_text_search = 'qs_rw_marker', @expert_mode = 1, @format_output = 0"
+    regression = (", @regression_baseline_start_date = '%s'"
+                  ", @regression_baseline_end_date = '%s'"
+                  ", @start_date = '%s', @end_date = '%s'"
+                  % (state["start"][0], split[0], split[0], end[0]))
+
+    def counts(stdout):
+        return {(r.get("plan_id"), r.get("from_regression_baseline_time_period")):
+                r.get("count_executions") for r in source_rows(stdout, "runtime_stats")}
+
+    # Outside regression mode: one slow interval qualifies the plan, and then
+    # every run in the time period counts.
+    for label, extra in (("@duration_ms", ", @duration_ms = 1000"),
+                         ("@duration_ms with @execution_count = all runs",
+                          ", @duration_ms = 1000, @execution_count = %d"
+                          % (total["Yes"] + total["No"]))):
+        out, combined = run_qs(server, password,
+                               ", @start_date = '%s', @end_date = '%s'%s%s"
+                               % (state["start"][0], end[0], extra, window),
+                               database_name=RM_DB)
+        got = counts(out)
+        R.check("DurationFilter",
+                "%s counts every run of a plan with one slow interval" % label,
+                completed(out) and not find_sql_errors(combined)
+                and got == {(plan, None): str(total["Yes"] + total["No"])},
+                "got=%s expected=%d errors=%s"
+                % (got, total["Yes"] + total["No"], find_sql_errors(combined)))
+
+    # Regression mode: the slow baseline interval qualifies the plan, so its
+    # fast current runs are measured too.
+    out, combined = run_qs(server, password,
+                           regression + ", @duration_ms = 1000" + window,
+                           database_name=RM_DB)
+    got = counts(out)
+    R.check("RegressionFilter", "@duration_ms keeps both periods of a plan",
+            completed(out) and not find_sql_errors(combined)
+            and got == {(plan, "Yes"): str(total["Yes"]), (plan, "No"): str(total["No"])},
+            "got=%s expected=%s errors=%s" % (got, total, find_sql_errors(combined)))
+
+    # The Lock wait is only in the baseline period; the current-period runs
+    # still belong to the plan.
+    out, combined = run_qs(server, password,
+                           regression + ", @wait_filter = 'lock'" + window,
+                           database_name=RM_DB)
+    got = counts(out)
+    R.check("RegressionFilter", "@wait_filter keeps both periods of a plan",
+            completed(out) and not find_sql_errors(combined)
+            and got == {(plan, "Yes"): str(total["Yes"]), (plan, "No"): str(total["No"])},
+            "got=%s expected=%s errors=%s" % (got, total, find_sql_errors(combined)))
+
+    # rm_q2 has enough executions in the current period only. Its baseline
+    # plan has to stay, or there is nothing to compare with.
+    if len(q2_plans) == 2 and (q2_plans[1], "No") in runs:
+        enough = runs[(q2_plans[1], "No")][1]
+        out, combined = run_qs(server, password,
+                               regression + ", @execution_count = %d" % enough
+                               + ", @query_text_search = '%s'" % RM_MARKER
+                               + ", @expert_mode = 1, @format_output = 0",
+                               database_name=RM_DB)
+        got = counts(out)
+        R.check("RegressionFilter",
+                "@execution_count keeps the baseline plan of a query with enough "
+                "current executions",
+                completed(out) and not find_sql_errors(combined)
+                and (q2_plans[0], "Yes") in got and (q2_plans[1], "No") in got,
+                "got=%s errors=%s" % (got, find_sql_errors(combined)))
+
+
 def regression_window_setup(server, password, R):
     """Build the regression database and run slot A. Returns what slot B
     needs, or None if the fixture failed."""
@@ -1404,11 +1833,16 @@ def regression_window_setup(server, password, R):
     block_errs, waited = rm_blocked(server, password, "rm_q1")
     block_errs3, waited3 = rm_blocked(server, password, "rm_q3")
     errs += block_errs + block_errs3
+    # rw_q5 waits on a lock once here and runs without waiting in slot B, so
+    # its only baseline interval is slow and its current ones are fast.
+    block_errs5, waited5 = rm_blocked(server, password, "rw_q5")
+    errs += block_errs5
     end = rm_now(server, password)
-    ok = bool(not errs and waited >= 1000 and waited3 >= 1000 and start and end)
-    R.check("RegressionFixture", "slot A: rm_q1 and rm_q3 waited on a lock", ok,
-            "errors=%s lock wait added: rm_q1 %d ms, rm_q3 %d ms"
-            % (errs[:2], waited, waited3))
+    ok = bool(not errs and waited >= 1000 and waited3 >= 1000
+              and waited5 >= 1000 and start and end)
+    R.check("RegressionFixture", "slot A: rm_q1, rm_q3 and rw_q5 waited on a lock", ok,
+            "errors=%s lock wait added: rm_q1 %d ms, rm_q3 %d ms, rw_q5 %d ms"
+            % (errs[:2], waited, waited3, waited5))
     if not ok:
         return None
     return {"start": start, "slot_a_end": end}
@@ -1433,6 +1867,7 @@ def regression_window_tests(server, password, R, state):
     block_errs3, waited3 = rm_blocked(server, password, "rm_q3")
     block_errs, waited = rm_blocked(server, password, "rm_q1")
     errs += block_errs3 + block_errs + rm_plain(server, password, 5)
+    errs += rw_plain(server, password, 5)
     _sqlcmd(server, password,
             "SET NOCOUNT ON; EXECUTE sys.sp_query_store_flush_db; WAITFOR DELAY '00:00:01';",
             database=RM_DB)
@@ -1725,6 +2160,10 @@ def regression_window_tests(server, password, R, state):
     one_per_query(out, "WaitWindow")
     totals_checks(out, "WaitWindow", {None: q1})
 
+    # After the whole-window checks: they read plan cache data for the
+    # fixture's queries, and these runs come after them.
+    regression_filter_tests(server, password, R, state, split, end, runs, q2_plans)
+
     # Regression mode logged to tables: once into tables the procedure
     # creates, once into older WaitStatsByQuery and WaitStatsTotal tables it
     # has to upgrade.
@@ -1793,12 +2232,1460 @@ def regression_window_tests(server, password, R, state):
                     "got=%s expected=%s" % (got, expected))
 
 
+# ---------------------------------------------------------------------------
+# @plan_parsing
+#
+# One extra result set of plan findings, opt-in. The fixture is its own scratch
+# database so the 1,000,000 row table does not slow the groups above. Every
+# fixture query carries a /*pp_...*/ marker comment right after its first
+# keyword (Query Store drops comments in front of the statement for
+# sp_executesql and simple-parameterized queries), and the group finds each
+# query_id by that marker, then asks sp_QuickieStore about exactly those ids.
+#
+# Rules not covered here, and why:
+#   15 remote query        needs a linked server; no reliable loopback on a
+#                          Linux container (no OLE DB provider)
+#   17 Standard Edition    needs Standard Edition; CI and the lab run Developer
+#   19 long compile        needs a compile of 1 second or more, which is not
+#                          reproducible across machines
+# ---------------------------------------------------------------------------
+PP_DB = TEST_DB + "_pp"
+
+PP_COLUMNS = ["database_name", "query_id", "plan_id", "rule_id", "rule_name",
+              "finding", "object_name", "node_ids"]
+
+PP_FIXTURE_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db};
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, DATA_FLUSH_INTERVAL_SECONDS = 60,
+     INTERVAL_LENGTH_MINUTES = 1, QUERY_CAPTURE_MODE = ALL);
+""".format(db=PP_DB)
+
+# Objects. Row counts matter: the scan rules (9, 18) read the 1,000,000 row
+# TableCardinality of pp_big; the rest only need enough rows for a real plan.
+PP_OBJECTS_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+
+/* one shared narrow 1,000,000 row table, built set-based */
+CREATE TABLE dbo.pp_big
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    k integer NOT NULL,
+    pad char(20) NOT NULL
+);
+
+INSERT dbo.pp_big WITH (TABLOCK) (id, k, pad)
+SELECT x.n, x.n % 1000, 'x'
+FROM
+(
+    SELECT TOP (1000000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+/* 100,000 rows: nonclustered index on a only, nullable n, b has few values */
+CREATE TABLE dbo.pp_small
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    a integer NOT NULL,
+    b integer NOT NULL,
+    c varchar(100) NOT NULL,
+    n integer NULL
+);
+
+INSERT dbo.pp_small WITH (TABLOCK) (id, a, b, c, n)
+SELECT x.n, x.n % 1000, x.n % 7, REPLICATE('c', 50),
+       CASE WHEN x.n % 10 = 0 THEN NULL ELSE x.n % 500 END
+FROM
+(
+    SELECT TOP (100000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+CREATE INDEX ix_a ON dbo.pp_small (a);
+
+/* a heap with no index at all: the inner side of the eager spool query */
+CREATE TABLE dbo.pp_heap
+(
+    a integer NOT NULL,
+    b integer NOT NULL,
+    c varchar(100) NOT NULL
+);
+
+INSERT dbo.pp_heap WITH (TABLOCK) (a, b, c)
+SELECT x.n % 5000, 1, REPLICATE('h', 50)
+FROM
+(
+    SELECT TOP (50000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+/* a two row outer table: forced nested loops runs the big scan once per row */
+CREATE TABLE dbo.pp_outer (a integer NOT NULL);
+INSERT dbo.pp_outer (a) VALUES (1), (2);
+
+/* varchar column on a SQL collation, indexed: nvarchar parameters convert it */
+CREATE TABLE dbo.pp_str
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    code varchar(20) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+    pad char(100) NOT NULL
+);
+
+INSERT dbo.pp_str WITH (TABLOCK) (id, code, pad)
+SELECT x.n, CONVERT(varchar(20), x.n), 'p'
+FROM
+(
+    SELECT TOP (50000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+CREATE INDEX ix_code ON dbo.pp_str (code);
+
+/* five nonclustered indexes plus the clustered key: one insert maintains six */
+CREATE TABLE dbo.pp_wide
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    c1 integer NOT NULL,
+    c2 integer NOT NULL,
+    c3 integer NOT NULL,
+    c4 integer NOT NULL,
+    c5 integer NOT NULL
+);
+
+CREATE INDEX ix1 ON dbo.pp_wide (c1);
+CREATE INDEX ix2 ON dbo.pp_wide (c2);
+CREATE INDEX ix3 ON dbo.pp_wide (c3);
+CREATE INDEX ix4 ON dbo.pp_wide (c4);
+CREATE INDEX ix5 ON dbo.pp_wide (c5);
+
+/* the missing index query's table: unindexed, selective lookups */
+CREATE TABLE dbo.pp_mi
+(
+    id integer NOT NULL PRIMARY KEY CLUSTERED,
+    v integer NOT NULL,
+    w integer NOT NULL,
+    pad char(200) NOT NULL
+);
+
+INSERT dbo.pp_mi WITH (TABLOCK) (id, v, w, pad)
+SELECT x.n, x.n, 1, 'm'
+FROM
+(
+    SELECT TOP (20000) n = ROW_NUMBER() OVER (ORDER BY (SELECT NULL))
+    FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2
+) AS x;
+
+/* a scalar UDF that cannot be inlined (GETDATE), and a multi-statement TVF */
+EXECUTE (N'CREATE FUNCTION dbo.pp_udf (@a integer) RETURNS integer AS BEGIN RETURN @a + DATEPART(SECOND, GETDATE()); END;');
+EXECUTE (N'CREATE FUNCTION dbo.pp_mstvf () RETURNS @t TABLE (a integer NOT NULL) AS BEGIN INSERT @t (a) VALUES (1), (2), (3); RETURN; END;');
+"""
+
+# The workload. Results go into variables so the output stays small. Each
+# statement is its own Query Store query.
+PP_WORKLOAD_SQL = """
+SET NOCOUNT ON;
+DECLARE @i integer, @j integer, @c bigint, @s varchar(100);
+
+/* 4: key lookup that applies its own predicate (b) */
+EXECUTE sys.sp_executesql N'SELECT /*pp_r4*/ s.id, s.c FROM dbo.pp_small AS s WHERE s.a = @p AND s.b = @q;', N'@p integer, @q integer', 5, 3;
+
+/* 5: NOT IN against a nullable column */
+SELECT /*pp_r5*/ @i = s.id FROM dbo.pp_small AS s WHERE s.a NOT IN (SELECT s2.n FROM dbo.pp_small AS s2 WHERE s2.b = 3);
+
+/* 6: nvarchar parameter against an indexed varchar column */
+EXECUTE sys.sp_executesql N'SELECT /*pp_r6*/ s.id, s.pad FROM dbo.pp_str AS s WHERE s.code = @p;', N'@p nvarchar(20)', N'123';
+
+/* 8: a filter that has to wait for the outer join. The OR with a column from
+   the other side keeps it a Filter. A bare IS NULL on the inner side becomes an
+   anti semi join on SQL Server 2025 and the Filter is gone. */
+SELECT /*pp_r8*/ @i = s.id FROM dbo.pp_small AS s LEFT JOIN dbo.pp_heap AS h ON h.a = s.a WHERE h.b IS NULL OR s.b = 3;
+
+/* 3: UDF that blocks inlining on every version */
+SELECT /*pp_r3*/ @i = s.id, @j = dbo.pp_udf(s.a) FROM dbo.pp_small AS s WHERE s.id < 100;
+
+/* 9: residual predicate on a scan of the 1,000,000 row table */
+SELECT /*pp_r9*/ @c = COUNT_BIG(*) FROM dbo.pp_big AS b WHERE b.k = 77 OPTION (RECOMPILE);
+
+/* 10: functions and a leading wildcard around columns */
+SELECT /*pp_r10*/ @i = s.id FROM dbo.pp_small AS s WHERE ABS(s.b) = 5;
+SELECT /*pp_r10b*/ @i = s.id FROM dbo.pp_small AS s WHERE s.c LIKE '%cc';
+
+/* 11: multi-statement table-valued function */
+SELECT /*pp_r11*/ @i = s.id FROM dbo.pp_small AS s JOIN dbo.pp_mstvf() AS f ON f.a = s.b;
+
+/* 12: TopN Sort over a scan */
+SELECT /*pp_r12*/ TOP (10) @s = s.c FROM dbo.pp_small AS s ORDER BY s.c;
+
+/* 13: many-to-many merge join (duplicate a values on both sides) */
+SELECT /*pp_r13*/ @c = SUM(CONVERT(bigint, x.id) * y.id) FROM dbo.pp_small AS x JOIN dbo.pp_small AS y ON y.a = x.a WHERE x.id < 3000 AND y.id < 3000 OPTION (MERGE JOIN);
+
+/* 1: correlated subquery against a heap under forced nested loops */
+SELECT /*pp_r1*/ @i = s.id, @j = (SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a) FROM dbo.pp_small AS s WHERE s.id < 2000 OPTION (LOOP JOIN);
+
+/* 18: the 1,000,000 row scan on the inner side of nested loops. On a small
+   machine (4 cores, 1 GB: the CI containers) the optimizer puts a lazy Table
+   Spool over the scan; trace flag 8690 turns the performance spool off, and
+   FORCE ORDER and MAXDOP 1 keep the join order and the serial shape. */
+SELECT /*pp_r18*/ @c = SUM(CONVERT(bigint, b.id) * o.a) FROM dbo.pp_outer AS o JOIN dbo.pp_big AS b ON b.k = o.a OPTION (LOOP JOIN, FORCE ORDER, MAXDOP 1, QUERYTRACEON 8690);
+
+/* 18, unpinned: the same query with nothing but LOOP JOIN. Whatever shape the
+   hardware gives (the scan directly under the join, or under a chain of spools
+   and compute scalars), rule 18 has to find it. */
+SELECT /*pp_r18u*/ @c = SUM(CONVERT(bigint, b.id) * o.a) FROM dbo.pp_outer AS o JOIN dbo.pp_big AS b ON b.k = o.a OPTION (LOOP JOIN);
+
+/* 16: one insert into a table with six indexes */
+INSERT /*pp_r16*/ dbo.pp_wide (id, c1, c2, c3, c4, c5) SELECT TOP (1) 2, 1, 1, 1, 1, 1 FROM sys.objects AS o OPTION (RECOMPILE);
+
+/* 2: serial because the text says MAXDOP 1, with well over a second of CPU:
+   about 150 million rows go through a hash join */
+SELECT /*pp_r2*/ @c = SUM(CONVERT(bigint, b1.id) * b2.id) FROM dbo.pp_big AS b1 JOIN dbo.pp_big AS b2 ON b2.k = b1.k WHERE b2.id < 150000 OPTION (MAXDOP 1);
+
+/* 2, negative: serial for the same reason but cheap */
+SELECT /*pp_r2cheap*/ @c = COUNT_BIG(*) FROM dbo.pp_small AS s WHERE s.b = 3 OPTION (MAXDOP 1);
+
+/* clean: a primary key seek, nothing to find */
+EXECUTE sys.sp_executesql N'SELECT /*pp_clean*/ s.c FROM dbo.pp_small AS s WHERE s.id = @i;', N'@i integer', 7;
+
+/* 7: a small query that asks for an index, run 1,100 times. Cheap per run, so
+   only the executions per day gate can let it through. The join keeps the plan
+   from being trivial (trivial plans carry no missing index request). */
+SET @i = 0;
+WHILE @i < 1100
+BEGIN
+    SELECT /*pp_r7*/ @j = m.id FROM dbo.pp_mi AS m JOIN dbo.pp_outer AS o ON o.a = m.w WHERE m.v = @i;
+    SET @i += 1;
+END;
+"""
+
+# Fixtures for the review findings. Each marker is the query the finding was
+# reproduced with; the assertions are in plan_parsing_tests.
+PP_REVIEW_OBJECTS_SQL = """
+SET NOCOUNT ON;
+/* a two row table with a key: a keyset cursor needs a unique key on every table */
+CREATE TABLE dbo.pp_nl (a integer NOT NULL PRIMARY KEY CLUSTERED);
+INSERT dbo.pp_nl (a) VALUES (1), (2);
+
+/* NOT IN: a primary key against a nullable, indexed foreign key. The IS NULL test
+   of the null handling is the seek itself (or its residual predicate). */
+CREATE TABLE dbo.pp_pk (id integer NOT NULL PRIMARY KEY CLUSTERED);
+CREATE TABLE dbo.pp_fk (id integer NOT NULL PRIMARY KEY CLUSTERED, pk_id integer NULL);
+INSERT dbo.pp_pk WITH (TABLOCK) (id)
+SELECT TOP (5000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) FROM sys.all_columns AS ac1;
+INSERT dbo.pp_fk WITH (TABLOCK) (id, pk_id)
+SELECT p.id, CASE WHEN p.id % 11 = 0 THEN NULL ELSE p.id % 400 + 1 END FROM dbo.pp_pk AS p;
+CREATE INDEX ix_fk_pk ON dbo.pp_fk (pk_id);
+
+/* a table with three nonclustered indexes: UPDATE ... OPTION (QUERYTRACEON 8790) gets a wide (per index) plan */
+CREATE TABLE dbo.pp_upd (id integer NOT NULL PRIMARY KEY CLUSTERED, a integer NOT NULL, b integer NOT NULL, n integer NULL);
+INSERT dbo.pp_upd WITH (TABLOCK) (id, a, b, n)
+SELECT TOP (50000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 1000, ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 7,
+       CASE WHEN ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 10 = 0 THEN NULL ELSE ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) % 500 END
+FROM sys.all_columns AS ac1 CROSS JOIN sys.all_columns AS ac2;
+CREATE INDEX ix_a ON dbo.pp_upd (a);
+CREATE INDEX ix_b ON dbo.pp_upd (b);
+CREATE INDEX ix_n ON dbo.pp_upd (n);
+
+/* a procedure whose only plan statement is an IF condition */
+EXECUTE (N'CREATE PROCEDURE dbo.pp_ifproc AS BEGIN IF /*pp_cond*/ EXISTS (SELECT 1/0 FROM dbo.pp_small AS s WHERE s.a = 5) SELECT 1; END;');
+"""
+
+PP_REVIEW_SQL = """
+SET NOCOUNT ON;
+DECLARE @i integer, @j integer, @c bigint, @s varchar(100), @a integer;
+
+/* 1: an eager spool that seeks a range on one column and an equality on another,
+   and returns a computed column. The key list is range columns twice, no
+   commas, and Expr columns in the include list, before the fix. */
+SELECT /*pp_r1b*/ @c = SUM(x.c) FROM dbo.pp_small AS o CROSS APPLY (SELECT c = SUM(h.w2) FROM (SELECT h.a, h.b, w2 = LEN(h.c) FROM dbo.pp_heap AS h) AS h WHERE h.a >= o.a AND h.a < o.a + 3 AND h.b = o.b) AS x WHERE o.id < 2000 OPTION (LOOP JOIN);
+
+/* 4: a key lookup that fetches two columns (c and n) and applies a predicate */
+EXECUTE sys.sp_executesql N'SELECT /*pp_r4b*/ s.id, s.c, s.n FROM dbo.pp_small AS s WHERE s.a = @p AND s.b = @q;', N'@p integer, @q integer', 5, 3;
+
+/* 4: a self-join lookup. Its predicate compares the looked-up column n with a column of the outer
+   alias (o.b), which is an outer row value: the finding must list n and not b */
+SELECT /*pp_r4self*/ @c = SUM(LEN(s.c)) FROM dbo.pp_small AS o JOIN dbo.pp_small AS s WITH (INDEX (ix_a)) ON s.a = o.a AND s.n <> o.b WHERE o.id < 30 OPTION (LOOP JOIN, FORCE ORDER);
+
+/* 5, negative: NOT IN over NOT NULL keys, with an unrelated IS NULL filter */
+SELECT /*pp_r5nn*/ @i = s.id FROM dbo.pp_small AS s WHERE s.n IS NULL AND s.id NOT IN (SELECT s2.id FROM dbo.pp_small AS s2 WHERE s2.b = 3) OPTION (LOOP JOIN);
+
+/* 5, negative: NOT EXISTS whose subquery has an unrelated IS NULL */
+SELECT /*pp_r5ne*/ @i = s.id FROM dbo.pp_small AS s WHERE NOT EXISTS (SELECT 1/0 FROM dbo.pp_small AS s2 WHERE s2.a = s.a AND s2.b = 3 AND s2.n IS NULL) OPTION (LOOP JOIN);
+
+/* 5, positive: <> ALL over a nullable column has the same meaning as NOT IN
+   and the same plan with the null handling. Rule 5 reads the plan, not the
+   query text, so it fires. */
+SELECT /*pp_r5c*/ @i = s.id FROM dbo.pp_small AS s WHERE s.a <> ALL (SELECT s2.n FROM dbo.pp_small AS s2 WHERE s2.b = 3);
+
+/* 5, positive: a NOT NULL primary key NOT IN a nullable foreign key. The IS NULL
+   test is the index seek on pk_id (r5pk) or the seek's residual predicate (r5pk2). */
+SELECT /*pp_r5pk*/ @i = p.id FROM dbo.pp_pk AS p WHERE p.id NOT IN (SELECT f.pk_id FROM dbo.pp_fk AS f);
+SELECT /*pp_r5pk2*/ @i = p.id FROM dbo.pp_pk AS p WHERE p.id NOT IN (SELECT f.pk_id FROM dbo.pp_fk AS f WHERE f.id > 100);
+
+/* 5, negative: NOT EXISTS with a time range on a nullable column. The anti join
+   reads n IS NULL and compares n with >, never with =. */
+SELECT /*pp_r5tr*/ @i = s.id FROM dbo.pp_small AS s WHERE s.id < 3000 AND NOT EXISTS (SELECT 1/0 FROM dbo.pp_small AS s2 WHERE s2.a = s.a AND s2.b <= s.b AND (s2.n IS NULL OR s2.n > s.b)) OPTION (HASH JOIN);
+
+/* 5, negative: a hand-written wildcard (n = b OR n IS NULL) is the same shape in
+   the plan as a correlated NOT IN. Only the query text tells them apart. */
+SELECT /*pp_r5wild*/ @i = s.id FROM dbo.pp_small AS s WHERE s.id < 3000 AND NOT EXISTS (SELECT 1/0 FROM dbo.pp_small AS s2 WHERE s2.a = s.a AND (s2.n = s.b OR s2.n IS NULL)) OPTION (HASH JOIN);
+
+/* 10: a table variable column under a function. The column has no database in the plan. */
+DECLARE @tv TABLE (a integer NOT NULL PRIMARY KEY, k integer NOT NULL);
+INSERT @tv (a, k) SELECT p.id, p.id % 7 FROM dbo.pp_pk AS p;
+SELECT /*pp_r10tv*/ @i = t.a FROM @tv AS t WHERE ABS(t.k) = 3 OPTION (RECOMPILE);
+
+/* 8, negative: a catalog view has a has_access filter on its base table */
+SELECT /*pp_r8cat*/ @i = o.object_id FROM sys.objects AS o WHERE o.name LIKE N'pp_x%';
+
+/* 3: the same UDF under MAXDOP 1. The plan gives MaxDOPSetToOne as the reason, so rule 3
+   must not say the function forced the serial plan */
+SELECT /*pp_r3m*/ @i = s.id, @j = dbo.pp_udf(s.a) FROM dbo.pp_small AS s WHERE s.id < 100 OPTION (MAXDOP 1);
+
+/* 1: an eager index spool over a table variable. The finding cannot be CREATE INDEX on it */
+DECLARE @tv1 TABLE (a integer NOT NULL, b integer NOT NULL);
+INSERT @tv1 (a, b) SELECT h.a, h.b FROM dbo.pp_heap AS h;
+SELECT /*pp_r1tv*/ @j = MAX(x.m) FROM dbo.pp_small AS s CROSS APPLY (SELECT m = MAX(t.b) FROM @tv1 AS t WHERE t.a = s.a) AS x WHERE s.id < 2000 OPTION (LOOP JOIN, RECOMPILE);
+
+/* 1: the same, but the spool also outputs an nvarchar(max) and an nvarchar(1000) column. Before SQL Server 2019 those
+   cannot go in the inline key (Msg 1919 for max, Msg 1945 and then Msg 1946 on insert for the long one) */
+DECLARE @tv2 TABLE (a integer NOT NULL, b integer NOT NULL, c nvarchar(max) NULL, w nvarchar(1000) NULL);
+INSERT @tv2 (a, b, c, w) SELECT h.a, h.b, REPLICATE(N'c', 10), N'w' FROM dbo.pp_heap AS h;
+SELECT /*pp_r1tvmax*/ @j = SUM(LEN(x.c) + LEN(x.w)) FROM dbo.pp_small AS s CROSS APPLY (SELECT t.c, t.w FROM @tv2 AS t WHERE t.a = s.a AND t.b > s.id) AS x WHERE s.id < 2000 OPTION (LOOP JOIN, FORCE ORDER, RECOMPILE);
+
+/* 8, negative: the Filter compares a column with an aggregate (an Expr another operator
+   computed), so it cannot move down to the scan */
+SELECT /*pp_r8expr*/ @i = s.id FROM dbo.pp_small AS s WHERE s.b <> ISNULL((SELECT MAX(h.b) FROM dbo.pp_heap AS h WHERE h.a = s.a), 0);
+
+/* 8, negative: HAVING, a Filter on the values a Hash Match aggregate computes */
+SELECT /*pp_r8hav*/ @i = s.a FROM dbo.pp_small AS s GROUP BY s.a HAVING COUNT_BIG(*) > 50 AND MAX(s.b) > 3;
+
+/* 8, negative: a Filter on ROW_NUMBER(), which a Sequence Project computes */
+SELECT /*pp_r8rn*/ @i = d.id FROM (SELECT s.id, rn = ROW_NUMBER() OVER (PARTITION BY s.a ORDER BY s.id) FROM dbo.pp_small AS s) AS d WHERE d.rn = 2;
+
+/* 8, positive: the Filter reads an Expr a Compute Scalar builds from table columns. The TOP
+   keeps the Filter above the scan */
+SELECT /*pp_r8cs*/ @s = d.u FROM (SELECT TOP (1000) s.id, u = UPPER(s.c) + CONVERT(varchar(10), s.b * 2) FROM dbo.pp_small AS s ORDER BY s.id) AS d WHERE d.u LIKE 'X%';
+
+/* 8, positive: a mixed predicate, a table column and a window aggregate. The column part could
+   filter earlier, so it counts; the finding says the other part reads a window result */
+SELECT /*pp_r8mix*/ @i = d.id FROM (SELECT s.id, s.b, cnt = COUNT_BIG(*) OVER (PARTITION BY s.a) FROM dbo.pp_small AS s) AS d WHERE d.b = 3 AND d.cnt > 2;
+
+/* 8, negative: a wide (per index) UPDATE. The optimizer adds a Filter over the Split (and over a Table Spool that
+   reads the Split's spool) to test whether the index key changed; there is no earlier place for it */
+UPDATE /*pp_r8upd*/ dbo.pp_upd SET b = 1 WHERE a < 800 AND n IS NULL OPTION (QUERYTRACEON 8790);
+
+/* 8, negative: the Filter reads the probe result of a semi join (EXISTS inside a CASE), which only the join makes.
+   The default plan is a Merge Join (the probe Expr is only in its OutputList); LOOP JOIN gives a Nested Loops
+   (ProbeColumn) */
+SELECT /*pp_r8semi*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3;
+SELECT /*pp_r8semiL*/ @i = s.id FROM dbo.pp_small AS s WHERE CASE WHEN EXISTS (SELECT 1/0 FROM dbo.pp_heap AS h WHERE h.a = s.a AND h.b = 1) THEN s.b ELSE 0 END = 3 OPTION (LOOP JOIN);
+
+/* 8, positive: the Filter compares a table column with a value from a VALUES list (UnionNNNN, which a Constant Scan
+   outputs and the joins above only pass up). It is a late Filter over the eager index spool, so rule 8 still fires. */
+SELECT /*pp_r8val*/ @c = MAX(y.c) FROM (SELECT c = (SELECT COUNT_BIG(*) FROM dbo.pp_heap AS h WHERE h.a >= d.d AND h.b >= r.r) FROM (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24)) AS d (d) CROSS JOIN (VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24)) AS r (r)) AS y OPTION (LOOP JOIN);
+
+/* 0, negative: a plan that is only an IF condition */
+EXECUTE dbo.pp_ifproc;
+"""
+
+# Rule 8 on a batch mode Window Aggregate: COUNT_BIG(*) OVER (...) has no DefinedValue, so its
+# Expr is defined nowhere. Batch mode on rowstore needs compatibility level 150 and up (SQL Server 2019+).
+# The partition is the constant pad column, so the filter on k cannot move below the window.
+PP_BATCH_SQL = """
+SET NOCOUNT ON;
+DECLARE @i integer;
+SELECT /*pp_r8bat*/ @i = d.id FROM (SELECT b.id, b.k, cnt = COUNT_BIG(*) OVER (PARTITION BY b.pad) FROM dbo.pp_big AS b) AS d WHERE d.k = 3 OR d.cnt > 50;
+SELECT /*pp_r8bat2*/ @i = d.id FROM (SELECT b.id, b.k, cnt = COUNT_BIG(*) OVER (PARTITION BY b.pad) FROM dbo.pp_big AS b) AS d WHERE d.k = 3 AND d.cnt > 50;
+"""
+
+# Cursors, each its own batch: a STATIC and a KEYSET cursor over a join. The
+# population and the fetch phases each number their operators from 0.
+PP_CURSOR_SQL = """
+SET NOCOUNT ON;
+DECLARE @c integer;
+DECLARE cs CURSOR LOCAL STATIC FOR SELECT /*pp_curs*/ s.id FROM dbo.pp_small AS s JOIN dbo.pp_heap AS h ON h.a = s.a WHERE s.a = 5 AND h.b = 1;
+OPEN cs; FETCH NEXT FROM cs INTO @c; CLOSE cs; DEALLOCATE cs;
+DECLARE ck CURSOR LOCAL KEYSET FOR SELECT /*pp_curk*/ s.id FROM dbo.pp_small AS s JOIN dbo.pp_str AS t ON t.id = s.id WHERE s.a = 5 AND s.b = 3 AND t.pad = 'p';
+OPEN ck; FETCH NEXT FROM ck INTO @c; CLOSE ck; DEALLOCATE ck;
+/* A DYNAMIC cursor has no populate step; its fetch step scans the table for the next row. The
+   hashes make that scan cost well over a second of CPU, and the fetch step of every KEYSET and
+   DYNAMIC cursor says NonParallelizableIntrinsicFunction, so rule 2 has to ignore it. */
+DECLARE cd CURSOR LOCAL DYNAMIC FOR SELECT /*pp_curd*/ b.id FROM dbo.pp_big AS b WHERE HASHBYTES('SHA2_512', b.pad + CONVERT(varchar(20), b.id)) = 0x01 OR HASHBYTES('SHA2_512', CONVERT(varchar(20), b.k) + b.pad) = 0x02 OR HASHBYTES('SHA2_512', b.pad + CONVERT(varchar(20), b.k + b.id)) = 0x03 OR HASHBYTES('SHA2_512', CONVERT(varchar(20), b.id - b.k) + b.pad) = 0x04;
+OPEN cd; FETCH NEXT FROM cd INTO @c; CLOSE cd; DEALLOCATE cd;
+DECLARE cn CURSOR LOCAL KEYSET FOR SELECT /*pp_curn*/ b.id FROM dbo.pp_nl AS o JOIN dbo.pp_big AS b ON b.k = o.a OPTION (LOOP JOIN, FORCE ORDER, MAXDOP 1, QUERYTRACEON 8690);
+OPEN cn; FETCH NEXT FROM cn INTO @c; CLOSE cn; DEALLOCATE cn;
+"""
+
+# Rule 2, MaxDOPSetToOne from the database scoped MAXDOP: the setting is 1 for
+# this query's compile and put back afterward. About 150 million rows go
+# through a hash join, as in r2.
+PP_MAXDOP_COMMENT_SQL = """
+SET NOCOUNT ON;
+DECLARE @c bigint;
+SELECT /*pp_r2c*/ @c = SUM(CONVERT(bigint, b1.id) * b2.id) FROM dbo.pp_big AS b1 JOIN dbo.pp_big AS b2 ON b2.k = b1.k WHERE b2.id < 150000;
+"""
+
+# Rule 14: a table variable compiled for one row only counts below compat 150,
+# so the "old" query compiles at 140 and the "new" one at the server default.
+PP_TABLEVAR_SQL = """
+SET NOCOUNT ON;
+DECLARE @t TABLE (a integer NOT NULL);
+DECLARE @c bigint;
+INSERT @t (a) VALUES (1);
+SELECT /*pp_{tag}*/ @c = COUNT_BIG(*) FROM dbo.pp_small AS s JOIN @t AS t ON t.a = s.a;
+"""
+
+# Rule 0: 130 joins forced into one left-deep chain nest the plan XML past the
+# 128 level limit, so it will not convert to xml. No row ever matches, so the
+# first join comes back empty and the rest of the chain never runs.
+PP_DEEP_SQL = ("SET NOCOUNT ON; DECLARE @i integer; SELECT /*pp_r0*/ @i = s0.a "
+               "FROM dbo.pp_outer AS s0 %s OPTION (FORCE ORDER, LOOP JOIN);")
+
+# (rule_id, rule_name, marker): each is asserted for its fixture query
+PP_RULE_CASES = [
+    (1, "eager index spool", "r1"),
+    (2, "serial plan", "r2"),
+    (3, "scalar UDF", "r3"),
+    (4, "lookup with predicate", "r4"),
+    (5, "NOT IN on nullable column", "r5"),
+    (6, "implicit conversion prevents seek", "r6"),
+    (7, "missing index request", "r7"),
+    (8, "late filter", "r8"),
+    (9, "scan with residual predicate", "r9"),
+    (10, "non-SARGable predicate", "r10"),
+    (10, "non-SARGable predicate", "r10b"),
+    (11, "multi-statement table-valued function", "r11"),
+    (12, "TOP over scan", "r12"),
+    (13, "many-to-many merge join", "r13"),
+    (16, "wide DML", "r16"),
+    (18, "scan on inner side of nested loops", "r18"),
+    (18, "scan on inner side of nested loops", "r18u"),
+]
+
+
+def pp_markers(server, password):
+    """Fixture marker -> query_id, from the scratch database's Query Store."""
+    out, _ = _sqlcmd(
+        server, password,
+        "SET NOCOUNT ON; SELECT q.query_id, "
+        "SUBSTRING(t.query_sql_text, CHARINDEX(N'/*pp_', t.query_sql_text) + 5, "
+        "CHARINDEX(N'*/', t.query_sql_text) - CHARINDEX(N'/*pp_', t.query_sql_text) - 5) "
+        "FROM sys.query_store_query AS q "
+        "JOIN sys.query_store_query_text AS t ON t.query_text_id = q.query_text_id "
+        "WHERE t.query_sql_text LIKE N'%/*pp[_]%*/%' "
+        "AND t.query_sql_text NOT LIKE N'%sys.query_store%' "
+        "AND t.query_sql_text NOT LIKE N'%CREATE %' "
+        "ORDER BY q.query_id;",
+        database=PP_DB)
+    found = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 2 and parts[0].strip().isdigit():
+            found[parts[1].strip()] = int(parts[0])
+    return found
+
+
+def pp_run(server, password, query_ids, extra="", width=200):
+    """Run sp_QuickieStore with @plan_parsing = 1 for exactly these query ids.
+    Returns (stdout, findings), findings being one dict per finding row."""
+    out, combined = run_qs(
+        server, password,
+        ", @plan_parsing = 1, @top = 1000, @include_query_ids = '%s'%s"
+        % (",".join(str(q) for q in sorted(set(query_ids))), extra),
+        timeout=600, database_name=PP_DB, width=width)
+    return out, combined, pp_findings(out)
+
+
+def pp_findings(stdout):
+    """Rows of the plan findings result set: everything after its header line
+    that begins with the database name and three integers. A finding can run
+    over several lines, so continuation lines are skipped, not parsed."""
+    header = "\t".join(PP_COLUMNS)
+    lines = stdout.splitlines()
+    start = next((i for i, l in enumerate(lines) if l.strip() == header), None)
+    if start is None:
+        return None
+    rows = []
+    for line in lines[start + 2:]:
+        parts = line.split("\t")
+        if (len(parts) >= 5 and parts[0] == PP_DB and parts[1].isdigit()
+                and parts[2].isdigit() and parts[3].isdigit()):
+            rows.append(dict(zip(PP_COLUMNS, parts)))
+    return rows
+
+
+def pp_has(findings, query_id, rule_id):
+    return any(f["query_id"] == str(query_id) and f["rule_id"] == str(rule_id)
+               for f in findings or [])
+
+
+def pp_operators(server, password, query_id):
+    """The operator list (NodeId PhysicalOp/LogicalOp) of a query's newest
+    Query Store plan, on one line. A failed rule check prints it, so the next
+    CI failure shows the plan shape the runner actually got."""
+    try:
+        out, _ = _sqlcmd(
+            server, password,
+            "SET NOCOUNT ON; SELECT TOP (1) 'OPS:' + ISNULL(STUFF((SELECT '; ' + "
+            "CONVERT(varchar(10), r.n.value('@NodeId', 'integer')) + ' ' + "
+            "r.n.value('@PhysicalOp', 'varchar(60)') + '/' + "
+            "r.n.value('@LogicalOp', 'varchar(60)') "
+            "FROM x.x.nodes('//*:RelOp') AS r(n) "
+            "ORDER BY r.n.value('@NodeId', 'integer') "
+            "FOR XML PATH('')), 1, 2, ''), '(no operators)') "
+            "FROM (SELECT TRY_CAST(p.query_plan AS xml) AS x "
+            "      FROM sys.query_store_plan AS p WHERE p.query_id = %d "
+            "      ORDER BY p.plan_id DESC "
+            "      OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY) AS x;" % int(query_id),
+            database=PP_DB)
+        m = re.search(r"OPS:(.*)", out)
+        return " | plan operators: " + (m.group(1).strip() if m else "(none read)")
+    except Exception as ex:  # diagnostics must never fail the run
+        return " | plan operators unavailable: %s" % ex
+
+
+def pp_phase_ops(server, password, query_id):
+    """The operators of a cursor's newest Query Store plan, by phase:
+    {(phase, node_id): physical_op}, phase being populate, fetch or refresh."""
+    out, _ = _sqlcmd(
+        server, password,
+        "SET NOCOUNT ON; WITH XMLNAMESPACES (DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan') "
+        "SELECT 'PH:' + CASE o.o.value('@OperationType', 'varchar(30)') WHEN 'PopulateQuery' THEN 'populate' "
+        "WHEN 'FetchQuery' THEN 'fetch' WHEN 'RefreshQuery' THEN 'refresh' ELSE 'other' END + ':' + "
+        "CONVERT(varchar(10), r.n.value('@NodeId', 'integer')) + ':' + r.n.value('@PhysicalOp', 'varchar(60)') "
+        "FROM (SELECT TOP (1) x = TRY_CAST(p.query_plan AS xml) FROM sys.query_store_plan AS p "
+        "WHERE p.query_id = %d ORDER BY p.plan_id DESC) AS x "
+        "CROSS APPLY x.x.nodes('//CursorPlan/Operation') AS o (o) "
+        "CROSS APPLY o.o.nodes('QueryPlan//RelOp') AS r (n);" % int(query_id),
+        database=PP_DB)
+    ops = {}
+    for m in re.finditer(r"PH:(\w+):(\d+):([^\r\n]*)", out):
+        ops[(m.group(1), int(m.group(2)))] = m.group(3).strip()
+    return ops
+
+
+def pp_node_refs(node_ids):
+    """"3 (fetch), 5 (populate) and 2 more" -> [(3, "fetch"), (5, "populate")]"""
+    return [(int(n), ph) for n, ph in re.findall(r"(\d+)(?: \((\w+)\))?(?:,|$| and)", node_ids or "")]
+
+
+PP_BRACKETED = re.compile(r"\[[^\]]+\]")
+PP_CREATE_INDEX = re.compile(
+    r"CREATE (?:NONCLUSTERED )?INDEX \[[^\]]+\] ON (?:\[[^\]]+\]\.){0,2}\[[^\]]+\] "
+    r"\(([^)]*)\)(?: INCLUDE \(([^)]*)\))?;")
+
+
+def pp_index_problem(finding):
+    """What is wrong with the CREATE INDEX in a rule 1 finding, or "" if it is
+    fine: key and include columns bracketed and separated by ", ", no column
+    twice, no Expr column. Returns (problem, statement)."""
+    m = PP_CREATE_INDEX.search(finding)
+    if not m:
+        return "no well formed CREATE INDEX in: " + finding[:300], ""
+    keys = [c.strip() for c in m.group(1).split(",")]
+    incl = [c.strip() for c in m.group(2).split(",")] if m.group(2) else []
+    for part in keys + incl:
+        if not PP_BRACKETED.fullmatch(part):
+            return "column %r is not one bracketed name" % part, m.group(0)
+        if "expr" in part.lower():
+            return "computed column %s in the index" % part, m.group(0)
+    if ", ".join(keys) != m.group(1).strip():
+        return "key list is not comma separated", m.group(0)
+    if incl and ", ".join(incl) != m.group(2).strip():
+        return "include list is not comma separated", m.group(0)
+    if len(set(keys)) != len(keys):
+        return "duplicate key column in " + m.group(1), m.group(0)
+    if len(set(incl)) != len(incl) or set(keys) & set(incl):
+        return "duplicate include column in " + m.group(2), m.group(0)
+    return "", m.group(0)
+
+
+def pp_sql_errors(text):
+    """Errors from the fixture and the runs: severity 11 and up, which takes in
+    the syntax errors (level 15) find_sql_errors lets through."""
+    if not text:
+        return []
+    return re.findall(r"Msg (?:\d+, Level 1[1-9]|4060|911)[^\n]*", text)
+
+
+def plan_parsing_tests(server, password, R):
+    """@plan_parsing: one extra result set with plan findings, opt-in, normal
+    mode only. One fixture query per rule; each rule is asserted for its query,
+    clean and below-threshold queries are asserted quiet, the column list is
+    pinned, the off state is asserted silent, and each rejected combination is
+    asserted to raise."""
+    G = "PlanParsing"
+    try:
+        out, err = _sqlcmd(server, password, PP_FIXTURE_SQL)
+        errs = pp_sql_errors(out + "\n" + err)
+        R.check(G, "scratch database created with Query Store on",
+                not errs, str(errs))
+        if errs:
+            return
+        out, err = _sqlcmd(server, password, PP_OBJECTS_SQL, database=PP_DB,
+                           timeout=900)
+        errs = pp_sql_errors(out + "\n" + err)
+        R.check(G, "objects built", not errs, str(errs[:2]))
+        if errs:
+            return
+
+        # Default compat for new databases on this server (model's level)
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'COMPAT:' + CONVERT(varchar(10), "
+                         "d.compatibility_level) FROM sys.databases AS d "
+                         "WHERE d.name = N'model';")
+        m = re.search(r"COMPAT:(\d+)", out)
+        default_compat = int(m.group(1)) if m else 140
+
+        out, err = _sqlcmd(server, password, PP_WORKLOAD_SQL, database=PP_DB,
+                           timeout=900)
+        errs = pp_sql_errors(out + "\n" + err)
+        R.check(G, "workload ran", not errs, str(errs[:2]))
+        if errs:
+            return
+
+        # Rule 14 needs a plan compiled below compat 150. Compile the "old"
+        # query at 140; compile a "new" one at the server default too, when the
+        # default is 150 or higher, for the negative case.
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = 140;" % PP_DB)
+        out, err = _sqlcmd(server, password,
+                           PP_TABLEVAR_SQL.format(tag="r14old"), database=PP_DB)
+        errs = pp_sql_errors(out + "\n" + err)
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;"
+                % (PP_DB, default_compat))
+        if default_compat >= 150:
+            out, err = _sqlcmd(server, password,
+                               PP_TABLEVAR_SQL.format(tag="r14new"), database=PP_DB)
+            errs += pp_sql_errors(out + "\n" + err)
+        R.check(G, "table variable queries ran", not errs, str(errs[:2]))
+
+        # Fixtures for the review findings. Rule 2's MaxDOPSetToOne case needs a
+        # serial plan from a database scoped MAXDOP of 1 at compile time.
+        errs = []
+        for sql in (PP_REVIEW_OBJECTS_SQL, PP_REVIEW_SQL, PP_CURSOR_SQL):
+            out, err = _sqlcmd(server, password, sql, database=PP_DB, timeout=900)
+            errs += pp_sql_errors(out + "\n" + err)
+        if default_compat >= 150:
+            out, err = _sqlcmd(server, password, PP_BATCH_SQL, database=PP_DB, timeout=900)
+            errs += pp_sql_errors(out + "\n" + err)
+        _sqlcmd(server, password,
+                "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 1;", database=PP_DB)
+        out, err = _sqlcmd(server, password, PP_MAXDOP_COMMENT_SQL,
+                           database=PP_DB, timeout=900)
+        errs += pp_sql_errors(out + "\n" + err)
+        _sqlcmd(server, password,
+                "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 0;", database=PP_DB)
+        R.check(G, "review fixture queries ran", not errs, str(errs[:2]))
+
+        # Rule 0, first form: a plan too deeply nested to convert to xml.
+        joins = " ".join("JOIN dbo.pp_outer AS s%d ON s%d.a = s%d.a + 100"
+                         % (n, n, n - 1) for n in range(1, 131))
+        out, err = _sqlcmd(server, password, PP_DEEP_SQL % joins,
+                           database=PP_DB, timeout=600)
+        R.check(G, "too-deep plan query ran",
+                not pp_sql_errors(out + "\n" + err),
+                str(pp_sql_errors(out + "\n" + err)[:2]))
+
+        _sqlcmd(server, password, "EXECUTE sys.sp_query_store_flush_db;",
+                database=PP_DB)
+        ids = pp_markers(server, password)
+        want = {c[2] for c in PP_RULE_CASES} | {
+            "r2cheap", "clean", "r14old", "r0", "r1b", "r4b", "r4self", "r5nn", "r5ne",
+            "r5c", "r8cat", "r8expr", "r8hav", "r8rn", "r8cs", "r8mix", "r8upd", "r8semi", "r8semiL", "r8val", "r1tv", "r1tvmax", "r3m", "cond", "curs", "curk", "curn", "curd", "r2c", "r5pk",
+            "r5pk2", "r5tr", "r5wild", "r10tv"}
+        missing = sorted(want - set(ids))
+        R.check(G, "every fixture query is in Query Store", not missing,
+                "missing markers: %s" % missing)
+        if missing:
+            return
+
+        # A short window so executions per day clears the rule 7 gate.
+        # A date without an offset is read as server local time, so ask the
+        # server for its own local time two hours ago.
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'WIN:' + CONVERT(varchar(19), "
+                         "DATEADD(HOUR, -2, SYSDATETIME()), 120);")
+        window = re.search(r"WIN:(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)", out).group(1)
+        all_ids = [ids[k] for k in want] + [ids[k] for k in ("r14new", "r8bat", "r8bat2") if k in ids]
+
+        out, combined, found = pp_run(server, password, all_ids,
+                                      ", @start_date = '%s'" % window)
+        errs = pp_sql_errors(combined)
+        R.check(G, "@plan_parsing = 1 executes cleanly", not errs, str(errs[:2]))
+        R.check(G, "@plan_parsing = 1 reaches completion", completed(out),
+                "footer result set missing")
+        R.check(G, "findings result set has the contracted columns, in order",
+                found is not None,
+                "no result set headed %s" % ", ".join(PP_COLUMNS))
+        found = found or []
+        R.check(G, "findings result set has rows", len(found) > 0,
+                "no finding rows")
+
+        for rule_id, rule_name, marker in PP_RULE_CASES:
+            hits = [f for f in found if f["query_id"] == str(ids[marker])
+                    and f["rule_id"] == str(rule_id)]
+            R.check(G, "rule %d (%s) fires for %s" % (rule_id, rule_name, marker),
+                    len(hits) > 0 and all(h["rule_name"] == rule_name for h in hits),
+                    ("no row" + pp_operators(server, password, ids[marker]))
+                    if not hits else "rule_name was %r" % hits[0]["rule_name"])
+
+        # The output is one row per (plan, rule) by construction (the fold
+        # groups on it), so the check that can fail is the fold's content: the
+        # same finding text must not be listed twice inside one row.
+        def repeated_texts(rows):
+            bad = []
+            for f in rows:
+                parts = re.sub(r" \| and \d+ more$", "", f["finding"]).split(" | ")
+                if len(parts) != len(set(parts)):
+                    bad.append((f["query_id"], f["rule_id"]))
+            return bad
+        R.check(G, "no finding text is listed twice in one row",
+                len(found) > 0 and not repeated_texts(found),
+                "repeated: %s" % repeated_texts(found)[:3])
+
+        # Quiet cases
+        R.check(G, "clean primary key seek has no findings",
+                len(found) > 0
+                and not any(f["query_id"] == str(ids["clean"]) for f in found),
+                "findings for the clean query")
+        R.check(G, "rule 2 stays quiet below 1,000 ms of CPU (MAXDOP 1, cheap)",
+                len(found) > 0 and not pp_has(found, ids["r2cheap"], 2),
+                "rule 2 fired")
+        R.check(G, "rule 2 leaves the scalar UDF reason to rule 3",
+                len(found) > 0 and not pp_has(found, ids["r3"], 2),
+                "rule 2 fired for the UDF query")
+
+        # The text of a few findings
+        def finding_text(marker, rule_id):
+            return next((f["finding"] for f in found
+                         if f["query_id"] == str(ids[marker])
+                         and f["rule_id"] == str(rule_id)), "")
+        R.check(G, "rule 1 finding scripts a CREATE INDEX on the heap",
+                "CREATE" in finding_text("r1", 1).upper()
+                and "pp_heap" in finding_text("r1", 1),
+                finding_text("r1", 1)[:120])
+        R.check(G, "rule 3 finding names the function",
+                "pp_udf" in finding_text("r3", 3), finding_text("r3", 3)[:120])
+        R.check(G, "rule 3 says the UDF forces a serial plan when the plan gives the UDF reason",
+                "force a serial plan" in finding_text("r3", 3), finding_text("r3", 3)[:160])
+        R.check(G, "rule 3 does not blame the UDF when the plan is serial for MAXDOP 1",
+                pp_has(found, ids["r3m"], 3) and "force a serial plan" not in finding_text("r3m", 3),
+                finding_text("r3m", 3)[:160])
+        R.check(G, "rule 4 finding names the table",
+                "pp_small" in finding_text("r4", 4), finding_text("r4", 4)[:120])
+        R.check(G, "rule 18 finding does not claim a count of executions",
+                "can run again for each row" in finding_text("r18", 18),
+                finding_text("r18", 18)[:160])
+        R.check(G, "rule 9 finding shows the 1,000,000 row table cardinality "
+                   "with thousands separators",
+                "(1,000,000 rows)" in finding_text("r9", 9),
+                finding_text("r9", 9)[:160])
+
+        # --- Regression tests for the round 1 review findings ---------------
+        def quiet(marker, rule_id, label):
+            hit = pp_has(found, ids[marker], rule_id)
+            R.check(G, label, len(found) > 0 and not hit,
+                    ("rule %d fired" % rule_id) + pp_operators(server, password, ids[marker])
+                    if hit else "no findings at all")
+
+        # Rule 1 scripts a valid CREATE INDEX: the equality spool (r1), and a
+        # range seek that also outputs a computed column (r1b). The harness
+        # cuts wide columns at 200 characters, so read these at full width.
+        out, combined, found_full = pp_run(server, password,
+                                           [ids["r1"], ids["r1b"], ids["r4b"], ids["r4self"], ids["r1tv"], ids["r1tvmax"], ids["r2c"], ids["r8mix"]]
+                                           + ([ids["r8bat2"]] if "r8bat2" in ids else []),
+                                           width=8000)
+        found_full = found_full or []
+
+        def full_text(marker, rule_id):
+            return next((f["finding"] for f in found_full
+                         if f["query_id"] == str(ids[marker])
+                         and f["rule_id"] == str(rule_id)), "")
+        for marker in ("r1", "r1b"):
+            problem, stmt = pp_index_problem(full_text(marker, 1))
+            R.check(G, "rule 1 (%s) scripts a valid CREATE INDEX" % marker,
+                    not problem, problem)
+            if stmt:
+                perr, perr2 = _sqlcmd(server, password,
+                                      "SET PARSEONLY ON; " + stmt, database=PP_DB)
+                errs = pp_sql_errors(perr + "\n" + perr2)
+                R.check(G, "rule 1 (%s) CREATE INDEX compiles under PARSEONLY" % marker,
+                        not errs, str(errs[:1]) + " " + stmt)
+
+        # Rule 1 on a table variable: the index goes in the DECLARE, not CREATE INDEX ... ON @t.
+        # Before SQL Server 2019 an inline INDEX cannot take INCLUDE (Msg 102), and the include columns cannot go
+        # in the key (an nvarchar(max) column is Msg 1919, a long one fails on insert), so there the inline index
+        # lists the seek columns only and the temp table alternative is a separate CREATE INDEX ... INCLUDE.
+        # Every statement the text suggests is run for real (not parse only), so binding errors show.
+        vout, _ = _sqlcmd(server, password,
+                          "SET NOCOUNT ON; SELECT 'VER:' + CONVERT(varchar(10), "
+                          "SERVERPROPERTY('ProductMajorVersion'));")
+        vm = re.search(r"VER:(\d+)", vout)
+        server_major = int(vm.group(1)) if vm else 99
+
+        def check_tv_advice(marker, cols, seek, other, long_cols):
+            """Run the advice of a rule 1 table variable finding: the DECLARE with the inline index, and (before
+            SQL Server 2019) the temp table CREATE TABLE + CREATE INDEX ... INCLUDE. long_cols are columns that
+            must stay out of the inline key. Returns the finding text."""
+            text = full_text(marker, 1)
+            tvn = "tv2" if marker.endswith("max") else "tv1"
+            R.check(G, "rule 1 (%s) suggests an inline INDEX for the table variable, not CREATE INDEX" % marker,
+                    "INDEX [ix_%s_spool] (%s" % (tvn, seek) in text
+                    and "in its DECLARE" in text
+                    and "CREATE INDEX [" not in text.replace(" and CREATE INDEX [", "")
+                    and " ON @" not in text,
+                    text[:400])
+            inline = re.search(r"INDEX \[ix_%s_spool\] \([^)]*\)(?: INCLUDE \([^)]*\))?" % tvn, text)
+            if server_major < 15:
+                R.check(G, "rule 1 (%s) before SQL Server 2019 lists the seek columns only in the inline index" % marker,
+                        inline is not None and inline.group(0) == "INDEX [ix_%s_spool] (%s)" % (tvn, seek)
+                        and "INCLUDE" not in text.split("in its DECLARE")[0]
+                        and not any(c in inline.group(0) for c in long_cols),
+                        text[:500])
+                temp_ix = re.search(r"CREATE INDEX \[ix_%s_spool\] ON \[#%s\] \(%s\) INCLUDE \(%s\);"
+                                    % (tvn, tvn, re.escape(seek), re.escape(other)), text)
+                R.check(G, "rule 1 (%s) before SQL Server 2019 gives the temp table a separate "
+                           "CREATE INDEX ... INCLUDE" % marker,
+                        temp_ix is not None, text[:500])
+            else:
+                R.check(G, "rule 1 (%s) on SQL Server 2019 and up keeps INCLUDE in the inline index" % marker,
+                        inline is not None
+                        and inline.group(0) == "INDEX [ix_%s_spool] (%s) INCLUDE (%s)" % (tvn, seek, other),
+                        text[:500])
+            if inline:
+                perr, perr2 = _sqlcmd(server, password,
+                                      "DECLARE @%s TABLE (%s, %s);" % (tvn, cols, inline.group(0)),
+                                      database=PP_DB)
+                errs = pp_sql_errors(perr + "\n" + perr2)
+                R.check(G, "rule 1 (%s) inline table variable INDEX runs on this version" % marker,
+                        not errs, str(errs[:1]) + " " + inline.group(0))
+            if server_major < 15:
+                temp_stmt = re.search(r"CREATE INDEX [^;]*;", text)
+                R.check(G, "rule 1 (%s) has a temp table CREATE INDEX to run" % marker,
+                        temp_stmt is not None, text[:400])
+                if temp_stmt:
+                    perr, perr2 = _sqlcmd(server, password,
+                                          "CREATE TABLE [#%s] (%s); %s DROP TABLE [#%s];"
+                                          % (tvn, cols, temp_stmt.group(0), tvn),
+                                          database=PP_DB)
+                    errs = pp_sql_errors(perr + "\n" + perr2)
+                    R.check(G, "rule 1 (%s) temp table CREATE INDEX ... INCLUDE runs on this version" % marker,
+                            not errs, str(errs[:1]) + " " + temp_stmt.group(0))
+            return text
+
+        tv_text = check_tv_advice("r1tv", "a integer NOT NULL, b integer NOT NULL", "[a]", "[b]", ())
+        R.check(G, "rule 1 (r1tv) says a table-valued parameter takes the index in its table type",
+                "table-valued parameter" in tv_text and "table type" in tv_text, tv_text[:400])
+        # The spool also outputs an nvarchar(max) and an nvarchar(1000) column: they are INCLUDE columns, never key
+        check_tv_advice("r1tvmax", "a integer NOT NULL, b integer NOT NULL, c nvarchar(max) NULL, w nvarchar(1000) NULL",
+                        "[a], [b]", "[c], [w]", ("[c]", "[w]"))
+
+        # Rule 4 lists the columns it fetches with commas, and the column its
+        # own predicate reads (b) after "filters on"
+        fetched = re.search(r"It fetches (.*?)(?: and filters on (.*?))?: add", full_text("r4b", 4))
+        items = [c.strip() for c in fetched.group(1).split(",")] if fetched else []
+        R.check(G, "rule 4 lists two fetched columns, comma separated",
+                len(items) >= 2 and all(re.fullmatch(r"\[?\w+\]?", c) for c in items),
+                full_text("r4b", 4)[:300])
+        R.check(G, "rule 4 lists the predicate column of the looked-up table",
+                fetched is not None and fetched.group(2) is not None and "[b]" in fetched.group(2)
+                and "[b]" not in items,
+                full_text("r4b", 4)[:300])
+        # In a self-join the predicate also reads the outer alias of the same table (o.b):
+        # that is an outer row value, so only the looked-up alias column (n) is listed
+        self_text = full_text("r4self", 4)
+        self_fetched = re.search(r"It fetches (.*?)(?: and filters on (.*?))?: add", self_text)
+        R.check(G, "rule 4 in a self-join lists the looked-up alias column and not the outer alias column",
+                self_fetched is not None and self_fetched.group(2) is not None
+                and "[n]" in self_fetched.group(2) and "[b]" not in self_fetched.group(2)
+                and "[b]" not in self_fetched.group(1),
+                self_text[:400])
+        quiet("r8cat", 4, "rule 4 stays quiet for a lookup into a system table")
+
+        # Rule 5 only for a real nullable NOT IN
+        quiet("r5nn", 5, "rule 5 stays quiet for NOT IN over NOT NULL keys with an unrelated IS NULL")
+        quiet("r5ne", 5, "rule 5 stays quiet for NOT EXISTS with an unrelated IS NULL")
+        R.check(G, "rule 5 fires for <> ALL over a nullable column (same plan as NOT IN)",
+                pp_has(found, ids["r5c"], 5),
+                "no row" + pp_operators(server, password, ids["r5c"]))
+
+        # Rule 2: MaxDOPSetToOne is judged from the server and database MAXDOP
+        # as they are now. r2c compiled while the database MAXDOP was 1. With it
+        # back at 0 the procedure cannot tell where the MAXDOP 1 came from, so it
+        # is flagged, and the finding has to say that MAXDOP may have been 1 when
+        # the plan compiled. With the database MAXDOP at 1 it is not flagged.
+        R.check(G, "rule 2 flags MaxDOPSetToOne when server and database MAXDOP are not 1 now",
+                pp_has(found, ids["r2c"], 2),
+                "no row" + pp_operators(server, password, ids["r2c"]))
+        R.check(G, "rule 2 MaxDOPSetToOne finding allows for a MAXDOP of 1 at compile time",
+                "unless MAXDOP was 1 when the plan compiled" in full_text("r2c", 2),
+                full_text("r2c", 2)[:300])
+        _sqlcmd(server, password,
+                "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 1;", database=PP_DB)
+        try:
+            out_m, combined_m, found_m = pp_run(server, password, [ids["r2c"]],
+                                                ", @start_date = '%s'" % window)
+        finally:
+            _sqlcmd(server, password,
+                    "ALTER DATABASE SCOPED CONFIGURATION SET MAXDOP = 0;", database=PP_DB)
+        R.check(G, "rule 2 does not flag MaxDOPSetToOne when database MAXDOP 1 explains it",
+                completed(out_m) and found_m is not None
+                and not pp_has(found_m, ids["r2c"], 2),
+                "rule 2 fired or the run did not finish")
+
+        # Rule 12 and 8: the optimizer's own Top and has_access filter
+        quiet("r5", 12, "rule 12 stays quiet for the Top inside the NOT IN null check")
+        quiet("r5c", 12, "rule 12 stays quiet for the Top inside a <> ALL null check")
+        quiet("r8cat", 8, "rule 8 stays quiet for the has_access filter on a catalog view")
+        quiet("r8expr", 8, "rule 8 stays quiet for a filter on an aggregate result (an Expr from another operator)")
+        quiet("r8hav", 8, "rule 8 stays quiet for HAVING (a filter on Hash Match aggregate values)")
+        quiet("r8rn", 8, "rule 8 stays quiet for a filter on ROW_NUMBER()")
+        R.check(G, "rule 8 fires for a filter on a Compute Scalar over table columns",
+                pp_has(found, ids["r8cs"], 8),
+                "no row" + pp_operators(server, password, ids["r8cs"]))
+        # The wide UPDATE has to have the shape the rule skips, or the check proves nothing
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'SPLITFILTER:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                         "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                         "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                         "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                         "//RelOp[@PhysicalOp = \"Filter\"]/Filter/RelOp[@PhysicalOp = \"Split\" or @PhysicalOp = \"Table Spool\"]') = 1;"
+                         % ids["r8upd"], database=PP_DB)
+        R.check(G, "wide UPDATE fixture has a Filter over a Split or Table Spool",
+                "SPLITFILTER:1" in out, out[:200])
+        quiet("r8upd", 8, "rule 8 stays quiet for the index key change Filter over a Split in a wide UPDATE")
+        quiet("r8semi", 8, "rule 8 stays quiet for a filter on a Merge Join semi join probe result")
+        quiet("r8semiL", 8, "rule 8 stays quiet for a filter on a Nested Loops semi join probe result")
+        # The VALUES outer side passes UnionNNNN columns up through the joins; only a column no input outputs is a join's own
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT 'VALFILTER:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                         "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                         "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                         "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                         "//RelOp[@PhysicalOp = \"Filter\"][Filter/Predicate/ScalarOperator[contains(@ScalarString, \"[Union\")]]"
+                         "[Filter/RelOp/@PhysicalOp = \"Index Spool\"]') = 1;"
+                         % ids["r8val"], database=PP_DB)
+        R.check(G, "VALUES fixture has a Filter on a Union column over an Index Spool",
+                "VALFILTER:1" in out, out[:200] + pp_operators(server, password, ids["r8val"]))
+        R.check(G, "rule 8 fires for a late filter that compares a column with a VALUES list value",
+                pp_has(found, ids["r8val"], 8),
+                "no row" + pp_operators(server, password, ids["r8val"]))
+        mix_text = full_text("r8mix", 8)
+        R.check(G, "rule 8 fires for a mixed predicate and says part of it reads a window result",
+                pp_has(found, ids["r8mix"], 8) and "[b]=(3)" in mix_text
+                and "part of the predicate reads an aggregate" in mix_text,
+                mix_text[:200])
+
+        # A batch mode Window Aggregate has empty DefinedValues. Batch mode on rowstore is SQL Server 2019+
+        # (compatibility level 150), so this is skipped on SQL Server 2017 and earlier.
+        if default_compat >= 150:
+            R.check(G, "batch mode window fixtures ran", "r8bat" in ids and "r8bat2" in ids,
+                    "missing markers: %s" % [k for k in ("r8bat", "r8bat2") if k not in ids])
+            if "r8bat" in ids and "r8bat2" in ids:
+                out, _ = _sqlcmd(server, password,
+                                 "SET NOCOUNT ON; SELECT 'BATCHWIN:' + CONVERT(varchar(10), COUNT(*)) FROM "
+                                 "sys.query_store_plan AS p CROSS APPLY (SELECT x = TRY_CONVERT(xml, p.query_plan)) AS c "
+                                 "WHERE p.query_id = %d AND c.x.exist('declare default element namespace "
+                                 "\"http://schemas.microsoft.com/sqlserver/2004/07/showplan\"; "
+                                 "//RelOp[@PhysicalOp = \"Window Aggregate\"][@EstimatedExecutionMode = \"Batch\"]"
+                                 "[WindowAggregate/DefinedValues[not(DefinedValue)]]') = 1;"
+                                 % ids["r8bat"], database=PP_DB)
+                R.check(G, "batch mode window fixture has a Window Aggregate with no DefinedValue",
+                        "BATCHWIN:1" in out, out[:200])
+                quiet("r8bat", 8, "rule 8 stays quiet when the other part of an OR reads a batch mode COUNT(*) OVER result")
+                bat_text = full_text("r8bat2", 8)
+                R.check(G, "rule 8 fires for the AND form and says part of it reads a window result",
+                        pp_has(found, ids["r8bat2"], 8) and "[k]=(3)" in bat_text
+                        and "part of the predicate reads an aggregate" in bat_text,
+                        bat_text[:200])
+
+        # Rule 0: a plan that is only an IF condition is checked or skipped
+        quiet("cond", 0, "rule 0 does not fire for a plan that is only an IF condition")
+
+        # Rule 5 across the shapes real NOT IN bugs produce, and the ones that
+        # only look like them
+        for marker, label in (("r5pk", "a NOT NULL key NOT IN a nullable indexed column (the seek tests IS NULL)"),
+                              ("r5pk2", "a NOT NULL key NOT IN a nullable column, IS NULL in the seek's residual predicate")):
+            R.check(G, "rule 5 fires for %s" % label,
+                    pp_has(found, ids[marker], 5),
+                    "no row" + pp_operators(server, password, ids[marker]))
+        quiet("r5tr", 5, "rule 5 stays quiet for NOT EXISTS with a time range (IS NULL OR column > x)")
+        quiet("r5wild", 5, "rule 5 stays quiet for a hand-written wildcard (n = x OR n IS NULL) with no NOT IN")
+        R.check(G, "rule 10 fires for a function over a table variable column",
+                pp_has(found, ids["r10tv"], 10),
+                "no row" + pp_operators(server, password, ids["r10tv"]))
+
+        # Rule 1's index covers the columns behind a computed spool output:
+        # r1b outputs LEN(c), so c has to be in the INCLUDE list
+        m1b = PP_CREATE_INDEX.search(full_text("r1b", 1))
+        R.check(G, "rule 1 (r1b) INCLUDE has the column behind the computed output",
+                m1b is not None and m1b.group(2) is not None and "[c]" in m1b.group(2),
+                full_text("r1b", 1)[:300])
+
+        # Cursors: the populate, fetch and refresh phases each number their
+        # operators from 0. A node id in a cursor finding must name its phase,
+        # and that phase must have an operator with that id.
+        cursor_ops = {m: pp_phase_ops(server, password, ids[m])
+                      for m in ("curs", "curk", "curn", "curd")}
+        for marker, ops in cursor_ops.items():
+            rows = [f for f in found if f["query_id"] == str(ids[marker]) and f["node_ids"] not in ("", "NULL")]
+            bad = []
+            for f in rows:
+                for node, phase in pp_node_refs(f["node_ids"]):
+                    if phase is None or (phase, node) not in ops:
+                        bad.append((f["rule_id"], node, phase))
+            R.check(G, "cursor query %s: every node id names a phase that has that operator" % marker,
+                    len(ops) > 0 and not bad,
+                    "node ids with no matching operator in their phase: %s (phase operators: %d)" % (bad, len(ops)))
+
+        # curk: the KEYSET cursor's only node level finding is the key lookup
+        # that applies a predicate (rule 4). It names pp_small, and its node id
+        # is a lookup in the populate phase, not a node of the same number in
+        # the fetch phase.
+        k4 = [f for f in found if f["query_id"] == str(ids["curk"]) and f["rule_id"] == "4"]
+        k_ops = cursor_ops["curk"]
+
+        def k_ok(f):
+            nodes = pp_node_refs(f["node_ids"])
+            return ("pp_small" in f["finding"] and len(nodes) > 0
+                    and all(ph == "populate"
+                            and ("Seek" in k_ops.get((ph, n), "") or "Lookup" in k_ops.get((ph, n), ""))
+                            for n, ph in nodes))
+        R.check(G, "cursor query curk: rule 4 names pp_small and points at a lookup in the populate phase",
+                len(k4) >= 1 and all(k_ok(f) for f in k4),
+                "rule 4 rows: %s; phase operators: %s" % (k4[:2], k_ops))
+        stray = sorted({(m, f["rule_id"]) for m in ("curs", "curk") for f in found
+                        if f["query_id"] == str(ids[m])
+                        and f["rule_id"] in ("4", "5", "8", "12", "14", "18")
+                        and (m, f["rule_id"]) != ("curk", "4")})
+        R.check(G, "cursor queries curs and curk have no stray node level findings",
+                len(found) > 0 and not stray, "rules fired: %s" % stray)
+        R.check(G, "cursor query curn: rule 18 fires and no other node level rule does",
+                pp_has(found, ids["curn"], 18)
+                and not ({f["rule_id"] for f in found if f["query_id"] == str(ids["curn"])}
+                         & {"4", "5", "8", "12", "14"}),
+                "rules: %s" % sorted({f["rule_id"] for f in found
+                                      if f["query_id"] == str(ids["curn"])}))
+
+        # Rule 2 reads NonParallelPlanReason from a cursor's populate step only.
+        # curd is a DYNAMIC cursor, so it has no populate step, and its fetch
+        # step always says NonParallelizableIntrinsicFunction. The check is only
+        # worth anything if the fixture really has the CPU, so that is asserted.
+        out_cpu, _ = _sqlcmd(
+            server, password,
+            "SET NOCOUNT ON; SELECT 'CPU:' + CONVERT(varchar(30), CONVERT(bigint, "
+            "MAX(rs.avg_cpu_time) / 1000.0)) FROM sys.query_store_runtime_stats AS rs "
+            "JOIN sys.query_store_plan AS p ON p.plan_id = rs.plan_id WHERE p.query_id = %d;"
+            % ids["curd"], database=PP_DB)
+        m_cpu = re.search(r"CPU:(\d+)", out_cpu)
+        cpu_ms = int(m_cpu.group(1)) if m_cpu else 0
+        reasons_fetch = any(ph == "fetch" for ph, _ in cursor_ops["curd"])
+        R.check(G, "cursor query curd has a fetch step and at least 1,000 ms of CPU (fixture is hot enough)",
+                reasons_fetch and cpu_ms >= 1000,
+                "fetch step: %s, CPU %d ms" % (reasons_fetch, cpu_ms))
+        R.check(G, "rule 2 stays quiet for a cursor's fetch step reason",
+                len(found) > 0 and not pp_has(found, ids["curd"], 2),
+                "rule 2 fired for the DYNAMIC cursor")
+
+        # Rule 7 gate: the same query with the default 7 day window runs about
+        # 157 times a day, and costs almost nothing, so it should not fire.
+        out, combined, found7 = pp_run(server, password, [ids["r7"]])
+        R.check(G, "rule 7 stays quiet under 1,000 executions a day",
+                found7 is not None and not pp_has(found7, ids["r7"], 7),
+                "rule 7 fired on the default window")
+
+        # Rule 14: compat gate. Fires for the plan compiled at 140 while the
+        # database is at 140; silent for the plan compiled at the default
+        # level when that is 150 or higher.
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = 140;" % PP_DB)
+        out, combined, found14 = pp_run(server, password, [ids["r14old"]])
+        R.check(G, "rule 14 (table variable) fires for a plan compiled below compat 150",
+                pp_has(found14, ids["r14old"], 14)
+                and all(f["rule_name"] == "table variable" for f in found14
+                        if f["rule_id"] == "14"),
+                "no rule 14 row")
+        _sqlcmd(server, password,
+                "ALTER DATABASE %s SET COMPATIBILITY_LEVEL = %d;"
+                % (PP_DB, default_compat))
+        if default_compat >= 150 and "r14new" in ids:
+            out, combined, found14 = pp_run(server, password, [ids["r14new"]])
+            R.check(G, "rule 14 stays quiet at compat 150 and up",
+                    found14 is not None and not pp_has(found14, ids["r14new"], 14),
+                    "rule 14 fired for a plan compiled at compat %d" % default_compat)
+
+        # Rule 0: a plan too deeply nested to convert
+        if True:
+            out, combined, found0 = pp_run(server, password, [ids["r0"]])
+            R.check(G, "rule 0 (plan not checked) fires for a plan too deep to convert",
+                    pp_has(found0, ids["r0"], 0)
+                    and all(f["rule_name"] == "plan not checked" for f in found0
+                            if f["rule_id"] == "0"),
+                    "no rule 0 row")
+
+        # Off by default: no findings result set, and nothing else changes
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 0, @top = 1000, "
+                               "@include_query_ids = '%s'" % ids["r4"],
+                               database_name=PP_DB)
+        R.check(G, "@plan_parsing = 0 returns no findings result set",
+                not pp_sql_errors(combined) and completed(out)
+                and "rule_id" not in out and "node_ids" not in out,
+                "findings columns present or run failed")
+        out, combined = run_qs(server, password,
+                               ", @top = 1000, @include_query_ids = '%s'" % ids["r4"],
+                               database_name=PP_DB)
+        R.check(G, "default run (no @plan_parsing) returns no findings result set",
+                not pp_sql_errors(combined) and completed(out)
+                and "rule_id" not in out and "node_ids" not in out,
+                "findings columns present or run failed")
+
+        # @debug = 1 with @plan_parsing = 1 on the early exits (a database that
+        # does not exist, a time zone that does not exist) goes to the debug dump
+        # before the plan tables are filled; the dump must not fail on them.
+        # (The empty table shows as its header: table_name, database_id, ..., obj_index.)
+        # A database with Query Store off exits the same way, but the debug dump
+        # for it stalls go-sqlcmd on an xml column, so it was run with pyodbc.
+        for label, extra, dbname in (
+                ("a database that does not exist", "", PP_DB + "_nope"),
+                ("a time zone that does not exist", ", @timezone = N'No Such Zone'", PP_DB)):
+            out, combined = run_qs(server, password,
+                                   ", @plan_parsing = 1, @debug = 1" + extra,
+                                   database_name=dbname)
+            R.check(G, "@debug = 1 with @plan_parsing = 1 for %s dumps without Msg 208" % label,
+                    "Msg 208" not in combined and "Invalid object name" not in combined
+                    and re.search(r"table_name\s+database_id\s+plan_id\s+stmt_id\s+obj_schema\s+obj_table\s+obj_index", out),
+                    combined.replace("\n", " ")[:160])
+
+        # @workdays = 1: rule 7 counts executions per work day; the run has to finish cleanly
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 1, @workdays = 1, @top = 5",
+                               database_name=PP_DB, timeout=600)
+        R.check(G, "@plan_parsing = 1 with @workdays = 1 runs cleanly",
+                completed(out) and not pp_sql_errors(combined),
+                combined.replace("\n", " ")[:160])
+
+        # @troubleshoot_performance = 1 times the plan parsing steps like the
+        # rest of the procedure: one current_query row per step
+        out, combined = run_qs(server, password,
+                               ", @plan_parsing = 1, @troubleshoot_performance = 1, @top = 5",
+                               database_name=PP_DB, timeout=600)
+        R.check(G, "@troubleshoot_performance = 1 covers the plan parsing steps",
+                completed(out) and not pp_sql_errors(combined)
+                and "plan parsing: shredding operators" in out
+                and "plan parsing: running the rules" in out,
+                combined.replace("\n", " ")[:160])
+
+        # Rejected combinations: severity 11 error that names @plan_parsing,
+        # and the run does not reach the footer.
+        rejected = [
+            ("@find_high_impact = 1", ", @find_high_impact = 1"),
+            ("@find_parameter_sensitive = 1", ", @find_parameter_sensitive = 1"),
+            ("regression mode", ", @regression_baseline_start_date = '2020-01-01'"),
+            ("@log_to_table = 1", ", @log_to_table = 1, @log_database_name = '%s'" % PP_DB),
+        ]
+        for label, extra in rejected:
+            out, combined = run_qs(server, password,
+                                   ", @plan_parsing = 1" + extra,
+                                   database_name=PP_DB)
+            R.check(G, "@plan_parsing = 1 with %s is rejected" % label,
+                    re.search(r"Level 11", combined) is not None
+                    and "plan_parsing" in combined and not completed(out),
+                    combined.replace("\n", " ")[:160])
+    finally:
+        _sqlcmd(server, password, CLEANUP_SQL.replace(TEST_DB, PP_DB))
+
+
+# ---------------------------------------------------------------------------
+# Last values and the @end_date default window
+
+LV_DB = TEST_DB + "_lv"
+LV_MARKER = "qs_lv_marker"
+
+LV_FIXTURE_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+CREATE DATABASE {db};
+ALTER DATABASE {db} SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, INTERVAL_LENGTH_MINUTES = 1,
+     QUERY_CAPTURE_MODE = ALL, WAIT_STATS_CAPTURE_MODE = ON);
+""".format(db=LV_DB)
+
+# Wait for READ_WRITE and for capture to be live, then clear the plan cache so
+# lv_q compiles with capture on, as the regression window fixture does.
+LV_SCHEMA_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0, @rows bigint = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+CREATE TABLE dbo.lv_lock (id integer NOT NULL PRIMARY KEY, v integer NOT NULL);
+INSERT dbo.lv_lock (id, v) VALUES (1, 0);
+EXECUTE (N'CREATE PROCEDURE dbo.lv_q AS BEGIN SELECT /* qs_lv_marker */ l.v FROM dbo.lv_lock AS l WHERE l.id = 1; END;');
+SET @tries = 0;
+WHILE @tries < 10 AND @rows = 0
+BEGIN
+    EXECUTE (N'SELECT /* lv_warmup */ c = COUNT_BIG(*) FROM dbo.lv_lock AS l;');
+    EXECUTE sys.sp_query_store_flush_db;
+    SELECT @rows = COUNT_BIG(*) FROM sys.query_store_query_text AS qsqt
+    WHERE qsqt.query_sql_text LIKE N'%lv[_]warmup%';
+    IF @rows = 0 WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
+SELECT marker = 'LV_WARM:' + CONVERT(varchar(20), @rows) + ':' +
+    CONVERT(varchar(10), SERVERPROPERTY('ProductMajorVersion'));
+"""
+
+# The lock holder: takes an X lock on the row lv_q reads, waits until it sees
+# a request blocked behind it, then holds the lock {hold} more seconds.
+LV_HOLDER_SQL = """
+SET NOCOUNT ON;
+BEGIN TRANSACTION;
+UPDATE l SET l.v += 1 FROM dbo.lv_lock AS l WHERE l.id = 1;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_exec_requests AS der
+                  WHERE der.blocking_session_id = @@SPID)
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+WAITFOR DELAY '00:00:0{hold}';
+COMMIT TRANSACTION;
+"""
+
+# The waiter: runs lv_q once the holder's X lock on lv_lock is granted, so it
+# blocks. The check names the table because other sessions, such as Query
+# Store's own writes, can hold X key locks in the same database.
+LV_BLOCKED_SQL = """
+SET NOCOUNT ON;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_tran_locks AS dtl
+                  JOIN sys.partitions AS p
+                    ON p.hobt_id = dtl.resource_associated_entity_id
+                  WHERE dtl.resource_database_id = DB_ID()
+                  AND   dtl.resource_type = N'KEY'
+                  AND   dtl.request_mode = N'X'
+                  AND   dtl.request_status = N'GRANT'
+                  AND   p.object_id = OBJECT_ID(N'dbo.lv_lock'))
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+EXECUTE dbo.lv_q;
+"""
+
+# Query Store's own numbers for lv_q: each runtime stats row with its last
+# execution time (UTC, sortable) and last duration in microseconds.
+LV_RUNS_SQL = """
+SET NOCOUNT ON;
+EXECUTE sys.sp_query_store_flush_db;
+SELECT t = 'LV|run|' + qsrs.execution_type_desc + '|' +
+    CONVERT(varchar(30), CONVERT(datetime2(7), SWITCHOFFSET(qsrs.last_execution_time, '+00:00')), 121) + '|' +
+    CONVERT(varchar(30), qsrs.last_duration)
+FROM sys.query_store_runtime_stats AS qsrs
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsrs.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.lv_q');
+"""
+
+# The same for the Lock wait rows, each with the last execution time of the
+# runtime stats row of the same plan, interval and execution type.
+LV_WAITS_SQL = """
+SET NOCOUNT ON;
+SELECT t = 'LV|wait|' + qsws.execution_type_desc + '|' +
+    CONVERT(varchar(30), CONVERT(datetime2(7), SWITCHOFFSET(qsrs.last_execution_time, '+00:00')), 121) + '|' +
+    CONVERT(varchar(30), qsws.last_query_wait_time_ms)
+FROM sys.query_store_wait_stats AS qsws
+JOIN sys.query_store_runtime_stats AS qsrs
+  ON  qsrs.plan_id = qsws.plan_id
+  AND qsrs.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+  AND qsrs.execution_type = qsws.execution_type
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsws.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.lv_q')
+AND   qsws.wait_category_desc = N'Lock';
+"""
+
+LV_CLEANUP_SQL = """
+SET NOCOUNT ON;
+IF DB_ID(N'{db}') IS NOT NULL
+BEGIN
+    ALTER DATABASE {db} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE {db};
+END;
+""".format(db=LV_DB)
+
+
+def lv_blocked(server, password, hold, timeout):
+    """One lv_q execution that waits on a lock held for `hold` seconds after
+    it is seen blocked. With a client timeout shorter than the hold, the
+    client cancels it and Query Store records an Aborted run; with a longer
+    one it finishes as a Regular run. Returns the errors found."""
+    holder = subprocess.Popen(
+        _sqlcmd_prefix() + ["-S", server, "-U", "sa", "-P", password,
+                            "-d", LV_DB, "-Q", LV_HOLDER_SQL.format(hold=hold)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        cmd = _sqlcmd_prefix() + ["-S", server, "-U", "sa", "-P", password,
+                                  "-d", LV_DB, "-t", str(timeout),
+                                  "-Q", LV_BLOCKED_SQL]
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        out = (r.stdout or b"").decode("utf-8", errors="replace")
+        h_out, h_err = holder.communicate(timeout=120)
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+    text = out + "\n" + h_out.decode("utf-8", errors="replace") + "\n" + \
+        h_err.decode("utf-8", errors="replace")
+    errs = find_sql_errors(text)
+    if holder.returncode:
+        errs.append("lock holder exited %d: %s" % (holder.returncode, text.strip()[-200:]))
+    return errs
+
+
+def last_values_tests(server, password, R):
+    """The last_ columns come from the latest run of a plan, whatever its
+    execution type. An aborted run that took longer, then a newer regular run
+    of the same plan: last_duration_ms and the last wait have to be the
+    regular run's, not the largest across the types."""
+    G = "LastValues"
+    try:
+        _sqlcmd(server, password, LV_FIXTURE_SQL)
+        out, err = _sqlcmd(server, password, LV_SCHEMA_SQL, database=LV_DB, timeout=300)
+        m = re.search(r"LV_WARM:(\d+):(\d+)", out)
+        if find_sql_errors(out + "\n" + err) or not m or int(m.group(1)) == 0:
+            R.check(G, "last values fixture built", False,
+                    (out + "\n" + err).replace("\n", " ")[:200])
+            return
+        major = int(m.group(2))
+
+        # The aborted run waits about 3 seconds before the client gives up.
+        # The regular run, after it, waits about 1 second for a second holder.
+        errs = lv_blocked(server, password, hold=5, timeout=3)
+        errs += lv_blocked(server, password, hold=1, timeout=30)
+        R.check(G, "aborted run then regular run executed", not errs, str(errs[:2]))
+
+        out, err = _sqlcmd(server, password, LV_RUNS_SQL, database=LV_DB)
+        runs = re.findall(r"LV\|run\|(\w+)\|([\d\- :.]+)\|(\d+)", out)
+        by_type = {t: int(d) for t, _w, d in runs}
+        R.check(G, "Query Store has an aborted run longer than the regular run",
+                "Aborted" in by_type and "Regular" in by_type
+                and by_type["Aborted"] - by_type["Regular"] >= 500000,
+                "runs=%s" % runs)
+        if "Aborted" not in by_type or "Regular" not in by_type:
+            return
+        latest = max(runs, key=lambda r: r[1])
+        R.check(G, "the regular run is the latest run", latest[0] == "Regular",
+                "runs=%s" % runs)
+        expected_ms = int(latest[2]) / 1000.0
+
+        out, combined = run_qs(server, password,
+                               ", @query_text_search = '%s', @expert_mode = 1, "
+                               "@format_output = 0, @hide_help_table = 1" % LV_MARKER,
+                               database_name=LV_DB)
+        rows = source_rows(out, "runtime_stats")
+        R.check(G, "runs cleanly and returns the plan",
+                not find_sql_errors(combined) and len(rows) == 1,
+                "rows=%d errors=%s" % (len(rows), find_sql_errors(combined)[:2]))
+        if len(rows) == 1:
+            got = number(rows[0].get("last_duration_ms"))
+            R.check(G, "last_duration_ms is the latest run's, not the aborted run's",
+                    got is not None and abs(got - expected_ms) < 0.01,
+                    "got %s expected %s (runs %s)" % (got, expected_ms, runs))
+
+        if major >= 14:
+            wout, werr = _sqlcmd(server, password, LV_WAITS_SQL, database=LV_DB)
+            waits = re.findall(r"LV\|wait\|(\w+)\|([\d\- :.]+)\|(\d+)", wout)
+            types = sorted(set(t for t, _w, _l in waits))
+            R.check(G, "Query Store has Lock waits for both execution types",
+                    types == ["Aborted", "Regular"], "waits=%s" % waits)
+            if types == ["Aborted", "Regular"]:
+                latest_wait = max(waits, key=lambda w: w[1])
+                wrows = [r for r in source_rows(out, "query_store_wait_stats_by_query")
+                         if r.get("wait_category_desc") == "Lock"]
+                got = number(wrows[0].get("last_query_wait_time_ms")) if len(wrows) == 1 else None
+                R.check(G, "last_query_wait_time_ms is the latest run's, not the aborted run's",
+                        got is not None and got == float(latest_wait[2]),
+                        "got %s expected %s (waits %s)" % (got, latest_wait[2], waits))
+    finally:
+        _sqlcmd(server, password, LV_CLEANUP_SQL)
+
+
+def end_date_tests(server, password, R):
+    """Only @end_date given: the window is the seven days before it, with the
+    offset it was given in. It used to start at the default start date, which
+    an older @end_date is before, so the window moved to seven days after
+    that start date and the date asked for was ignored."""
+    G = "EndDateOnly"
+    # The two dates are read from the @debug parameters row. @debug = 1 runs
+    # against master, which has no Query Store data, for the reason given in
+    # smoke_tests: against the fixture, debug mode returns the generated SQL
+    # as XML columns, go-sqlcmd renders those so slowly that the capture times
+    # out (it hung the 2022 and 2025 CI jobs for the full 300 seconds), and
+    # the parameters row is not worth that. The date logic runs before the
+    # database is checked, so master reaches the same row.
+    out, combined = run_qs(server, password,
+                           ", @debug = 1, @end_date = '2020-10-01 12:00:00 -05:00'",
+                           database_name="master")
+    params = [dict(zip(h, r)) for h, rows in result_sets(out)
+              if h and h[0] == "parameter_type"
+              for r in rows if r and r[0] == "procedure_parameters"]
+    R.check(G, "@debug = 1 with only an old @end_date reaches the parameters row",
+            not find_sql_errors(combined) and len(params) == 1,
+            str(find_sql_errors(combined)[:2]))
+    if len(params) == 1:
+        start, end = params[0].get("start_date", ""), params[0].get("end_date", "")
+        R.check(G, "@end_date is used as given", end.startswith("2020-10-01 17:00:00"),
+                "end_date=%s" % end)
+        R.check(G, "@start_date is seven days before @end_date",
+                start.startswith("2020-09-24 17:00:00"), "start_date=%s" % start)
+
+    # The same call without @debug, against the fixture: a database with
+    # Query Store data runs to the end, and the period line shows the window.
+    out, combined = run_qs(server, password,
+                           ", @end_date = '2020-10-01 12:00:00 -05:00'")
+    R.check(G, "a database with Query Store data runs to the end with only an old @end_date",
+            completed(out) and not find_sql_errors(combined),
+            str(find_sql_errors(combined)[:2]))
+    R.check(G, "the period line shows the same window",
+            "query store data for period 2020-09-24 12:00:00 through 2020-10-01 12:00:00" in out,
+            "period line not found")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--server", default="SQL2022")
     ap.add_argument("--password", default="L!nt0044")
-    ap.add_argument("--only", choices=["multidb"],
-                    help="run one group by itself (multidb: the MultiDb group)")
+    ap.add_argument("--only", choices=["multidb", "plan_parsing"],
+                    help="run one group by itself (multidb: the MultiDb group, "
+                         "plan_parsing: the PlanParsing group)")
     args = ap.parse_args()
 
     print("Running sp_QuickieStore assertion tests against %s..." % args.server)
@@ -1814,15 +3701,24 @@ def main():
         sys.exit(1)
 
     R = Results()
+    if args.only == "plan_parsing":
+        plan_parsing_tests(args.server, args.password, R)
+        for item in R.items:
+            print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",
+                                           item["group"], item["name"], item["detail"]))
+        print("Total: %d passed, %d failed" % (R.passed, R.failed))
+        sys.exit(1 if R.failed else 0)
     if args.only == "multidb":
         try:
             multi_database_tests(args.server, args.password, R)
         finally:
-            for db in MD_DBS:
+            md_permission_cleanup(args.server, args.password)
+            for db in MD_DBS + (MD_LOCKED_DB, MD_DENIED_DB):
                 _sqlcmd(args.server, args.password, CLEANUP_SQL.replace(TEST_DB, db))
         for item in R.items:
             print("  [%s] %s: %s  (%s)" % ("PASS" if item["passed"] else "FAIL",
                                            item["group"], item["name"], item["detail"]))
+        print("Total: %d passed, %d failed" % (R.passed, R.failed))
         sys.exit(1 if R.failed else 0)
     try:
         # Slot A of the regression fixture runs first, so the other tests
@@ -1846,8 +3742,11 @@ def main():
         if build_ok:
             multi_database_tests(args.server, args.password, R)
             id_list_tests(args.server, args.password, R)
+            end_date_tests(args.server, args.password, R)
+        last_values_tests(args.server, args.password, R)
+        plan_parsing_tests(args.server, args.password, R)
     finally:
-        out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL + RM_CLEANUP_SQL)
+        out, err = _sqlcmd(args.server, args.password, CLEANUP_SQL + RM_CLEANUP_SQL + LV_CLEANUP_SQL)
         R.check("Fixture", "scratch databases dropped",
                 not find_sql_errors(out + "\n" + err), "cleanup failed")
 

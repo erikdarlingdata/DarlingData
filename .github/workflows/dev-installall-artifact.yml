@@ -16,12 +16,22 @@ on:
       - dev
     paths:
       - '**/*.sql'
+      - 'Install-All/Merge-All.ps1'
       - '.github/workflows/dev-installall-artifact.yml'
 permissions:
   contents: write
+# One publish at a time, in push order. Without this, two pushes close together
+# run in parallel and the older run can finish last, which moves the dev-latest
+# tag and the DarlingData.sql asset back to older content. With
+# cancel-in-progress off, a run in flight finishes and only the newest waiting
+# run follows it.
+concurrency:
+  group: dev-installall-artifact
+  cancel-in-progress: false
 jobs:
   publish-dev-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 

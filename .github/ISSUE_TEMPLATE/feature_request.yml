@@ -11,12 +11,14 @@ body:
       options:
         - label: sp_HealthParser
         - label: sp_HumanEvents
+        - label: sp_HumanEventsBlockViewer
         - label: sp_IndexCleanup
         - label: sp_LogHunter
         - label: sp_PerfCheck
         - label: sp_PressureDetector
         - label: sp_QueryReproBuilder
         - label: sp_QueryStoreCleanup
+        - label: sp_QuickieCache
         - label: sp_QuickieStore
         - label: Other / new script
     validations:

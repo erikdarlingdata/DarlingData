@@ -56,13 +56,19 @@ SELECT TOP (9223372036854775807)
         CONVERT
         (
             decimal(38, 2),
-            (ps.reserved_page_count * 8. / 1024.)
+            (ps.in_row_reserved_page_count * 8. / 1024.)
         ),
     lob_pages_mb =
         CONVERT
         (
             decimal(38, 2),
             (ps.lob_reserved_page_count * 8. / 1024.)
+        ),
+    row_overflow_pages_mb =
+        CONVERT
+        (
+            decimal(38, 2),
+            (ps.row_overflow_reserved_page_count * 8. / 1024.)
         ),
     ps.in_row_used_page_count,
     ps.row_count

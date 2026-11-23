@@ -37,7 +37,7 @@ The main procedure that handles data collection and table management.
 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
-| @RetentionPeriod | integer | 10 | Number of days to keep data |
+| @RetentionPeriod | integer | 10 | Number of days to keep data. Must be 1 or more: 0 or a negative number raises an error and drops nothing |
 
 ### sp_WhoIsActiveLogging_Retention
 
@@ -45,7 +45,7 @@ Handles the removal of tables older than the specified retention period.
 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
-| @RetentionPeriod | integer | 10 | Number of days to keep data |
+| @RetentionPeriod | integer | 10 | Number of days to keep data. Must be 1 or more: 0 or a negative number raises an error and drops nothing |
 
 ### sp_WhoIsActiveLogging_CreateViews
 

@@ -58,6 +58,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 
 # ---------------------------------------------------------------- error scanning
@@ -318,8 +319,19 @@ def keepalive_batch(event_type, sname, params_sql):
 class Results:
     def __init__(self):
         self.items = []
+        self._t0 = None
+        self._group = None
+
+    def _mark(self, group):
+        # Elapsed marker, printed when the group changes (flushed, so CI logs show it live).
+        if self._t0 is None:
+            self._t0 = time.monotonic()
+        if group != self._group:
+            self._group = group
+            print("[timing] +%.1fs entering %s" % (time.monotonic() - self._t0, group), flush=True)
 
     def check(self, group, name, condition, detail=""):
+        self._mark(group)
         self.items.append({
             "group": group,
             "name": name,
@@ -805,7 +817,266 @@ def group_collector(server, password, R, caps):
                 left == 0, "residual objects = %s" % left)
 
 
+def _sqlcmd_popen(server, password, sql, database="master"):
+    """Start a batch without waiting for it (blocking-chain fixtures)."""
+    cmd = _sqlcmd_prefix() + [
+        "-S", server, "-U", "sa", "-P", password, "-d", database,
+        "-W", "-h", "-1", "-b", "-Q", sql,
+    ]
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
+def group_collector_blocking(server, password, R, caps):
+    """Blocking logging to a table whose database collation differs from
+    master's. The collector stages the blocked process reports in a temp
+    table (SELECT INTO, so its text columns carry the collation of the
+    database that holds the proc) and compares them with the output table's
+    client_app, host_name and login_name. With two collations that was Msg 468
+    and the whole collector run stopped. The case also checks the episode
+    key: one transaction blocked on two different objects within one
+    collection pass logs both, and a second pass over the same reports adds
+    no duplicate rows.
+
+    Run 1 (cancelled by the query timeout) creates the keeper session and the
+    output table. Real blocking then runs while no collector is polling, so
+    run 2 (a pure collector run, @keep_alive = 0) reads every report in its
+    first pass; it lasts several passes."""
+    db = "sp_HumanEvents_test_blk"
+    sname = "keeper_HumanEvents_blocking"
+    tbl = "keeper_HumanEvents_blocking"
+    drop_db = (
+        "IF DB_ID('" + db + "') IS NOT NULL BEGIN "
+        "ALTER DATABASE [" + db + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+        "DROP DATABASE [" + db + "]; END;"
+    )
+    drop_session = (
+        "IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'" + sname + "') "
+        "DROP EVENT SESSION " + sname + " ON SERVER; "
+    )
+    # Pick a collation that differs from master's, CS or CI at run time.
+    out, _ = _sqlcmd(server, password,
+                     "SET NOCOUNT ON; SELECT line = 'RESULT|mcoll|' + "
+                     "CONVERT(nvarchar(128), DATABASEPROPERTYEX(N'master', 'Collation'));")
+    m = re.search(r"RESULT\|mcoll\|(\S+)", out)
+    master_coll = m.group(1) if m else "SQL_Latin1_General_CP1_CS_AS"
+    db_coll = ("SQL_Latin1_General_CP1_CI_AS"
+               if master_coll != "SQL_Latin1_General_CP1_CI_AS"
+               else "SQL_Latin1_General_CP1_CS_AS")
+
+    out, err = _sqlcmd(server, password,
+                       "SET NOCOUNT ON; " + drop_session + drop_db +
+                       " CREATE DATABASE [" + db + "] COLLATE " + db_coll + ";")
+    setup_err = find_sql_errors(out) + find_sql_errors(err)
+    R.check("CollectorBlocking", "setup: scratch database created (collation %s, master %s)"
+            % (db_coll, master_coll), not setup_err, str(setup_err))
+    if setup_err:
+        _sqlcmd(server, password, "SET NOCOUNT ON; " + drop_db)
+        return
+
+    thr = caps["bpr"] if caps["bpr"] and caps["bpr"] > 0 else 5
+
+    def delay(seconds):
+        return "00:%02d:%02d" % (int(seconds) // 60, int(seconds) % 60)
+
+    procs = []
+    try:
+        _sqlcmd(server, password,
+                "SET NOCOUNT ON; "
+                "CREATE TABLE dbo.blk_a (id integer NOT NULL PRIMARY KEY CLUSTERED, v integer NOT NULL); "
+                "CREATE TABLE dbo.blk_b (id integer NOT NULL PRIMARY KEY CLUSTERED, v integer NOT NULL); "
+                "INSERT dbo.blk_a (id, v) VALUES (1, 0); INSERT dbo.blk_b (id, v) VALUES (1, 0);",
+                database=db)
+        collector = (
+            "SET NOCOUNT ON; EXECUTE dbo.sp_HumanEvents "
+            "@event_type = N'blocking', @keep_alive = 1, "
+            "@output_database_name = N'" + db + "', @output_schema_name = N'dbo';"
+        )
+        out1, err1 = _sqlcmd(server, password, collector,
+                             query_timeout=15, subprocess_timeout=60)
+        R.check("CollectorBlocking", "run 1 (create session and table): no severe SQL error",
+                not find_sql_errors(out1 + "\n" + err1), str(find_sql_errors(out1 + "\n" + err1)))
+
+        # Blocking chain. A holds blk_a, C holds blk_b for longer. B takes blk_a
+        # (blocked until A commits), then blk_b (blocked until C commits): one
+        # transaction, two objects. The hold times leave room for the 5 second
+        # sweep of the blocked process monitor to see each wait past the threshold.
+        procs.append(_sqlcmd_popen(
+            server, password,
+            "BEGIN TRANSACTION; UPDATE dbo.blk_a SET v = v + 1; "
+            "WAITFOR DELAY '" + delay(thr * 2.4) + "'; COMMIT TRANSACTION;", db))
+        procs.append(_sqlcmd_popen(
+            server, password,
+            "BEGIN TRANSACTION; UPDATE dbo.blk_b SET v = v + 1; "
+            "WAITFOR DELAY '" + delay(thr * 6) + "'; COMMIT TRANSACTION;", db))
+        time.sleep(2)
+        procs.append(_sqlcmd_popen(
+            server, password,
+            "BEGIN TRANSACTION; UPDATE dbo.blk_a SET v = v + 10; "
+            "UPDATE dbo.blk_b SET v = v + 10; COMMIT TRANSACTION;", db))
+        for p in procs:
+            try:
+                p.communicate(timeout=thr * 12 + 30)
+            except subprocess.TimeoutExpired:
+                p.kill()
+        procs = []
+
+        # @keep_alive = 0 with an output database is a pure collector run: it
+        # reads the existing keeper session (a second @keep_alive = 1 call
+        # would drop and recreate it, losing the reports) and loops.
+        collector_read = collector.replace("@keep_alive = 1", "@keep_alive = 0")
+        out2, err2 = _sqlcmd(server, password, collector_read,
+                             query_timeout=18, subprocess_timeout=60)
+        c2 = out2 + "\n" + err2
+        R.check("CollectorBlocking", "run 2 (log blocking, collations differ): no severe SQL error",
+                not find_sql_errors(c2), str(find_sql_errors(c2)))
+        R.check("CollectorBlocking", "run 2: no collation conflict (Msg 468)",
+                "Msg 468" not in c2, "Msg 468 in output")
+
+        chk, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON;\n"
+                         "SELECT line = 'RESULT|rows|' + CONVERT(varchar(11), COUNT_BIG(*)) "
+                         "FROM dbo." + tbl + ";\n"
+                         "SELECT line = 'RESULT|objects|' + CONVERT(varchar(11), "
+                         "COUNT_BIG(DISTINCT t.object_id)) FROM dbo." + tbl + " AS t "
+                         "WHERE t.activity = N'blocked' AND t.database_id = DB_ID();\n"
+                         "SELECT line = 'RESULT|dupes|' + CONVERT(varchar(11), COUNT_BIG(*)) FROM "
+                         "(SELECT 1 AS one FROM dbo." + tbl + " AS t GROUP BY t.database_id, t.object_id, "
+                         "t.transaction_id, t.spid, t.ecid, t.activity, t.client_app, t.host_name, "
+                         "t.login_name HAVING COUNT_BIG(*) > 1) AS d;\n"
+                         "SELECT line = 'RESULT|maxwait|' + CONVERT(varchar(20), "
+                         "ISNULL(MAX(t.wait_time), 0)) FROM dbo." + tbl + " AS t "
+                         "WHERE t.activity = N'blocked';\n",
+                         database=db)
+        v = dict((a, b) for a, b in re.findall(r"RESULT\|(\w+)\|(\d+)", chk))
+        R.check("CollectorBlocking", "blocking rows were logged",
+                int(v.get("rows", 0)) > 0, "rows=%s" % v.get("rows"))
+        R.check("CollectorBlocking",
+                "one transaction blocked on two objects: both logged (blocked rows, distinct object_id = 2)",
+                v.get("objects") == "2", "distinct objects=%s" % v.get("objects"))
+        R.check("CollectorBlocking", "a second pass over the same reports adds no duplicate episode rows",
+                v.get("dupes") == "0", "duplicate groups=%s" % v.get("dupes"))
+        R.check("CollectorBlocking", "blocked wait_time reached the blocked process threshold",
+                int(v.get("maxwait", 0)) >= thr * 1000, "max wait_time=%s ms" % v.get("maxwait"))
+
+        outc, errc = _sqlcmd(server, password,
+                             "SET NOCOUNT ON; EXECUTE dbo.sp_HumanEvents @event_type = N'blocking', "
+                             "@cleanup = 1, @output_database_name = N'" + db + "', "
+                             "@output_schema_name = N'dbo';")
+        R.check("CollectorBlocking", "@cleanup = 1 (blocking): no severe SQL error",
+                not find_sql_errors(outc + "\n" + errc), str(find_sql_errors(outc + "\n" + errc)))
+    finally:
+        for p in procs:
+            p.kill()
+        _sqlcmd(server, password, "SET NOCOUNT ON; " + drop_session + drop_db)
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT line = 'RESULT|left|' + CONVERT(varchar(11), "
+                         "(SELECT COUNT_BIG(*) FROM sys.databases WHERE name = N'" + db + "') + "
+                         "(SELECT COUNT_BIG(*) FROM sys.server_event_sessions WHERE name = N'" + sname + "'));")
+        mm = re.search(r"RESULT\|left\|(\d+)", out)
+        R.check("CollectorBlocking", "cleanup: scratch database and keeper session dropped",
+                mm is not None and mm.group(1) == "0",
+                "residual objects = %s" % (mm.group(1) if mm else "?"))
+
+
 # ---------------------------------------------------------------- main
+
+def group_collector_collision(server, password, R, caps):
+    """Logging-to-table mode when a view or synonym already holds the name of an
+    output table. The collector has to stop with a clear message and leave the
+    object's target alone: it must not insert into it, and its hourly retention
+    DELETE must not run against it. The target holds one seed row dated far past
+    the retention window, so a DELETE through the name would remove it and an
+    INSERT through the name would add to it. A scratch database holds everything."""
+    db = "sp_HumanEvents_test_collision"
+    sname = "keeper_HumanEvents_waits"
+    drop_db = (
+        "IF DB_ID('" + db + "') IS NOT NULL BEGIN "
+        "ALTER DATABASE [" + db + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+        "DROP DATABASE [" + db + "]; END;"
+    )
+    out, err = _sqlcmd(server, password,
+                       "SET NOCOUNT ON; " + drop_db + " CREATE DATABASE [" + db + "];")
+    setup_err = find_sql_errors(out) + find_sql_errors(err)
+    R.check("Collision", "setup: scratch database created", not setup_err, str(setup_err))
+    if setup_err:
+        _sqlcmd(server, password, "SET NOCOUNT ON; " + drop_db)
+        return
+
+    def count_of(text, key):
+        m = re.search(r"RESULT\|" + key + r"\|(\d+)", text)
+        return int(m.group(1)) if m else None
+
+    try:
+        for kind in ("synonym", "view"):
+            if kind == "synonym":
+                make_name = "CREATE SYNONYM dbo.keeper_HumanEvents_waits FOR dbo.collision_target;"
+            else:
+                make_name = ("EXECUTE (N'CREATE VIEW dbo.keeper_HumanEvents_waits AS "
+                             "SELECT * FROM dbo.collision_target;');")
+            fixture = (
+                "SET NOCOUNT ON;\n"
+                "IF OBJECT_ID(N'dbo.keeper_HumanEvents_waits', N'SN') IS NOT NULL "
+                "DROP SYNONYM dbo.keeper_HumanEvents_waits;\n"
+                "IF OBJECT_ID(N'dbo.keeper_HumanEvents_waits', N'V') IS NOT NULL "
+                "DROP VIEW dbo.keeper_HumanEvents_waits;\n"
+                "IF OBJECT_ID(N'dbo.collision_target', N'U') IS NOT NULL "
+                "DROP TABLE dbo.collision_target;\n"
+                "CREATE TABLE dbo.collision_target ( id bigint PRIMARY KEY IDENTITY, "
+                "server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL, "
+                "database_name sysname NULL, wait_type nvarchar(60) NULL, duration_ms bigint NULL, "
+                "signal_duration_ms bigint NULL, wait_resource sysname NULL, "
+                "query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, "
+                "plan_handle varbinary(64) NULL );\n"
+                "INSERT INTO dbo.collision_target (server_name, event_time, event_type, "
+                "database_name, wait_type, duration_ms) "
+                "VALUES (N'seed', '20000101', N'seed', N'seed', N'SEED', 1);\n"
+                + make_name + "\n"
+            )
+            out, err = _sqlcmd(server, password, fixture, database=db)
+            fix_err = find_sql_errors(out) + find_sql_errors(err)
+            R.check("Collision", "%s: fixture created" % kind, not fix_err, str(fix_err))
+            if fix_err:
+                continue
+
+            # The proc stops quickly with the fix; without it the loop runs until
+            # the query timeout cancels it.
+            collector = (
+                "SET NOCOUNT ON; EXECUTE dbo.sp_HumanEvents "
+                "@event_type = N'waits', @keep_alive = 1, @wait_duration_ms = 1, "
+                "@output_database_name = N'" + db + "', @output_schema_name = N'dbo';"
+            )
+            out, err = _sqlcmd(server, password, collector,
+                               query_timeout=15, subprocess_timeout=60)
+            combined = out + "\n" + err
+            R.check("Collision", "%s: collector stops with a clear 'is not a table' message" % kind,
+                    "is not a table" in combined,
+                    "output did not contain the message: %s" % combined.strip()[:200])
+
+            out2, _ = _sqlcmd(server, password,
+                              "SET NOCOUNT ON;\n"
+                              "SELECT line = 'RESULT|total|' + CONVERT(varchar(20), COUNT_BIG(*)) "
+                              "FROM dbo.collision_target AS ct;\n"
+                              "SELECT line = 'RESULT|seed|' + CONVERT(varchar(20), COUNT_BIG(*)) "
+                              "FROM dbo.collision_target AS ct WHERE ct.event_type = N'seed';\n",
+                              database=db)
+            total, seed = count_of(out2, "total"), count_of(out2, "seed")
+            R.check("Collision", "%s: no rows were inserted through the name" % kind,
+                    total == 1, "rows in target = %s" % total)
+            R.check("Collision", "%s: the target's old row survived (no DELETE through the name)" % kind,
+                    seed == 1, "seed rows = %s" % seed)
+    finally:
+        _sqlcmd(server, password,
+                "SET NOCOUNT ON; "
+                "IF EXISTS (SELECT 1 FROM sys.server_event_sessions WHERE name = N'" + sname + "') "
+                "DROP EVENT SESSION " + sname + " ON SERVER; " + drop_db)
+        out, _ = _sqlcmd(server, password,
+                         "SET NOCOUNT ON; SELECT line = 'RESULT|after|' + CONVERT(varchar(11), "
+                         "(SELECT COUNT_BIG(*) FROM sys.databases WHERE name = N'" + db + "') + "
+                         "(SELECT COUNT_BIG(*) FROM sys.server_event_sessions WHERE name = N'" + sname + "'));")
+        left = parse_results(out)["after"]
+        R.check("Collision", "cleanup: scratch database and keeper session dropped",
+                left == 0, "residual objects = %s" % left)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -863,6 +1134,8 @@ def main():
         group_live_sample(args.server, args.password, R, caps)
         group_orphan_cleanup(args.server, args.password, R, caps)
         group_collector(args.server, args.password, R, caps)
+        group_collector_blocking(args.server, args.password, R, caps)
+        group_collector_collision(args.server, args.password, R, caps)
     finally:
         # ----- session hygiene: measure leaks, then sweep ----------------
         after_tests = list_he_sessions(args.server, args.password)

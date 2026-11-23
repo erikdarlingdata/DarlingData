@@ -30,7 +30,7 @@ The procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT 
 | @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
 | @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
 | @dedupe_only | bit | 0 | When set to 1, only performs index deduplication but does not mark unused indexes for removal |
-| @get_all_databases | bit | 0 | When set to 1, analyzes all eligible databases on the server |
+| @get_all_databases | bit | 0 | When set to 1, analyzes all eligible databases on the server. Not supported on Azure SQL Database: the procedure raises an error, so pass @database_name instead |
 | @include_databases | nvarchar(max) | NULL | Comma-separated list of databases to include (used with @get_all_databases = 1) |
 | @exclude_databases | nvarchar(max) | NULL | Comma-separated list of databases to exclude (used with @get_all_databases = 1) |
 | @sort_order | varchar(20) | default | Controls final result ordering: default groups by script type within each database, object groups all rows for the same index together (Key Subset disables sort under their replacement index) |
@@ -100,6 +100,7 @@ EXECUTE dbo.sp_IndexCleanup
 - Online index operations need Enterprise, Azure SQL DB or Managed Instance. Compression needs those, or Standard edition on SQL Server 2016 or later.
 - It is recommended to have a recent backup before making any index changes
 - The multi-database processing feature (@get_all_databases) analyzes each database sequentially for better performance and resource management
+- @get_all_databases is not supported on Azure SQL Database. The procedure raises an error there, so pass @database_name instead
 - System databases (master, model, msdb, tempdb, rdsadmin) are always excluded from processing
 - When using @get_all_databases, results for all databases are combined in a single result set
 - The index_count column on TABLE, DATABASE and SUMMARY rows counts only analyzed indexes. Clustered indexes, heaps, xml indexes and similar are not counted. The SUMMARY value is the sum of the DATABASE values.

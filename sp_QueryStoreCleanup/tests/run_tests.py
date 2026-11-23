@@ -222,12 +222,24 @@ def raised(text, needle):
 class Results:
     def __init__(self):
         self.items = []
+        self._t0 = None
+        self._group = None
+
+    def _mark(self, group):
+        # Elapsed marker, printed when the group changes (flushed, so CI logs show it live).
+        if self._t0 is None:
+            self._t0 = time.monotonic()
+        if group != self._group:
+            self._group = group
+            print("[timing] +%.1fs entering %s" % (time.monotonic() - self._t0, group), flush=True)
 
     def check(self, group, name, condition, detail=""):
+        self._mark(group)
         self.items.append({"group": group, "name": name, "status":
                            "PASS" if condition else "FAIL", "detail": detail})
 
     def skip(self, group, name, detail):
+        self._mark(group)
         self.items.append({"group": group, "name": name, "status": "SKIP",
                            "detail": detail})
 
@@ -666,6 +678,26 @@ def report_tests(server, password, R):
     R.check(G, "@min_age_days = 1 keeps queries that ran today",
             not find_sql_errors(all_text) and "No queries to remove." in out
             and found_to_remove(out) == 0, "found %s" % found_to_remove(out))
+
+    # A NULL @report_only must report, never remove. @compact_tables = 1
+    # also covers the compaction branch, which must only list what it would
+    # compact, not compact.
+    before = query_ids(server, password, DUPES_DB)
+    out, all_text = run_qsc(server, password, DUPES_DB,
+                            ", @report_only = NULL, @compact_tables = 1")
+    after = query_ids(server, password, DUPES_DB)
+    R.check(G, "@report_only = NULL reports and removes nothing",
+            not find_sql_errors(all_text) and after == before and bool(before)
+            and not REMOVED_LINE.search(out) and summary(out).get("queries_to_remove") == "20",
+            "errors %s, before %d, after %d, summary %s"
+            % (find_sql_errors(all_text)[:1], len(before), len(after),
+               summary(out).get("queries_to_remove")))
+    R.check(G, "@report_only = NULL only lists what it would compact",
+            "Would compact" in out and "Compacting finished" not in out)
+    if after != before:
+        # The procedure removed queries it should have kept, so the later
+        # groups would run on a broken fixture. Build a fresh one.
+        build_dupes(server, password, R)
 
 
 def case_tests(server, password, R):

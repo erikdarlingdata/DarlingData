@@ -92,8 +92,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.11',
-    @version_date = '20261101';
+    @version = '1.12',
+    @version_date = '20261201';
 
 /*Help*/
 IF @help = 1
@@ -175,7 +175,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'NULL; current database name if NULL'
-                WHEN N'@start_date' THEN 'the last seven days'
+                WHEN N'@start_date' THEN 'the last seven days, or the seven days before @end_date if you set only @end_date'
                 WHEN N'@end_date' THEN 'NULL'
                 WHEN N'@include_plan_ids' THEN 'NULL'
                 WHEN N'@include_query_ids' THEN 'NULL'
@@ -499,6 +499,30 @@ BEGIN
         RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 10, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
+END;
+
+/*
+With only @end_date given, search the seven days before it, the same
+length as the default window, as in sp_QuickieStore. Leaving @start_date
+at its default put it after an older @end_date, and the window was then
+quietly moved to seven days after the default start. @start_date keeps
+the offset of @end_date, so both are read the same way in the UTC
+conversion below.
+*/
+IF
+(
+    @start_date IS NULL
+AND @end_date IS NOT NULL
+)
+BEGIN
+    SELECT
+        @start_date =
+            DATEADD
+            (
+                DAY,
+                -7,
+                @end_date
+            );
 END;
 
 /*
@@ -3603,13 +3627,21 @@ FROM
 (
     SELECT
         qsrs.*,
+        /*
+        Last values come from the row with the latest last_execution_time,
+        whatever its execution type, so an aborted or timed out run does
+        not hide a newer regular run. The windows are not partitioned by
+        execution type, and a tie on last_execution_time goes to the later
+        interval. Every row of a plan carries the same value, so the MAX in
+        the select list only picks it up.
+        */
         partitioned_last_execution_time =
             LAST_VALUE(qsrs.last_execution_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3617,9 +3649,9 @@ FROM
             LAST_VALUE(qsrs.last_duration) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3627,9 +3659,9 @@ FROM
             LAST_VALUE(qsrs.last_cpu_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3637,9 +3669,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3647,9 +3679,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_writes) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3657,9 +3689,9 @@ FROM
             LAST_VALUE(qsrs.last_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3667,9 +3699,9 @@ FROM
             LAST_VALUE(qsrs.last_clr_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3677,9 +3709,9 @@ FROM
             LAST_VALUE(qsrs.last_dop) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3687,9 +3719,9 @@ FROM
             LAST_VALUE(qsrs.last_query_max_used_memory) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3697,9 +3729,9 @@ FROM
             LAST_VALUE(qsrs.last_rowcount) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),';
@@ -3712,9 +3744,9 @@ BEGIN
             LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3722,9 +3754,9 @@ BEGIN
             LAST_VALUE(qsrs.last_log_bytes_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -3732,9 +3764,9 @@ BEGIN
             LAST_VALUE(qsrs.last_tempdb_space_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )';
@@ -4730,14 +4762,19 @@ FROM
 (
     SELECT
         qsws.*,
+        /*
+        The last value comes from the row whose runtime stats row has the
+        latest last_execution_time, whatever its execution type, as for
+        the runtime stats above. A tie goes to the later interval.
+        */
         partitioned_last_query_wait_time_ms =
             LAST_VALUE(qsws.last_query_wait_time_ms) OVER
             (
                 PARTITION BY
                     qsws.plan_id,
-                    qsws.execution_type,
                     qsws.wait_category_desc
                 ORDER BY
+                    qsws.runtime_last_execution_time ASC,
                     qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
@@ -4757,9 +4794,26 @@ FROM
         category past the fifth. Query Store keeps a small, fixed set of
         wait categories, so pulling all of them does not blow up the
         row count.
-        */
+        */';
+
+    /*
+    A separate statement, not + inside the literal above: the pieces of one
+    expression are each shorter than 4000 characters, so their sum would be
+    cut to nvarchar(4000) before it ever reached @sql.
+    */
+    SELECT
+        @sql += N'
         SELECT
-            qsws.*
+            qsws.*,
+            runtime_last_execution_time =
+                (
+                    SELECT
+                        MAX(qsrs_last.last_execution_time)
+                    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs_last
+                    WHERE qsrs_last.plan_id = qsws.plan_id
+                    AND   qsrs_last.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+                    AND   qsrs_last.execution_type = qsws.execution_type
+                )
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
         WHERE qsws.plan_id = qsrs_plans.plan_id
         AND   qsws.wait_category > 0
@@ -5362,6 +5416,25 @@ SELECT
         LTRIM(RTRIM(ps.param_data_type)),
     parameter_compiled_value =
         CASE
+            /*
+            CLR types (geography, geometry, hierarchyid, and any other
+            schema-qualified type) and sql_variant: the plan writes the bare
+            text of the value, such as POINT (1 1), /1/2/ or Jan  5 2026 10:00AM.
+            Pasted into the value list of sp_executesql that is a syntax
+            error, or for sql_variant a number where a string was, so the
+            value goes in as an N'...' string with its quotes doubled.
+            The engine parses the string into the type. This comes first so a
+            value with parentheses is not taken apart below. A NULL stays NULL.
+            */
+            WHEN ps.param_compiled_value COLLATE Latin1_General_100_BIN2 <> N'NULL'
+            AND
+            (
+                 ps.param_data_type LIKE N'%.%'
+              OR ps.param_data_type = N'sql_variant'
+            )
+            THEN N'N''' +
+                 REPLACE(ps.param_compiled_value, N'''', N'''''') +
+                 N''''
             /*Strip parentheses from values like (13)*/
             WHEN ps.param_compiled_value LIKE N'(%)'
             THEN SUBSTRING
@@ -5895,6 +5968,65 @@ AND qp.parameter_compiled_value LIKE N'0x%'
 AND t.type_length > 127
 AND DATALENGTH(qp.parameter_compiled_value) / 2 = 256
 )
+OPTION(RECOMPILE);
+
+/*
+Warn when a quoted value lost something the plan does not keep.
+
+A geography or geometry value is written as text with no SRID, so the repro
+binds it with the type default (4326 for geography, 0 for geometry). A
+sql_variant value is written with no base type, so the repro binds it as
+nvarchar: an int or a datetime in a sql_variant column or compare behaves
+differently from the same text. Only values that were quoted are named; a
+NULL, or a ? for a missing value, binds as is.
+*/
+SELECT
+    @current_table = N'checking for spatial and sql_variant parameter values';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'spatial parameter SRID',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is a ' +
+        qp.parameter_data_type +
+        N' value, and the plan does not record its SRID. The repro binds it with the type default ' +
+        N'(4326 for geography, 0 for geometry). If the original used another, set the SRID by hand.'
+FROM #query_parameters AS qp
+WHERE qp.parameter_data_type IN (N'sys.geography', N'sys.geometry')
+AND   qp.parameter_compiled_value LIKE N'N''%'
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'sql_variant parameter',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is a sql_variant value, and the plan does not record the base type of the value. ' +
+        N'The repro binds it as nvarchar. If the original was another type, such as int or datetime, change it by hand.'
+FROM #query_parameters AS qp
+WHERE qp.parameter_data_type = N'sql_variant'
+AND   qp.parameter_compiled_value LIKE N'N''%'
 OPTION(RECOMPILE);
 
 /*

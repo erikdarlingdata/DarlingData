@@ -15,7 +15,7 @@ This script can be used to create a nightly statistics update job, utilizing Ola
 
 Things you may need to change:
  * Targets the master database
- * Job is owned by sa
+ * Job is owned by the login for the sa sid (0x01), even if sa has been renamed
  * Scheduled for every night at midnight
  * You need to do your own setup for failure emails and alerting
 
@@ -54,7 +54,8 @@ DECLARE
     @ReturnCode integer = 0,
     @jobId binary(16),
     @active_start_date int = (SELECT CONVERT(integer, CONVERT(varchar(35), GETDATE(), 112))),
-    @schedule_uid nvarchar(36) = NEWID();
+    @schedule_uid nvarchar(36) = NEWID(),
+    @owner sysname = SUSER_SNAME(0x01); /*sa can be renamed, so look it up by its fixed sid and not by name*/
 
 
 IF NOT EXISTS
@@ -85,7 +86,7 @@ EXECUTE @ReturnCode = msdb.dbo.sp_add_job
     @delete_level = 0,
     @description = N'Will use Ola Hallengren''s IndexOptimize procedure to update statistics without rebuilding or reorganizing indexes, care of Darling Data, LLC. https://www.erikdarling.com/',
     @category_name = N'[Uncategorized (Local)]',
-    @owner_login_name = N'sa',
+    @owner_login_name = @owner,
     @job_id = @jobId OUTPUT;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)

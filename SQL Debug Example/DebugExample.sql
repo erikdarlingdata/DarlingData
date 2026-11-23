@@ -33,14 +33,15 @@ These are some declared variables that we're going to use
 later on in the procedure at various points
 */
 DECLARE
-    @s nvarchar(MAX) =
+    @s nvarchar(max) =
         CONVERT
         (
-            nvarchar(MAX),
-            N'SELECT x = '
+            nvarchar(max),
+            N'SELECT x = '''
         ) +
         REPLICATE('A', 4000) +
-        REPLICATE('B', 4000), /*Faked long dynamic SQL*/
+        REPLICATE('B', 4000) +
+        N'''', /*Faked long dynamic SQL: selects one long quoted string literal, so it runs*/
     @len int = 0, /*Used to hold the length of the faked long dynamic SQL*/
     @block int = 1, /*Used for the dynamic SQL print loop*/
     @block_size int = 200, /*Same as above*/
@@ -101,7 +102,7 @@ you can use %i, %u, or %d, but bigger integers need to use %I64d.
 
 The alternative is ugly:
     DECLARE
-        @msg nvarchar(MAX) = N'';
+        @msg nvarchar(max) = N'';
 
     SELECT
         @msg = N'there were ' + CONVERT(nvarchar(11), ROWCOUNT_BIG()) + N' rows in sys.databases';
@@ -168,11 +169,11 @@ BEGIN
         PRINT SUBSTRING(@s, @block, @block_size);
 
         SELECT
-            @block += @block_size -1;
+            @block += @block_size;
     END;
 
     /*
-    If you need to do this again, make sure to set @block back to zero
+    If you need to do this again, make sure to set @block back to 1
     */
 END;
 

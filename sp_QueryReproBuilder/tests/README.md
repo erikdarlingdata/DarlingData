@@ -56,6 +56,13 @@ later interval. In each slot, one `ww_q1` execution waits on a lock that a
 second session holds. `ww_q2` never waits. It gets a new index between the
 slots, so it has a different plan in each slot.
 
+The `lastvalues:` and `enddate:` cases build `qrb_lv_db`. In it, `lv_q` runs
+twice. The first run waits on a lock until the client gives up, so Query Store
+records an aborted run. The second run waits a shorter time and finishes, a
+regular run. `lastvalues:` checks that `last_duration_ms` is the regular run's,
+the latest, and not the longer aborted one. `enddate:` checks that with only
+`@end_date`, the search covers the seven days before it.
+
 One run over both slots must return one repro per plan. Its Lock wait for
 `ww_q1` must equal Query Store's total across both slots, and `ww_q2` must
 have no Lock wait. The database is dropped at the end, even when a step
@@ -113,10 +120,16 @@ repro to both "is it correct?" and "does it run?":
 - **Parameter/value alignment** -- declaration order versus ParameterList order,
   asserting value *i* binds to declaration *i*.
 - **Control characters** (CR, LF) embedded in a parameter's sniffed value.
+- **CLR types and `sql_variant`** (`geography`, `geometry`, `hierarchyid`, any
+  schema-qualified type): the plan writes the bare value text, so the repro must
+  quote it, keep NULL as NULL, and warn about the lost SRID or base type (the
+  `udt:` and `variant:` cases).
 - **Echo cases** that execute the repro and read back the *actually-bound*
   values, catching a silent reorder or misbind that still runs.
 - **Wait stats over a whole window** of two Query Store intervals, checked
   against Query Store's own totals (the `waitwindow:` case).
+- **Last values and `@end_date`** against a real aborted run followed by a
+  regular run (the `lastvalues:` and `enddate:` cases).
 
 ### The documented `?` fill-in behavior
 
@@ -165,7 +178,9 @@ once) after editing it.
 ## CI
 
 `.github/workflows/sql-tests.yml` runs `run_tests.py` on SQL Server 2017, 2019,
-2022, and 2025 for every pull request into `dev` or `main`. It also runs for every push to
-`dev` that changes SQL files, test files, `Install-All`, or the workflow files.
+2022, and 2025 for every pull request into `main`. A pull request into `dev` runs it
+only when it changes a file in `sp_QueryReproBuilder/` (not Markdown),
+`Install-All/`, `.github/sql/`, or the workflow file. It also runs for
+every push to `dev` that changes SQL files, test files, `Install-All`, or the workflow files.
 `mutation_check.py` does not run in CI. Run it yourself before shipping
 a change to `sp_QueryReproBuilder.sql`.

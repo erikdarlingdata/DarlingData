@@ -3,11 +3,15 @@ on:
   push:
     branches:
       - main
+# Read-only GITHUB_TOKEN. Every write below (the commit push) uses the GitHub
+# App token that checkout persists, and the ruleset on main only lets that App
+# bypass the pull request rule, so this token never needs to write.
 permissions:
-  contents: write
+  contents: read
 jobs:
   build-sql-file:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Generate App Token
         id: app-token
@@ -31,7 +35,7 @@ jobs:
           $changedFiles | ForEach-Object {
             $outputString = ""
             $fullPath = $_
-            $Content = Get-Content $fullPath
+            $Content = Get-Content -LiteralPath $fullPath
             foreach ($Ctnt in $Content) {
               $CharArray = $Ctnt.ToCharArray()
               $lineOutput = ""
@@ -48,7 +52,7 @@ jobs:
               }
               $outputString += $lineOutput.TrimEnd() + "`n"   # Add line output with trailing spaces removed to the output string, and add newline
             }
-            Set-Content -Path $fullPath -Value ($outputString.TrimEnd())
+            Set-Content -LiteralPath $fullPath -Value ($outputString.TrimEnd())
           }
       - name: Compile SQL File
         shell: pwsh
@@ -57,7 +61,9 @@ jobs:
           ./Merge-All.ps1
       - name: Commit and Push
         run: |
-          git add .
-          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git add -u
+          # The compile date line changes on every run, so ignore it here:
+          # when it is the only change there is nothing worth a commit.
+          git diff --staged --quiet -I'^-- Compile Date:' && echo "No changes to commit" && exit 0
           git commit -m "Automation: Format and Build SQL File [skip ci]"
           git push

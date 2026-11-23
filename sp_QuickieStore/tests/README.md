@@ -10,7 +10,7 @@ fails when it executes.
 
 | Script | What it does |
 | --- | --- |
-| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 251 assertions. |
+| `run_tests.py` | Builds a Query Store scratch database, then runs a parameter matrix asserting each combination executes cleanly and reaches completion, plus bidirectional filter checks. It also checks regression mode and wait stats against Query Store's own numbers. 397 assertions on SQL Server 2022 and 2025. |
 
 Install `sp_QuickieStore.sql` into `master` on the target server first. The
 script stops with an error if `dbo.sp_QuickieStore` is not there.
@@ -21,9 +21,17 @@ python run_tests.py --server SQL2022
 ```
 
 Takes `--server` and `--password` (default `SQL2022` / the standard local sa
-password). Expect `251`.
+password). Expect `397` checks on SQL Server 2022 and 2025, `396` on 2017, and `395` on 2019.
+The count depends on the version, because some checks run on only some versions.
+Two permission checks need VIEW SERVER PERFORMANCE STATE, so they run on SQL Server 2022 and later.
+The rule 14 check for compatibility level 150 and up does not run on 2017.
+SQL Server 2017 runs two more rule 1 checks, because before SQL Server 2019 the suggested table variable index has no inline INCLUDE.
 
-To run only the multi-database group, add `--only multidb`.
+The harness needs go-sqlcmd: it passes `-W` together with `-y`, which the older ODBC
+`sqlcmd` rejects.
+
+To run only the multi-database group, add `--only multidb`. To run only the
+plan findings group, add `--only plan_parsing`.
 
 ## What it actually covers
 
@@ -45,6 +53,38 @@ each run *executes* what it built:
   `parameter sensitive` signal must fire on a real conviction.
 - **`@find_high_impact`**: the default run, the absolute total columns, and
   the hash-based include and ignore lists filtering bidirectionally.
+- **`@plan_parsing`**, the plan findings result set. A scratch database with a
+  1,000,000 row table and one query per rule (0 to 14, 16 and 18), each found
+  in Query Store by a marker comment. Each rule must show up for its query
+  with its `rule_id` and `rule_name`. A primary key seek, a cheap serial query
+  and a UDF query must stay quiet where the rules say so, and rule 3 must not say a UDF forced
+  a serial plan that is serial for MAXDOP 1. Rule 7 must pass its
+  executions per day gate with a short `@start_date` and fail it with the
+  default window. Rule 14 must fire below compatibility level 150 and stay
+  quiet at 150 and up. The column list is pinned, `@plan_parsing = 0` must
+  return no findings, and each rejected combination must raise an error. A
+  failed rule check prints the fixture query's operator list (NodeId,
+  PhysicalOp/LogicalOp) from its Query Store plan. Regression fixtures cover
+  the review findings: rule 1 must suggest the inline `INDEX` for a spool on a table variable, and must script a valid `CREATE INDEX` (bracketed,
+  comma separated, no duplicates, no `Expr` columns, parses under
+  `PARSEONLY`; the table variable advice is run for real), rule 4 must separate the fetched columns and name the column its own predicate reads, and stay quiet for a lookup into a system table, rule 5 must fire for a
+  `NOT NULL` key `NOT IN` a nullable indexed column (the `IS NULL` test is the
+  seek or its residual predicate), and stay quiet for `NOT IN` over `NOT NULL`
+  keys, for `NOT EXISTS` with a time range on a nullable column, and for a
+  hand-written wildcard (`n = x OR n IS NULL`) with no `NOT IN` in the text,
+  rule 2 must flag `MaxDOPSetToOne` for a plan compiled under a database MAXDOP of 1 once the setting is back at 0, with a finding that says MAXDOP may have been 1 when the plan compiled, and must ignore `OPTION (MAXDOP 1)` in a comment and the fetch step of a
+  `DYNAMIC` cursor (the fixture asserts it has the CPU), rule 10 must fire for a
+  function over a table variable column, rule 1's `INCLUDE` must cover the column
+  behind a computed spool output, `@workdays = 1` must run cleanly, `@troubleshoot_performance = 1` must time the plan parsing steps, `@debug = 1` must dump without Msg 208 on the
+  early exits (a missing database, a bad time zone), rules 8 and 12 must stay quiet for the
+  optimizer's own filter and Top, rule 8 must stay quiet for a filter on an aggregate result, for `HAVING` and for a filter on `ROW_NUMBER()`, and must fire for a filter on a Compute Scalar over table columns and for a mixed predicate (a table column and a window aggregate), and rule 8 must stay quiet for the index key change Filter over a Split in a wide `UPDATE` (`QUERYTRACEON 8790`), and for a filter on the probe result of a semi join (a Merge Join and a Nested Loops plan), and for an `OR` whose other part reads a batch mode `COUNT_BIG(*) OVER` (skipped below compatibility level 150), while the `AND` form still says part of it reads a window result, rule 0 must not fire for a plan that is only
+  an `IF` condition, and `STATIC`, `KEYSET` and `DYNAMIC` cursors list each node id with its
+  phase (`10 (populate)`), the phase has that operator, and the `KEYSET`
+  lookup finding names the right table, and in a self-join does not list the outer alias's column. Rule 1 on a table variable must
+  run as suggested (the `DECLARE`, and before SQL Server 2019 the temp table `CREATE TABLE` + `CREATE INDEX ... INCLUDE`): before SQL Server 2019 the inline index lists the seek columns only, also for a spool that outputs `nvarchar(max)` and `nvarchar(1000)` columns. Rule 8 must still fire for a late `Filter` that compares a column with a `VALUES` list value. The rule 18 fixture is pinned with trace flag 8690, `FORCE ORDER` and
+  `MAXDOP 1`, because a small machine puts a spool over the scan. Rules
+  15 (needs a linked server), 17 (needs Standard Edition) and 19 (needs a
+  compile of 1 second or more) are not covered.
 - **`@include_query_hash_totals`**: the `by_query_hash` columns are in the
   output, and a date window with no queries returns no detail rows.
 - **Id lists**: ids separated by commas, spaces, or line breaks return the
@@ -53,7 +93,15 @@ each run *executes* what it built:
   underscore is not a wildcard.
 - **Multiple databases**: `@get_all_databases = 1` with `@expert_mode` against
   two scratch databases whose Query Store ids collide. The output must have
-  the compilation stats row of every query.
+  the compilation stats row of every query. A third listed database is held in
+  single-user mode by a second session, so the caller cannot enter it. The run
+  must skip it, name it in the footer, and still return the other two.
+- **Query Store permission**: a login with `VIEW SERVER STATE` is denied
+  `VIEW DATABASE STATE` in one more scratch database and runs `@get_all_databases = 1`.
+  The caller can enter that database but cannot read Query Store in it. The run
+  must skip it, name it in the footer, and still return the two readable
+  databases. On SQL Server 2022 and later, a login with only
+  `VIEW SERVER PERFORMANCE STATE` must not be skipped.
 
 On top of that, **bidirectional** assertions prove the filters actually filter
 rather than being silently ignored — `@query_text_search` on a known string vs
@@ -115,13 +163,16 @@ The harness creates its own `quickiestore_test` database with Query Store on,
 runs a small varied workload (ad hoc queries at different costs plus a stored
 procedure, so `@query_type` has both kinds to separate), flushes Query Store, and
 drops the database in a `finally` block that runs even if assertions fail.
-Five smaller scratch databases get the same `finally` cleanup. The `@debug`
+The smaller scratch databases get the same `finally` cleanup. The `@debug`
 check uses `quickiestore_test_empty`, which has Query Store on and no queries.
 The text search checks use `quickiestore_test_cs`, which is case sensitive.
 The regression and wait checks use `quickiestore_test_rm`, and the logging
 checks create their log tables there. The multi-database checks use
 `quickiestore_test_md1` and `quickiestore_test_md2`, which have colliding
-Query Store ids. Nothing outside these six databases is touched.
+Query Store ids. `quickiestore_test_md_locked` and `quickiestore_test_md_denied`
+hold the databases the caller cannot use, and the logins `quickiestore_test_md_perm`
+and `quickiestore_test_md_perf` run the permission checks. Nothing outside these
+databases and logins is touched.
 
 ## Known client limitation: `@debug = 1`
 

@@ -16,6 +16,10 @@ For background on why you might need this:
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
+Install this procedure in the master database. This script creates it in whatever database you run it in,
+and the Agent job in ClearTokenPerm Agent Job.sql runs it in master.
+If you install it somewhere else, change @database_name in the job step to match.
+
 Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 

@@ -99,6 +99,11 @@ CV = {
 # text but absent from the plan ParameterList (the documented '?' fill-in path).
 QMARK_WARNING = "were not found in the plan ParameterList"
 
+# Warning text for CLR spatial values (the plan does not record the SRID) and
+# sql_variant values (the plan does not record the base type).
+SRID_WARNING = "does not record its SRID"
+VARIANT_WARNING = "does not record the base type"
+
 
 # ------------------------------------------------------------------ plan builder
 
@@ -603,6 +608,80 @@ def build_cases():
                   params=[("@a", "int", "(-5)"), ("@b", "int", "(2147483647)")]),
         {"echo_expect": {"a": "-5", "s": "n", "b": "2147483647"}}, echo=True)
 
+    # ---------- CLR types and sql_variant -----------------------------------
+    # A plan writes a geography, geometry or hierarchyid value as bare text
+    # (POINT (1 1), /1/2/) and a sql_variant value as bare text with no base
+    # type. Pasted bare into the sp_executesql value list they are a syntax
+    # error (Msg 102). The repro quotes them as N'...' and the engine parses
+    # the text back into the type. Captured from real plans on SQL Server.
+    add("udt:spatial_hierarchyid_run",
+        make_plan("(@g sys.geography, @geo sys.geometry, @h sys.hierarchyid)"
+                  "SELECT c = COUNT_BIG(*) FROM sys.all_columns AS ac "
+                  "WHERE @g IS NOT NULL AND @geo IS NOT NULL AND @h IS NOT NULL AND ac.column_id > 0",
+                  params=[("@g", "sys.geography", "POINT (1 1)"),
+                          ("@geo", "sys.geometry", "LINESTRING (0 0, 1 1)"),
+                          ("@h", "sys.hierarchyid", "/1/2/")]),
+        {"must_exec": True,
+         "expect_params": [("@g", "sys.geography"), ("@geo", "sys.geometry"),
+                           ("@h", "sys.hierarchyid")],
+         "values_present": ["N'POINT (1 1)'", "N'LINESTRING (0 0, 1 1)'", "N'/1/2/'",
+                            SRID_WARNING]},
+        note="bare CLR values were Msg 102; spatial values also warn that the SRID is not carried")
+
+    add("udt:echo_values",
+        make_plan("(@g sys.geography, @h sys.hierarchyid, @geo sys.geometry)"
+                  "SELECT col_a = CONVERT(integer, @h.GetLevel()), "
+                  "col_s = @g.STAsText() + N'|' + @geo.STAsText(), "
+                  "col_b = CONVERT(integer, @g.STSrid)",
+                  params=[("@g", "sys.geography", "POINT (1 1)"),
+                          ("@h", "sys.hierarchyid", "/1/2/"),
+                          ("@geo", "sys.geometry", "LINESTRING (0 0, 1 1)")]),
+        {"echo_expect": {"a": "2", "s": "POINT (1 1)|LINESTRING (0 0, 1 1)", "b": "4326"}},
+        echo=True,
+        note="the value binds as the type: level, WKT and the default geography SRID")
+
+    add("udt:echo_null_values",
+        make_plan("(@g sys.geography, @h sys.hierarchyid)"
+                  "SELECT col_a = ISNULL(CONVERT(integer, @h.GetLevel()), -1), "
+                  "col_s = ISNULL(@g.STAsText(), N'null'), col_b = 3",
+                  params=[("@g", "sys.geography", "NULL"),
+                          ("@h", "sys.hierarchyid", "NULL")]),
+        {"echo_expect": {"a": "-1", "s": "null", "b": "3"}}, echo=True,
+        note="a NULL CLR value stays NULL; quoting it would bind the text NULL and fail to parse")
+
+    add("udt:other_clr_type_quoted",
+        make_plan("(@u dbo.SomeClrType)SELECT c = COUNT_BIG(*) FROM sys.all_columns AS ac "
+                  "WHERE ac.column_id > 0",
+                  params=[("@u", "dbo.SomeClrType", "it's 7")]),
+        {"values_present": ["N'it''s 7'"]},
+        note="any schema-qualified type is a CLR type: quoted, with embedded quotes doubled "
+             "(not executed: the type does not exist)")
+
+    add("variant:values_run",
+        make_plan("(@v1 sql_variant, @v2 sql_variant, @v3 sql_variant)"
+                  "SELECT c = COUNT_BIG(*) FROM sys.all_columns AS ac "
+                  "WHERE @v1 IS NOT NULL AND @v2 IS NOT NULL AND @v3 IS NOT NULL AND ac.column_id > 0",
+                  params=[("@v1", "sql_variant", "str"),
+                          ("@v2", "sql_variant", "20260101"),
+                          ("@v3", "sql_variant", "Jan  5 2026 10:00AM")]),
+        {"must_exec": True,
+         "values_present": ["N'str'", "N'20260101'", "N'Jan  5 2026 10:00AM'", VARIANT_WARNING]},
+        note="bare str was Msg 207 and bare 20260101 bound as an int; the base type is not in the "
+             "plan, so the value is quoted and the repro warns")
+
+    add("variant:echo_values",
+        make_plan("(@v1 sql_variant, @v2 sql_variant, @v3 sql_variant, @v4 sql_variant)"
+                  "SELECT col_a = CONVERT(integer, CONVERT(nvarchar(20), @v2)), "
+                  "col_s = CONVERT(nvarchar(50), @v1) + N'|' + CONVERT(nvarchar(50), @v3), "
+                  "col_b = ISNULL(CONVERT(integer, CONVERT(nvarchar(20), @v4)), -1)",
+                  params=[("@v1", "sql_variant", "str"),
+                          ("@v2", "sql_variant", "20260101"),
+                          ("@v3", "sql_variant", "Jan  5 2026 10:00AM"),
+                          ("@v4", "sql_variant", "NULL")]),
+        {"echo_expect": {"a": "20260101", "s": "str|Jan  5 2026 10:00AM", "b": "-1"},
+         "values_present": [VARIANT_WARNING]}, echo=True,
+        note="the values bind and read back; a NULL sql_variant stays NULL")
+
     # ---------- Negative: no repro should be built -------------------------
     add("negative:no_stmtsimple",
         '<ShowPlanXML xmlns="%s"><BatchSequence><Batch><Statements>'
@@ -664,6 +743,8 @@ def check_case(case, gen, ex):
         if got:
             for k in ("a", "s", "b"):
                 ck(got[k] == exp[k], "echo %s == %r" % (k, exp[k]), "got %r" % got[k])
+        for v in (checks.get("values_present") or []):
+            ck(v in repro, "value present: %s" % v, "not found in repro")
         return out
 
     # ----- normal cases ----------------------------------------------------
@@ -1606,6 +1687,269 @@ def run_wait_window_cases(server, password, state):
         _run_inline(server, password, WW_TEARDOWN, "ww_teardown")
 
 
+# ---------------------------------------------------- last values and @end_date
+
+# Two checks that need real Query Store data in a database of their own.
+#   lastvalues: a plan's last_duration_ms comes from its latest run, whatever
+#     the execution type. An aborted run that took longer, then a newer regular
+#     run of the same plan: it has to be the regular run's, not the largest
+#     across the types.
+#   enddate: with only @end_date given, the search covers the seven days before
+#     it. It used to start at the default start date, so an @end_date older
+#     than that moved the window to the default start plus seven days.
+LV_DB = "qrb_lv_db"
+LV_MARKER = "qrb_lv_marker"
+
+LV_SETUP = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_lv_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_lv_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_lv_db;
+END;
+CREATE DATABASE qrb_lv_db;
+GO
+ALTER DATABASE qrb_lv_db SET QUERY_STORE = ON
+    (OPERATION_MODE = READ_WRITE, INTERVAL_LENGTH_MINUTES = 1,
+     QUERY_CAPTURE_MODE = ALL, WAIT_STATS_CAPTURE_MODE = ON);
+GO
+USE qrb_lv_db;
+GO
+DECLARE @tries integer = 0, @rows bigint = 0;
+WHILE @tries < 30
+AND   NOT EXISTS (SELECT 1/0 FROM sys.database_query_store_options AS dqso
+                  WHERE dqso.actual_state_desc = N'READ_WRITE')
+BEGIN
+    WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+CREATE TABLE dbo.lv_lock (id integer NOT NULL PRIMARY KEY, v integer NOT NULL);
+INSERT dbo.lv_lock (id, v) VALUES (1, 0);
+EXECUTE (N'CREATE PROCEDURE dbo.lv_q AS BEGIN SELECT /* qrb_lv_marker */ l.v FROM dbo.lv_lock AS l WHERE l.id = 1; END;');
+SET @tries = 0;
+WHILE @tries < 10 AND @rows = 0
+BEGIN
+    EXECUTE (N'SELECT /* lv_warmup */ c = COUNT_BIG(*) FROM dbo.lv_lock AS l;');
+    EXECUTE sys.sp_query_store_flush_db;
+    SELECT @rows = COUNT_BIG(*) FROM sys.query_store_query_text AS qsqt
+    WHERE qsqt.query_sql_text LIKE N'%lv[_]warmup%';
+    IF @rows = 0 WAITFOR DELAY '00:00:01';
+    SET @tries += 1;
+END;
+ALTER DATABASE SCOPED CONFIGURATION CLEAR PROCEDURE_CACHE;
+SELECT marker = 'LV_WARM:' + CONVERT(varchar(20), @rows);
+GO
+"""
+
+LV_TEARDOWN = """\
+SET NOCOUNT ON;
+IF DB_ID('qrb_lv_db') IS NOT NULL
+BEGIN
+    ALTER DATABASE qrb_lv_db SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE qrb_lv_db;
+END;
+"""
+
+# The lock holder: takes an X lock on the row lv_q reads, waits until it sees
+# a request blocked behind it, then holds the lock {hold} more seconds.
+LV_HOLDER = """\
+SET NOCOUNT ON;
+BEGIN TRANSACTION;
+UPDATE l SET l.v += 1 FROM dbo.lv_lock AS l WHERE l.id = 1;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_exec_requests AS der
+                  WHERE der.blocking_session_id = @@SPID)
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+WAITFOR DELAY '00:00:0{hold}';
+COMMIT TRANSACTION;
+"""
+
+# The waiter: runs lv_q once the holder's X lock on lv_lock is granted, so it
+# blocks. The check names the table because other sessions, such as Query
+# Store's own writes, can hold X key locks in the same database.
+LV_BLOCKED = """\
+SET NOCOUNT ON;
+DECLARE @tries integer = 0;
+WHILE @tries < 300
+AND   NOT EXISTS (SELECT 1/0 FROM sys.dm_tran_locks AS dtl
+                  JOIN sys.partitions AS p
+                    ON p.hobt_id = dtl.resource_associated_entity_id
+                  WHERE dtl.resource_database_id = DB_ID()
+                  AND   dtl.resource_type = N'KEY'
+                  AND   dtl.request_mode = N'X'
+                  AND   dtl.request_status = N'GRANT'
+                  AND   p.object_id = OBJECT_ID(N'dbo.lv_lock'))
+BEGIN
+    WAITFOR DELAY '00:00:00.100';
+    SET @tries += 1;
+END;
+EXECUTE dbo.lv_q;
+"""
+
+# Query Store's own numbers for lv_q: each runtime stats row with its last
+# execution time (UTC, sortable) and last duration in microseconds.
+LV_RUNS = """\
+SET NOCOUNT ON;
+USE qrb_lv_db;
+EXECUTE sys.sp_query_store_flush_db;
+SELECT t = 'LV|run|' + qsrs.execution_type_desc + '|' +
+    CONVERT(varchar(30), CONVERT(datetime2(7), SWITCHOFFSET(qsrs.last_execution_time, '+00:00')), 121) + '|' +
+    CONVERT(varchar(30), qsrs.last_duration)
+FROM sys.query_store_runtime_stats AS qsrs
+JOIN sys.query_store_plan AS qsp ON qsp.plan_id = qsrs.plan_id
+JOIN sys.query_store_query AS qsq ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(N'dbo.lv_q');
+"""
+
+# The procedure with only an end date, {end} being a SQL expression that
+# gives a datetimeoffset. The date has no offset, so the procedure reads it
+# as server local time.
+LV_RUN = """\
+SET NOCOUNT ON;
+DECLARE @e datetimeoffset(7) = {end};
+EXECUTE dbo.sp_QueryReproBuilder
+    @database_name = N'qrb_lv_db',
+    @end_date = @e,
+    @query_text_search = N'qrb_lv_marker';
+"""
+
+# The result row's tail: execution types, first and last execution time,
+# waits, count, executions per second, then average, minimum, maximum, total
+# and last duration.
+LV_ROW = re.compile(
+    r"\|((?:Regular|Aborted|Exception)(?:, (?:Regular|Aborted|Exception))*)"
+    r"\|([^|]*)\|([^|]*)\|([^|]*)\|(\d+)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)"
+    r"\|([^|]*)\|([^|]*)\|")
+
+
+def _float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _run_pipe(server, password, sql, tag):
+    """Like _run_inline, with one line per row and | between the columns."""
+    path = os.path.join(WORKDIR, "_%s.sql" % tag)
+    _write_sql(path, sql)
+    cmd = [*_sqlcmd_prefix(), "-S", server, "-U", "sa", "-P", password,
+           "-d", "master", "-i", path, "-y", "0", "-h", "-1", "-W", "-s", "|"]
+    r = subprocess.run(cmd, capture_output=True, timeout=180)
+    return ((r.stdout or b"").decode("utf-8", errors="replace") + "\n" +
+            (r.stderr or b"").decode("utf-8", errors="replace"))
+
+
+def lv_blocked(server, password, hold, timeout):
+    """One lv_q execution that waits on a lock held for `hold` seconds after
+    it is seen blocked. With a client timeout shorter than the hold, the
+    client cancels it and Query Store records an Aborted run; with a longer
+    one it finishes as a Regular run. Returns the errors found."""
+    holder = subprocess.Popen(
+        [*_sqlcmd_prefix(), "-S", server, "-U", "sa", "-P", password,
+         "-d", LV_DB, "-Q", LV_HOLDER.format(hold=hold)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        r = subprocess.run(
+            [*_sqlcmd_prefix(), "-S", server, "-U", "sa", "-P", password,
+             "-d", LV_DB, "-t", str(timeout), "-Q", LV_BLOCKED],
+            capture_output=True, timeout=120)
+        out = (r.stdout or b"").decode("utf-8", errors="replace")
+        h_out, h_err = holder.communicate(timeout=120)
+    finally:
+        if holder.poll() is None:
+            holder.kill()
+    text = (out + "\n" + h_out.decode("utf-8", errors="replace") + "\n" +
+            h_err.decode("utf-8", errors="replace"))
+    errs = find_sql_errors(text)
+    if holder.returncode:
+        errs.append("lock holder exited %d: %s" % (holder.returncode, text.strip()[-200:]))
+    return errs
+
+
+def run_lastvalue_cases(server, password, only=None, verbose=False):
+    """Returns (results, setup error or None)."""
+    names = ["lastvalues:aborted_then_regular", "enddate:window_from_end"]
+    if only and not any(only in n for n in names):
+        return [], None
+    out = _run_inline(server, password, LV_SETUP, "lv_setup")
+    errs = find_sql_errors(out)
+    m = re.search(r"LV_WARM:(\d+)", out)
+    if errs or not m or int(m.group(1)) == 0:
+        _run_inline(server, password, LV_TEARDOWN, "lv_teardown")
+        return [], ("could not build the last values fixture: errors=%s warmup=%s"
+                    % (errs[:2], m.group(1) if m else "absent"))
+    try:
+        # The aborted run waits about 3 seconds before the client gives up.
+        # The regular run, after it, waits about 1 second for a second holder.
+        run_errs = lv_blocked(server, password, hold=5, timeout=3)
+        run_errs += lv_blocked(server, password, hold=1, timeout=30)
+        truth = _run_pipe(server, password, LV_RUNS, "lv_runs")
+        runs = re.findall(r"LV\|run\|(\w+)\|([\d\- :.]+)\|(\d+)", truth)
+        by_type = {t: int(d) for t, _w, d in runs}
+        if (run_errs or "Aborted" not in by_type or "Regular" not in by_type
+                or by_type["Aborted"] - by_type["Regular"] < 500000):
+            return [], ("lv_q did not give an aborted run longer than a regular run: "
+                        "errors=%s runs=%s" % (run_errs[:2], runs))
+        latest = max(runs, key=lambda r: r[1])
+        expected_ms = int(latest[2]) / 1000.0
+
+        results = []
+
+        def finish(name, checks):
+            for (ok, label, detail) in checks:
+                results.append((name, ok, label, detail))
+            if any(not ok for (ok, _l, _d) in checks):
+                print("FAIL  %s" % name)
+                for (ok, label, detail) in checks:
+                    if not ok:
+                        print("        - %s :: %s" % (label, detail))
+            else:
+                print("PASS  %s" % name)
+
+        if not only or only in names[0]:
+            out = _run_pipe(server, password, LV_RUN.format(
+                end="DATEADD(DAY, 1, CONVERT(datetimeoffset(7), SYSDATETIME()))"), "lv_run")
+            row = LV_ROW.search(out)
+            got = _float(row.group(11)) if row else None
+            finish(names[0], [
+                (not find_sql_errors(out), "no severe SQL error",
+                 str(find_sql_errors(out)[:2])),
+                (latest[0] == "Regular", "the regular run is the latest run",
+                 "runs=%s" % runs),
+                (got is not None and abs(got - expected_ms) < 0.01,
+                 "last_duration_ms is the latest run's, not the aborted run's",
+                 "got %s expected %s (runs %s)" % (got, expected_ms, runs)),
+            ])
+
+        if not only or only in names[1]:
+            # Tomorrow as the end date: the seven days before it include now.
+            inside = LV_ROW.search(_run_pipe(server, password, LV_RUN.format(
+                end="DATEADD(DAY, 1, CONVERT(datetimeoffset(7), SYSDATETIME()))"),
+                "lv_end_inside"))
+            # 30 days ahead: the seven days before it end well after now, so
+            # the plan is outside. With the old default start the window ran
+            # from a week ago to that date and the plan was in it.
+            far_out = _run_pipe(server, password, LV_RUN.format(
+                end="DATEADD(DAY, 30, CONVERT(datetimeoffset(7), SYSDATETIME()))"),
+                "lv_end_far")
+            finish(names[1], [
+                (inside is not None,
+                 "an @end_date of tomorrow covers the plan that ran just now",
+                 "no result row"),
+                (not find_sql_errors(far_out) and LV_ROW.search(far_out) is None,
+                 "an @end_date 30 days ahead covers only the seven days before it",
+                 "plan found: %s" % (far_out[-200:].replace("\n", " "),)),
+            ])
+        return results, None
+    finally:
+        _run_inline(server, password, LV_TEARDOWN, "lv_teardown")
+
+
 # ------------------------------------------------------------------ main
 
 def main():
@@ -1702,6 +2046,13 @@ def main():
         print("ERROR: " + psp_setup_error)
         sys.exit(1)
     results.extend(psp_results)
+
+    lv_results, lv_setup_error = run_lastvalue_cases(
+        args.server, args.password, only=args.only, verbose=args.verbose)
+    if lv_setup_error:
+        print("ERROR: " + lv_setup_error)
+        sys.exit(1)
+    results.extend(lv_results)
 
     passed = sum(1 for (_n, ok, _l, _d) in results if ok)
     failed = sum(1 for (_n, ok, _l, _d) in results if not ok)

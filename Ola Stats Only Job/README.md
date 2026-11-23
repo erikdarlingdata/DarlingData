@@ -19,7 +19,7 @@ Statistics in SQL Server are vital for query optimization but can become stale o
 The script creates a SQL Agent job with the following default settings:
 - Job name: "IndexOptimize - STATISTICS_ONLY"
 - Database target: All user databases
-- Job owner: sa
+- Job owner: the login that has the sa sid (0x01), found with `SUSER_SNAME(0x01)`, so a renamed sa works
 - Schedule: "Nightly Statistics Update", every night at midnight
 - Statistics modification level: 5% (only updates statistics that have changed by at least 5%)
 
@@ -27,7 +27,7 @@ The script creates a SQL Agent job with the following default settings:
 
 You may need to modify the script to:
 - Change the target database (currently master)
-- Change the job owner from sa
+- Change the job owner (the script sets it to the sa login)
 - Adjust the schedule from the default midnight run
 - Set up failure emails and alerting
 - Change the StatisticsModificationLevel from 5% to match your environment needs

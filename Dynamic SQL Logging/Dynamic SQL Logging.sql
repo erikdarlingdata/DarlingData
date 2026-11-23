@@ -48,12 +48,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 /*variables for the variable gods*/
 DECLARE
-    @run_hash uniqueidentifier = NEWID(),
-    @cpu_time decimal(18,2),
-    @total_elapsed_time decimal(18,2),
-    @reads decimal(18,2),
-    @writes decimal(18,2),
-    @logical_reads decimal(18,2);
+    @run_hash uniqueidentifier = NEWID();
 
 IF NOT EXISTS
 (
@@ -108,7 +103,7 @@ BEGIN
         r.cpu_time,
         r.total_elapsed_time,
         physical_reads_mb =
-            ((r.reads - r.logical_reads) * 8.) / 1024.,
+            (r.reads * 8.) / 1024.,
         logical_reads_mb =
             (r.logical_reads * 8.) / 1024.,
         writes_mb =
@@ -138,7 +133,7 @@ BEGIN
             l.total_elapsed_time_ms =
                 r.total_elapsed_time - l.total_elapsed_time_ms,
             l.physical_reads_mb =
-                (((reads - logical_reads) * 8.) / 1024.) - l.physical_reads_mb,
+                ((r.reads * 8.) / 1024.) - l.physical_reads_mb,
             l.logical_reads_mb =
                 ((r.logical_reads * 8.) / 1024.) - l.logical_reads_mb,
             l.writes_mb =
