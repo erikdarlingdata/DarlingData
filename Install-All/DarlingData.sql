@@ -1,4 +1,4 @@
--- Compile Date: 11/01/2026 15:19:49 UTC
+-- Compile Date: 11/23/2026 21:09:32 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -81,8 +81,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.11',
-        @version_date = '20261101';
+        @version = '3.12',
+        @version_date = '20261201';
 
     IF @help = 1
     BEGIN
@@ -108,7 +108,7 @@ BEGIN
                     WHEN N'@what_to_check' THEN N'areas of system health to check'
                     WHEN N'@start_date' THEN N'earliest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
                     WHEN N'@end_date' THEN N'latest date to show data for; a value without an offset (or with +00:00) is server local time, like the output; converted to UTC internally'
-                    WHEN N'@warnings_only' THEN N'only show rows where a warning was reported (the blocked process report is not filtered)'
+                    WHEN N'@warnings_only' THEN N'only show rows where a warning or error was reported (the blocked process report is not filtered); memory broker rows count as a warning only when the notification is SHRINK'
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
@@ -3469,7 +3469,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
         WHERE wi.component = 'QUERY_PROCESSING'
-        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[. = "WARNING" or . = "ERROR"]') = @warnings_only OR @warnings_only = 0)
         /* Threshold is honored whether or not @warnings_only is set — the
            parameter documents "minimum pending tasks to display" and the
            previous `OR @warnings_only = 0` short-circuit silently ignored
@@ -4025,7 +4025,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #memory_broker_info
         FROM #memory_broker AS mb
         CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
-        WHERE (w.x.exist('(data[@name="notification"]/value[.= "RESOURCE_MEMPHYSICAL_LOW"])') = @warnings_only OR @warnings_only = 0)
+        WHERE (w.x.exist('(data[@name="notification"]/value[.= "SHRINK"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -4745,7 +4745,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
         WHERE wi.component = 'SYSTEM'
-        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[.= "WARNING"]') = @warnings_only OR @warnings_only = 0)
+        AND  (wi.sp_server_diagnostics_component_result.exist('/event/data[@name="state"]/text[. = "WARNING" or . = "ERROR"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
@@ -5455,7 +5455,7 @@ AND   ca.utc_timestamp < @end_date';
     CROSS APPLY w.x.nodes('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') AS w2(x2)
     WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
     AND   w.x.exist('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') = 1
-    AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+    AND  (w.x.exist('(data[@name="state"]/text[. = "WARNING" or . = "ERROR"])') = @warnings_only OR @warnings_only = 0)
     OPTION(RECOMPILE, MAXDOP 1);
 
     IF @debug = 1
@@ -7120,8 +7120,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.11',
-    @version_date = '20261101';
+    @version = '7.12',
+    @version_date = '20261201';
 
 IF @help = 1
 BEGIN
@@ -7411,6 +7411,7 @@ CREATE TABLE
 CREATE TABLE
     #human_events_xml_internal
 (
+    id bigint IDENTITY NOT NULL, /*a per-report key, the last tie-breaker when the blocking logger keeps one report per episode*/
     human_events_xml xml
 );
 
@@ -8003,8 +8004,17 @@ BEGIN
     RETURN;
 END;
 
+/*
+@azure is only set for Azure SQL Database (EngineEdition 5). Managed Instance
+(EngineEdition 8) must keep taking the server-scoped path, so it is named here
+instead of widening @azure.
+*/
 IF LOWER(@target_output) = N'event_file'
-AND @azure = 1
+AND
+(
+     @azure = 1
+  OR CONVERT(integer, SERVERPROPERTY('EngineEdition')) = 8
+)
 BEGIN
     RAISERROR(N'The event_file target is not supported for Azure SQL Database or Azure SQL Managed Instance because additional setup is required that this procedure cannot complete. Please use ring_buffer instead.', 11, 1) WITH NOWAIT;
     RETURN;
@@ -10252,37 +10262,37 @@ BEGIN
         database_name =
             COALESCE
             (
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+                NULLIF(pd.database_name, N''),
+                DB_NAME(NULLIF(pd.database_id, 0))
             ),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
         blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
         blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
-        blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
-        blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
+        blocked_spid = pa.blocked_spid,
+        blocked_ecid = pa.blocked_ecid,
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-        wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-        transaction_name = bd.value('(process/@transactionname)[1]', 'sysname'),
-        last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
+        wait_time = pa.wait_time,
+        transaction_name = pa.transaction_name,
+        last_transaction_started = pa.last_transaction_started,
         last_transaction_completed = CONVERT(datetime2, NULL),
-        wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
-        lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-        status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bd.value('(process/@priority)[1]', 'integer'),
-        transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-        client_app = bd.value('(process/@clientapp)[1]', 'sysname'),
-        host_name = bd.value('(process/@hostname)[1]', 'sysname'),
-        login_name = bd.value('(process/@loginname)[1]', 'sysname'),
-        isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-        log_used = bd.value('(process/@logused)[1]', 'bigint'),
-        clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
-        currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
-        currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
+        wait_resource = pa.wait_resource,
+        lock_mode = pa.lock_mode,
+        status = pa.status,
+        priority = pa.priority,
+        transaction_count = pa.transaction_count,
+        client_app = pa.client_app,
+        host_name = pa.host_name,
+        login_name = pa.login_name,
+        isolation_level = pa.isolation_level,
+        log_used = pa.log_used,
+        clientoption1 = pa.clientoption1,
+        clientoption2 = pa.clientoption2,
+        currentdbname = pa.currentdbname,
+        currentdbid = pa.currentdbid,
         blocking_level = 0,
         sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
@@ -10290,7 +10300,109 @@ BEGIN
     INTO #blocked
     FROM #human_events_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                        THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                        ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                    END
+            FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocked process attributes, PIVOTed by name.
+        It measures about the same as the 19 separate value() calls it
+        replaced: these attributes open the report, so each call was
+        cheap. It stays a PIVOT so the blocked and blocking statements
+        read the same way. The names compare in Latin1_General_BIN2, so
+        they stay case-sensitive the way the XPath was.
+        */
+        SELECT
+            blocked_spid = CONVERT(integer, p.spid),
+            blocked_ecid = CONVERT(integer, p.ecid),
+            wait_time = CONVERT(bigint, p.waittime),
+            transaction_name = CONVERT(sysname, p.transactionname),
+            last_transaction_started = CONVERT(datetime2, p.lasttranstarted),
+            wait_resource = CONVERT(nvarchar(100), p.waitresource),
+            lock_mode = CONVERT(nvarchar(10), p.lockMode),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            transaction_count = CONVERT(integer, p.trancount),
+            client_app = CONVERT(sysname, p.clientapp),
+            host_name = CONVERT(sysname, p.hostname),
+            login_name = CONVERT(sysname, p.loginname),
+            isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+            log_used = CONVERT(bigint, p.logused),
+            clientoption1 = CONVERT(bigint, p.clientoption1),
+            clientoption2 = CONVERT(bigint, p.clientoption2),
+            currentdbname = CONVERT(sysname, p.currentdbname),
+            currentdbid = CONVERT(integer, p.currentdb)
+        FROM
+        (
+            SELECT
+                name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                value = pat.a.value('.', 'nvarchar(1024)')
+            FROM bd.bd.nodes('process[1]/@*') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                waittime,
+                transactionname,
+                lasttranstarted,
+                waitresource,
+                lockMode,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel,
+                logused,
+                clientoption1,
+                clientoption2,
+                currentdbname,
+                currentdb
+            )
+        ) AS p
+    ) AS pa
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     OPTION(RECOMPILE);
 
@@ -10359,37 +10471,37 @@ BEGIN
         database_name =
             COALESCE
             (
-                NULLIF(oa.c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-                DB_NAME(NULLIF(oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+                NULLIF(pd.database_name, N''),
+                DB_NAME(NULLIF(pd.database_id, 0))
             ),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
-        blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
-        blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+        blocking_spid = pa.blocking_spid,
+        blocking_ecid = pa.blocking_ecid,
         blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
         blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-        wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-        transaction_name = bg.value('(process/@transactionname)[1]', 'sysname'),
-        last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-        last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-        wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
-        lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-        status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bg.value('(process/@priority)[1]', 'integer'),
-        transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-        client_app = bg.value('(process/@clientapp)[1]', 'sysname'),
-        host_name = bg.value('(process/@hostname)[1]', 'sysname'),
-        login_name = bg.value('(process/@loginname)[1]', 'sysname'),
-        isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-        log_used = bg.value('(process/@logused)[1]', 'bigint'),
-        clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
-        currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
-        currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
+        wait_time = pa.wait_time,
+        transaction_name = pa.transaction_name,
+        last_transaction_started = pa.last_transaction_started,
+        last_transaction_completed = pa.last_transaction_completed,
+        wait_resource = pa.wait_resource,
+        lock_mode = pa.lock_mode,
+        status = pa.status,
+        priority = pa.priority,
+        transaction_count = pa.transaction_count,
+        client_app = pa.client_app,
+        host_name = pa.host_name,
+        login_name = pa.login_name,
+        isolation_level = pa.isolation_level,
+        log_used = pa.log_used,
+        clientoption1 = pa.clientoption1,
+        clientoption2 = pa.clientoption2,
+        currentdbname = pa.currentdbname,
+        currentdbid = pa.currentdbid,
         blocking_level = 0,
         sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
@@ -10397,7 +10509,111 @@ BEGIN
     INTO #blocking
     FROM #human_events_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                        THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                        ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                    END
+            FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocking process attributes, PIVOTed by name.
+        blocking-process comes after the blocked process and its stack
+        frames, and each of the 20 separate value() calls read past all
+        of that again, so this is where the one pass saves time. The
+        names compare in Latin1_General_BIN2, so they stay case-sensitive
+        the way the XPath was.
+        */
+        SELECT
+            blocking_spid = CONVERT(integer, p.spid),
+            blocking_ecid = CONVERT(integer, p.ecid),
+            wait_time = CONVERT(bigint, p.waittime),
+            transaction_name = CONVERT(sysname, p.transactionname),
+            last_transaction_started = CONVERT(datetime2, p.lastbatchstarted),
+            last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+            wait_resource = CONVERT(nvarchar(100), p.waitresource),
+            lock_mode = CONVERT(nvarchar(10), p.lockMode),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            transaction_count = CONVERT(integer, p.trancount),
+            client_app = CONVERT(sysname, p.clientapp),
+            host_name = CONVERT(sysname, p.hostname),
+            login_name = CONVERT(sysname, p.loginname),
+            isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+            log_used = CONVERT(bigint, p.logused),
+            clientoption1 = CONVERT(bigint, p.clientoption1),
+            clientoption2 = CONVERT(bigint, p.clientoption2),
+            currentdbname = CONVERT(sysname, p.currentdbname),
+            currentdbid = CONVERT(integer, p.currentdb)
+        FROM
+        (
+            SELECT
+                name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                value = pat.a.value('.', 'nvarchar(1024)')
+            FROM bg.bg.nodes('process[1]/@*') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                waittime,
+                transactionname,
+                lastbatchstarted,
+                lastbatchcompleted,
+                waitresource,
+                lockMode,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel,
+                logused,
+                clientoption1,
+                clientoption2,
+                currentdbname,
+                currentdb
+            )
+        ) AS p
+    ) AS pa
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     OPTION(RECOMPILE);
 
@@ -10766,6 +10982,11 @@ BEGIN
     WHERE b.n = 1
     AND   (b.contentious_object = @object_name
            OR @object_name = N'')
+    /*
+    spids are reused, so one blocking pair can show up again later
+    with the same sort_order. event_time puts those in order, and
+    transaction_id, unique per row with n = 1 above, ends the ties.
+    */
     ORDER BY
         b.sort_order,
         CASE
@@ -10774,7 +10995,9 @@ BEGIN
             ELSE +1
         END,
         b.spid,
-        b.ecid
+        b.ecid,
+        b.event_time,
+        b.transaction_id
     OPTION(RECOMPILE);
 
     SELECT DISTINCT
@@ -10955,6 +11178,7 @@ BEGIN
             ap.*,
             c.statement_start_offset,
             c.statement_end_offset,
+            c.plan_handle,
             c.creation_time,
             c.last_execution_time,
             c.execution_count,
@@ -10997,8 +11221,22 @@ BEGIN
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
+    /*
+    Plans with the same average CPU tie, so the rest of the plan key
+    follows: the statement, its plan, and the report row it came from.
+    */
     ORDER BY
-        ap.avg_worker_time_ms DESC
+        ap.avg_worker_time_ms DESC,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset,
+        ap.plan_handle,
+        ap.database_name,
+        ap.database_id,
+        ap.currentdbname,
+        ap.currentdbid,
+        ap.contentious_object,
+        ap.query_text
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 END;
 
@@ -11353,7 +11591,20 @@ BEGIN
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 0;
 
-            IF OBJECT_ID(@object_name_check) IS NULL
+            /*
+            An existing object with this name has to be a table. OBJECT_ID
+            without a type also finds a view or a synonym, and the inserts
+            and the retention delete would then run through it against
+            whatever it points at. Stop with a clear message instead.
+            */
+            IF  OBJECT_ID(@object_name_check) IS NOT NULL
+            AND OBJECT_ID(@object_name_check, N'U') IS NULL
+            BEGIN
+                RAISERROR(N'%s exists but is not a table. sp_HumanEvents will not log through a view or synonym. Drop or rename it so the procedure can create its own table.', 11, 1, @object_name_check) WITH NOWAIT;
+                RETURN;
+            END;
+
+            IF OBJECT_ID(@object_name_check, N'U') IS NULL
             BEGIN
                 IF @debug = 1 BEGIN RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
                 SELECT
@@ -11756,7 +12007,8 @@ END;
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 1;
 
-            IF OBJECT_ID(@object_name_check) IS NOT NULL
+            /* Typed check: a view or synonym with this name is not a logging table */
+            IF OBJECT_ID(@object_name_check, N'U') IS NOT NULL
             BEGIN
                 IF @debug = 1 BEGIN RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
                 SELECT
@@ -11827,6 +12079,301 @@ AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;')
                         THEN CONVERT
                              (
                                  nvarchar(max),
+                             CONVERT(nvarchar(max), N'/*
+Parse every report once into a temp table. Sorted for the ROW_NUMBER straight
+from the XML readers, the estimate ran to millions of rows and the insert asked
+for a memory grant of many gigabytes on each fresh compile. The same estimate
+makes this parse go parallel, and serial costs less CPU.
+*/
+SELECT
+    x.*
+INTO #blocking_staging
+FROM
+(
+    SELECT
+        server_name = @@SERVERNAME,
+        report_id = xet.id,
+        event_time =
+            DATEADD
+            (
+                MINUTE,
+                DATEDIFF
+                (
+                    MINUTE,
+                    GETUTCDATE(),
+                    SYSDATETIME()
+                ), oa.c.value(''@timestamp'', ''datetime2'')
+            ),
+        activity = ''blocked'',
+        database_name =
+            COALESCE
+            (
+                NULLIF(pd.database_name, N''''),
+                DB_NAME(NULLIF(pd.database_id, 0))
+            ),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
+        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
+        spid = pa.spid,
+        ecid = pa.ecid,
+        text = bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
+        waittime = pa.waittime,
+        transactionname = pa.transactionname,
+        lasttranstarted = pa.lasttranstarted,
+        wait_resource = pa.wait_resource,
+        lockmode = pa.lockmode,
+        status = pa.status,
+        priority = pa.priority,
+        trancount = pa.trancount,
+        clientapp = pa.clientapp,
+        hostname = pa.hostname,
+        loginname = pa.loginname,
+        isolationlevel = pa.isolationlevel,
+        sqlhandle =
+            CONVERT
+            (
+                varbinary(64),
+                bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
+                1
+            ),
+        /* each #human_events_xml_internal row is this one event already, so no second copy */
+        process_report = xet.human_events_xml
+    FROM #human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value(''@name'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value(''@name'', ''sysname'') IN (N''resource_owner_type'')
+                        THEN d.d.value(''(text)[1]'', ''nvarchar(256)'')
+                        ELSE d.d.value(''(value/text())[1]'', ''nvarchar(256)'')
+                    END
+            FROM oa.c.nodes(''data[@name != "blocked_process"]'') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocked process attributes, PIVOTed by name.
+        It measures about the same as the 14 separate value() calls it
+        replaced: these attributes open the report, so each call was
+        cheap. It stays a PIVOT so the blocked and blocking statements
+        read the same way. The names compare in Latin1_General_BIN2, so
+        they stay case-sensitive the way the XPath was.
+        */
+        SELECT
+            spid = CONVERT(integer, p.spid),
+            ecid = CONVERT(integer, p.ecid),
+            waittime = CONVERT(bigint, p.waittime),
+            transactionname = CONVERT(sysname, p.transactionname),
+            lasttranstarted = CONVERT(datetime2, p.lasttranstarted),
+            wait_resource = CONVERT(nvarchar(100), p.waitresource),
+            lockmode = CONVERT(nvarchar(10), p.lockMode),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            trancount = CONVERT(integer, p.trancount),
+            clientapp = CONVERT(sysname, p.clientapp),
+            hostname = CONVERT(sysname, p.hostname),
+            loginname = CONVERT(sysname, p.loginname),
+            isolationlevel = CONVERT(nvarchar(50), p.isolationlevel)
+        FROM
+        (
+            SELECT
+                name = pat.a.value(''local-name(.)'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value = pat.a.value(''.'', ''nvarchar(1024)'')
+            FROM bd.bd.nodes(''process[1]/@*'') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                waittime,
+                transactionname,
+                lasttranstarted,
+                waitresource,
+                lockMode,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel
+            )
+        ) AS p
+    ) AS pa
+    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+
+    UNION ALL
+
+    SELECT
+        server_name = @@SERVERNAME,
+        report_id = xet.id,
+        event_time =
+            DATEADD
+            (
+                MINUTE,
+                DATEDIFF
+                (
+                    MINUTE,
+                    GETUTCDATE(),
+                    SYSDATETIME()
+                ),
+                oa.c.value(''@timestamp'', ''datetime2'')
+            ),
+        activity = ''blocking'',
+        database_name =
+            COALESCE
+            (
+                NULLIF(pd.database_name, N''''),
+                DB_NAME(NULLIF(pd.database_id, 0))
+            ),
+        database_id = pd.database_id,
+        object_id = pd.object_id,
+        transaction_id = pd.transaction_id,
+        resource_owner_type = pd.resource_owner_type,
+        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
+        spid = pa.spid,
+        ecid = pa.ecid,
+        text = bg.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
+        waittime = NULL,
+        transactionname = NULL,
+        lasttranstarted = NULL,
+        wait_resource = NULL,
+        lockmode = NULL,
+        status = pa.status,
+        priority = pa.priority,
+        trancount = pa.trancount,
+        clientapp = pa.clientapp,
+        hostname = pa.hostname,
+        loginname = pa.loginname,
+        isolationlevel = pa.isolationlevel,
+        sqlhandle = NULL,
+        /* each #human_events_xml_internal row is this one event already, so no second copy */
+        process_report = xet.human_events_xml
+    FROM #human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY
+    (
+        /*
+        One pass over the data elements of the event, PIVOTed by name. Each
+        data[@name=...] lookup read all of them again and sorted the
+        matches. blocked_process is left out: it is the report itself.
+        */
+        SELECT
+            database_name = CONVERT(sysname, p.database_name),
+            database_id = CONVERT(integer, p.database_id),
+            object_id = CONVERT(integer, p.object_id),
+            transaction_id = CONVERT(bigint, p.transaction_id),
+            resource_owner_type = CONVERT(sysname, p.resource_owner_type)
+        FROM
+        (
+            SELECT
+                name = d.d.value(''@name'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value =
+                    CASE
+                        WHEN d.d.value(''@name'', ''sysname'') IN (N''resource_owner_type'')
+                        THEN d.d.value(''(text)[1]'', ''nvarchar(256)'')
+                        ELSE d.d.value(''(value/text())[1]'', ''nvarchar(256)'')
+                    END
+            FROM oa.c.nodes(''data[@name != "blocked_process"]'') AS d(d)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                database_name,
+                database_id,
+                object_id,
+                transaction_id,
+                resource_owner_type
+            )
+        ) AS p
+    ) AS pd
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocking process attributes, PIVOTed by name.
+        blocking-process comes after the blocked process and its stack
+        frames, and each of the 9 separate value() calls read past all
+        of that again, so this is where the one pass saves time. The
+        names compare in Latin1_General_BIN2, so they stay case-sensitive
+        the way the XPath was.
+        */
+        SELECT
+            spid = CONVERT(integer, p.spid),
+            ecid = CONVERT(integer, p.ecid),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            trancount = CONVERT(integer, p.trancount),
+            clientapp = CONVERT(sysname, p.clientapp),
+            hostname = CONVERT(sysname, p.hostname),
+            loginname = CONVERT(sysname, p.loginname),
+            isolationlevel = CONVERT(nvarchar(50), p.isolationlevel)
+        FROM
+        (
+            SELECT
+                name = pat.a.value(''local-name(.)'', ''sysname'') COLLATE Latin1_General_BIN2,
+                value = pat.a.value(''.'', ''nvarchar(1024)'')
+            FROM bg.bg.nodes(''process[1]/@*'') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                spid,
+                ecid,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel
+            )
+        ) AS p
+    ) AS pa
+    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+) AS x
+OPTION(MAXDOP 1);
+
+') +
                              N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +
                              N'( server_name, event_time, activity, database_name, database_id, object_id, ' + @nc10 +
                              N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + @nc10 +
@@ -11839,6 +12386,13 @@ SELECT server_name, event_time, activity, database_name, database_id, object_id,
        trancount, clientapp, hostname, loginname, isolationlevel, sqlhandle, process_report
 FROM
 (
+    /*
+    Keep the first report of each episode. ORDER BY the partition
+    columns themselves kept an arbitrary one; event_time, then the
+    staging row id, picks the same row every time. The partition
+    includes the database and object, the same key as the NOT EXISTS
+    below, so a transaction blocked on two objects in one pass logs both.
+    */
     SELECT
         x.*,
         x =
@@ -11846,138 +12400,49 @@ FROM
                 OVER
                 (
                     PARTITION BY
+                        x.database_id,
+                        x.object_id,
                         x.spid,
                         x.ecid,
                         x.transaction_id,
                         x.activity
                     ORDER BY
-                        x.spid,
-                        x.ecid,
-                        x.transaction_id,
-                        x.activity
+                        x.event_time,
+                        x.report_id
                 )
-    FROM
-    (
-        SELECT
-            server_name = @@SERVERNAME,
-            event_time =
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        GETUTCDATE(),
-                        SYSDATETIME()
-                    ), oa.c.value(''@timestamp'', ''datetime2'')
-                ),
-            activity = ''blocked'',
-            database_name =
-                COALESCE
-                (
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
-                ),
-            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
-            monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
-            spid = bd.value(''(process/@spid)[1]'', ''integer''),
-            ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
-            text = bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
-            waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
-            transactionname = bd.value(''(process/@transactionname)[1]'', ''sysname''),
-            lasttranstarted = bd.value(''(process/@lasttranstarted)[1]'', ''datetime2''),
-            wait_resource = bd.value(''(process/@waitresource)[1]'', ''nvarchar(100)''),
-            lockmode = bd.value(''(process/@lockMode)[1]'', ''nvarchar(10)''),
-            status = bd.value(''(process/@status)[1]'', ''nvarchar(10)''),
-            priority = bd.value(''(process/@priority)[1]'', ''integer''),
-            trancount = bd.value(''(process/@trancount)[1]'', ''integer''),
-            clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
-            hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
-            loginname = bd.value(''(process/@loginname)[1]'', ''sysname''),
-            isolationlevel = bd.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
-            sqlhandle =
-                CONVERT
-                (
-                    varbinary(64),
-                    bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
-                    1
-                ),
-            process_report = oa.c.query(''.'')
-        FROM #human_events_xml_internal AS xet
-        OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-        OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
-        WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-
-        UNION ALL
-
-        SELECT
-            server_name = @@SERVERNAME,
-            event_time =
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        GETUTCDATE(),
-                        SYSDATETIME()
-                    ),
-                    oa.c.value(''@timestamp'', ''datetime2'')
-                ),
-            activity = ''blocking'',
-            database_name =
-                COALESCE
-                (
-                    NULLIF(oa.c.value(''(data[@name="database_name"]/value/text())[1]'', ''sysname''), N''''),
-                    DB_NAME(NULLIF(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''), 0))
-                ),
-            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
-            monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
-            spid = bg.value(''(process/@spid)[1]'', ''integer''),
-            ecid = bg.value(''(process/@ecid)[1]'', ''integer''),
-            text = bg.value(''(process/inputbuf/text())[1]'', ''nvarchar(max)''),
-            waittime = NULL,
-            transactionname = NULL,
-            lasttranstarted = NULL,
-            wait_resource = NULL,
-            lockmode = NULL,
-            status = bg.value(''(process/@status)[1]'', ''nvarchar(10)''),
-            priority = bg.value(''(process/@priority)[1]'', ''integer''),
-            trancount = bg.value(''(process/@trancount)[1]'', ''integer''),
-            clientapp = bg.value(''(process/@clientapp)[1]'', ''sysname''),
-            hostname = bg.value(''(process/@hostname)[1]'', ''sysname''),
-            loginname = bg.value(''(process/@loginname)[1]'', ''sysname''),
-            isolationlevel = bg.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
-            sqlhandle = NULL,
-            process_report = oa.c.query(''.'')
-        FROM #human_events_xml_internal AS xet
-        OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-        OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
-        WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-    ) AS x
+    FROM #blocking_staging AS x
 ) AS x
 WHERE NOT EXISTS
 (
     SELECT
         1/0
-    FROM ' + @object_name_check + N' AS x2
+    FROM ') + @object_name_check + N' AS x2
     WHERE x.database_id = x2.database_id
     AND   x.object_id = x2.object_id
     AND   x.transaction_id = x2.transaction_id
     AND   x.spid = x2.spid
     AND   x.ecid = x2.ecid
-    AND   x.clientapp = x2.client_app
-    AND   x.hostname = x2.host_name
-    AND   x.loginname = x2.login_name
+    /*
+    NULL-safe: parallel workers (ecid > 0) carry no loginname, so =
+    never matched them, and every later report of the same worker
+    was inserted again as a new row.
+    The staged names take the collation of this database, so they get
+    COLLATE DATABASE_DEFAULT: without it, an output database with a
+    different collation fails here with Msg 468.
+    */
+    AND   (x.clientapp COLLATE DATABASE_DEFAULT = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname COLLATE DATABASE_DEFAULT = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname COLLATE DATABASE_DEFAULT = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
 )
 AND x.x = 1;
 
+/*
+One row per episode with its largest wait, so a join that matched
+several reports no longer set wait_time from whichever came last.
+The same NULL-safe compare as the insert, and wait_time only grows.
+The blocked rows come from the staging table, so the reports are not
+parsed a second time.
+*/
 UPDATE x2
     SET
         x2.wait_time = x.waittime
@@ -11985,32 +12450,38 @@ FROM ' + @object_name_check + N' AS x2
 JOIN
 (
     SELECT
-        server_name = @@SERVERNAME,
-        activity = ''blocked'',
-        database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
-        object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
-        transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
-        spid = bd.value(''(process/@spid)[1]'', ''integer''),
-        ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
-        waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
-        clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
-        hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
-        loginname = bd.value(''(process/@loginname)[1]'', ''sysname'')
-    FROM #human_events_xml_internal AS xet
-    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
-    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+        b.database_id,
+        b.object_id,
+        b.transaction_id,
+        b.spid,
+        b.ecid,
+        b.clientapp,
+        b.hostname,
+        b.loginname,
+        waittime = MAX(b.waittime)
+    FROM #blocking_staging AS b
+    WHERE b.activity = N''blocked''
+    GROUP BY
+        b.database_id,
+        b.object_id,
+        b.transaction_id,
+        b.spid,
+        b.ecid,
+        b.clientapp,
+        b.hostname,
+        b.loginname
 ) AS x
     ON    x.database_id = x2.database_id
     AND   x.object_id = x2.object_id
     AND   x.transaction_id = x2.transaction_id
     AND   x.spid = x2.spid
     AND   x.ecid = x2.ecid
-    AND   x.clientapp = x2.client_app
-    AND   x.hostname = x2.host_name
-    AND   x.loginname = x2.login_name;
-'                                ))
+    AND   (x.clientapp COLLATE DATABASE_DEFAULT = x2.client_app OR (x.clientapp IS NULL AND x2.client_app IS NULL))
+    AND   (x.hostname COLLATE DATABASE_DEFAULT = x2.host_name OR (x.hostname IS NULL AND x2.host_name IS NULL))
+    AND   (x.loginname COLLATE DATABASE_DEFAULT = x2.login_name OR (x.loginname IS NULL AND x2.login_name IS NULL))
+WHERE x.waittime > x2.wait_time
+OR    (x.waittime IS NOT NULL AND x2.wait_time IS NULL);
+'                                )
                        WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]quer%' /*Queries!*/
                        THEN
                             CONVERT
@@ -12471,7 +12942,17 @@ BEGIN
                                           (-1 * @delete_retention_days),
                                           SYSDATETIME()
                                       ); ' + @nc10
-        FROM #human_events_worker AS hew;
+        FROM #human_events_worker AS hew
+        /* Only delete from a real table, never through a view or synonym that took the name */
+        WHERE OBJECT_ID
+              (
+                  QUOTENAME(hew.output_database) +
+                  N'.' +
+                  QUOTENAME(hew.output_schema) +
+                  N'.' +
+                  QUOTENAME(hew.event_type),
+                  N'U'
+              ) IS NOT NULL;
 
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
 
@@ -12848,8 +13329,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.11',
-    @version_date = '20261101';
+    @version = '5.12',
+    @version_date = '20261201';
 
 IF @help = 1
 BEGIN
@@ -14212,30 +14693,91 @@ BEGIN
 
     SELECT
         bx.event_time,
-        currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
-        spid = bd.value('(process/@spid)[1]', 'integer'),
-        ecid = bd.value('(process/@ecid)[1]', 'integer'),
+        currentdbname = pa.currentdbname,
+        spid = pa.spid,
+        ecid = pa.ecid,
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-        wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-        last_transaction_started = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-        last_transaction_completed = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-        wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-        status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bd.value('(process/@priority)[1]', 'integer'),
-        transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-        client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-        host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
-        login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
-        isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-        log_used = bd.value('(process/@logused)[1]', 'bigint'),
-        clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
+        wait_time = pa.wait_time,
+        last_transaction_started = pa.last_transaction_started,
+        last_transaction_completed = pa.last_transaction_completed,
+        wait_resource = pa.wait_resource,
+        status = pa.status,
+        priority = pa.priority,
+        transaction_count = pa.transaction_count,
+        client_app = pa.client_app,
+        host_name = pa.host_name,
+        login_name = pa.login_name,
+        isolation_level = pa.isolation_level,
+        log_used = pa.log_used,
+        clientoption1 = pa.clientoption1,
+        clientoption2 = pa.clientoption2,
         activity = 'blocked',
         blocked_process_report = bd.query('.')
     INTO #blocked_sh
     FROM #blocking_xml_sh AS bx
     OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocked-process') AS bd(bd)
-    WHERE bd.exist('process/@spid') = 1
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocked process attributes, PIVOTed by name.
+        system_health keeps several reports in one row, and each of the
+        17 separate value() calls read past every report before this one,
+        so the one pass saves time on this side too. The names compare in
+        Latin1_General_BIN2, so they stay case-sensitive the way the XPath
+        was.
+        */
+        SELECT
+            currentdbname = CONVERT(sysname, p.currentdbname),
+            spid = CONVERT(integer, p.spid),
+            ecid = CONVERT(integer, p.ecid),
+            wait_time = CONVERT(bigint, p.waittime),
+            last_transaction_started = CONVERT(datetime2, p.lastbatchstarted),
+            last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+            wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            transaction_count = CONVERT(integer, p.trancount),
+            client_app = CONVERT(nvarchar(256), p.clientapp),
+            host_name = CONVERT(nvarchar(256), p.hostname),
+            login_name = CONVERT(nvarchar(256), p.loginname),
+            isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+            log_used = CONVERT(bigint, p.logused),
+            clientoption1 = CONVERT(bigint, p.clientoption1),
+            clientoption2 = CONVERT(bigint, p.clientoption2)
+        FROM
+        (
+            SELECT
+                name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                value = pat.a.value('.', 'nvarchar(1024)')
+            FROM bd.bd.nodes('process[1]/@*') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                currentdbname,
+                spid,
+                ecid,
+                waittime,
+                lastbatchstarted,
+                lastbatchcompleted,
+                waitresource,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel,
+                logused,
+                clientoption1,
+                clientoption2
+            )
+        ) AS p
+    ) AS pa
+    /* the PIVOT above has read spid already, so no second pass with exist() */
+    WHERE pa.spid IS NOT NULL
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -14268,30 +14810,91 @@ BEGIN
     /*Blocking queries*/
     SELECT
         bx.event_time,
-        currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
-        spid = bg.value('(process/@spid)[1]', 'integer'),
-        ecid = bg.value('(process/@ecid)[1]', 'integer'),
+        currentdbname = pa.currentdbname,
+        spid = pa.spid,
+        ecid = pa.ecid,
         query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-        wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-        last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-        last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-        wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-        status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bg.value('(process/@priority)[1]', 'integer'),
-        transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-        client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-        host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
-        login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
-        isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-        log_used = bg.value('(process/@logused)[1]', 'bigint'),
-        clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
+        wait_time = pa.wait_time,
+        last_transaction_started = pa.last_transaction_started,
+        last_transaction_completed = pa.last_transaction_completed,
+        wait_resource = pa.wait_resource,
+        status = pa.status,
+        priority = pa.priority,
+        transaction_count = pa.transaction_count,
+        client_app = pa.client_app,
+        host_name = pa.host_name,
+        login_name = pa.login_name,
+        isolation_level = pa.isolation_level,
+        log_used = pa.log_used,
+        clientoption1 = pa.clientoption1,
+        clientoption2 = pa.clientoption2,
         activity = 'blocking',
         blocked_process_report = bg.query('.')
     INTO #blocking_sh
     FROM #blocking_xml_sh AS bx
     OUTER APPLY bx.human_events_xml.nodes('/blocked-process-report/blocking-process') AS bg(bg)
-    WHERE bg.exist('process/@spid') = 1
+    OUTER APPLY
+    (
+        /*
+        One pass over the blocking process attributes, PIVOTed by name.
+        blocking-process comes after the blocked process and its stack
+        frames, and each of the 17 separate value() calls read past all
+        of that again, so this is where the one pass saves time. The
+        names compare in Latin1_General_BIN2, so they stay case-sensitive
+        the way the XPath was.
+        */
+        SELECT
+            currentdbname = CONVERT(sysname, p.currentdbname),
+            spid = CONVERT(integer, p.spid),
+            ecid = CONVERT(integer, p.ecid),
+            wait_time = CONVERT(bigint, p.waittime),
+            last_transaction_started = CONVERT(datetime2, p.lastbatchstarted),
+            last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+            wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+            status = CONVERT(nvarchar(10), p.status),
+            priority = CONVERT(integer, p.priority),
+            transaction_count = CONVERT(integer, p.trancount),
+            client_app = CONVERT(nvarchar(256), p.clientapp),
+            host_name = CONVERT(nvarchar(256), p.hostname),
+            login_name = CONVERT(nvarchar(256), p.loginname),
+            isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+            log_used = CONVERT(bigint, p.logused),
+            clientoption1 = CONVERT(bigint, p.clientoption1),
+            clientoption2 = CONVERT(bigint, p.clientoption2)
+        FROM
+        (
+            SELECT
+                name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+                value = pat.a.value('.', 'nvarchar(1024)')
+            FROM bg.bg.nodes('process[1]/@*') AS pat(a)
+        ) AS a
+        PIVOT
+        (
+            MAX(a.value)
+            FOR a.name IN
+            (
+                currentdbname,
+                spid,
+                ecid,
+                waittime,
+                lastbatchstarted,
+                lastbatchcompleted,
+                waitresource,
+                status,
+                priority,
+                trancount,
+                clientapp,
+                hostname,
+                loginname,
+                isolationlevel,
+                logused,
+                clientoption1,
+                clientoption2
+            )
+        ) AS p
+    ) AS pa
+    /* the PIVOT above has read spid already, so no second pass with exist() */
+    WHERE pa.spid IS NOT NULL
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -14491,6 +15094,13 @@ BEGIN
         b.login_name,
         b.blocked_process_report
     FROM #blocks_sh AS b
+    /*
+    One system_health snapshot can list the same spid and ecid in
+    several reports, so the keys above tie. The rest of the row,
+    ending with the report itself, settles it: only rows that are
+    equal in every column keep an arbitrary order, and those look
+    the same.
+    */
     ORDER BY
         b.event_time DESC,
         CASE
@@ -14499,7 +15109,11 @@ BEGIN
             ELSE +1
         END,
         b.spid,
-        b.ecid
+        b.ecid,
+        b.wait_time_ms DESC,
+        b.status,
+        b.wait_resource,
+        CONVERT(nvarchar(max), b.blocked_process_report)
     OPTION(RECOMPILE);
 
     /*
@@ -14693,6 +15307,7 @@ BEGIN
             ap.*,
             c.statement_start_offset,
             c.statement_end_offset,
+            c.plan_handle,
             c.creation_time,
             c.last_execution_time,
             c.execution_count,
@@ -14736,8 +15351,18 @@ BEGIN
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
+    /*
+    Plans with the same average CPU tie, so the rest of the plan key
+    follows: the statement, its plan, and the report row it came from.
+    */
     ORDER BY
-        ap.avg_worker_time_ms DESC
+        ap.avg_worker_time_ms DESC,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset,
+        ap.plan_handle,
+        ap.currentdbname,
+        ap.query_text
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
     RETURN;
     /*End system health section, skips checks because most of them won't run*/
@@ -14867,13 +15492,13 @@ SELECT
     database_name =
         COALESCE
         (
-            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+            NULLIF(pd.database_name, N''),
+            DB_NAME(NULLIF(pd.database_id, 0))
         ),
-    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-    transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-    resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+    database_id = pd.database_id,
+    object_id = pd.object_id,
+    transaction_id = pd.transaction_id,
+    resource_owner_type = pd.resource_owner_type,
     /* ISNULL: a BPR with no monitorLoop attribute otherwise NULLs this,
        which fails the NOT NULL #session_leads inserts and turns every
        monitor_loop equality UNKNOWN, silently dropping the Top Lead
@@ -14882,27 +15507,27 @@ SELECT
     monitor_loop = ISNULL(c.value('(//@monitorLoop)[1]', 'integer'), 0),
     blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
     blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
-    blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
-    blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
+    blocked_spid = pa.blocked_spid,
+    blocked_ecid = pa.blocked_ecid,
     query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-    wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-    transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
-    last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
-    last_transaction_completed = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-    wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-    lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-    status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-    priority = bd.value('(process/@priority)[1]', 'integer'),
-    transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-    client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-    host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
-    login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
-    isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-    log_used = bd.value('(process/@logused)[1]', 'bigint'),
-    clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-    clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
-    currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
-    currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
+    wait_time = pa.wait_time,
+    transaction_name = pa.transaction_name,
+    last_transaction_started = pa.last_transaction_started,
+    last_transaction_completed = pa.last_transaction_completed,
+    wait_resource = pa.wait_resource,
+    lock_mode = pa.lock_mode,
+    status = pa.status,
+    priority = pa.priority,
+    transaction_count = pa.transaction_count,
+    client_app = pa.client_app,
+    host_name = pa.host_name,
+    login_name = pa.login_name,
+    isolation_level = pa.isolation_level,
+    log_used = pa.log_used,
+    clientoption1 = pa.clientoption1,
+    clientoption2 = pa.clientoption2,
+    currentdbname = pa.currentdbname,
+    currentdbid = pa.currentdbid,
     blocking_level = 0,
     sort_order = CONVERT(varchar(400), ''),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
@@ -14918,7 +15543,111 @@ multiple simultaneous blockers, which is a safe 1xN fan-out, not a cross product
 */
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+OUTER APPLY
+(
+    /*
+    One pass over the data elements of the event, PIVOTed by name. Each
+    data[@name=...] lookup read all of them again and sorted the
+    matches. blocked_process is left out: it is the report itself.
+    */
+    SELECT
+        database_name = CONVERT(sysname, p.database_name),
+        database_id = CONVERT(integer, p.database_id),
+        object_id = CONVERT(integer, p.object_id),
+        transaction_id = CONVERT(bigint, p.transaction_id),
+        resource_owner_type = CONVERT(nvarchar(256), p.resource_owner_type)
+    FROM
+    (
+        SELECT
+            name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+            value =
+                CASE
+                    WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                    THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                    ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                END
+        FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+    ) AS a
+    PIVOT
+    (
+        MAX(a.value)
+        FOR a.name IN
+        (
+            database_name,
+            database_id,
+            object_id,
+            transaction_id,
+            resource_owner_type
+        )
+    ) AS p
+) AS pd
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+OUTER APPLY
+(
+    /*
+    One pass over the blocked process attributes, PIVOTed by name.
+    It measures about the same as the 20 separate value() calls it
+    replaced: these attributes open the report, so each call was
+    cheap. It stays a PIVOT so the blocked and blocking statements
+    read the same way. The names compare in Latin1_General_BIN2, so
+    they stay case-sensitive the way the XPath was.
+    */
+    SELECT
+        blocked_spid = CONVERT(integer, p.spid),
+        blocked_ecid = CONVERT(integer, p.ecid),
+        wait_time = CONVERT(bigint, p.waittime),
+        transaction_name = CONVERT(nvarchar(1024), p.transactionname),
+        last_transaction_started = CONVERT(datetime2, p.lasttranstarted),
+        last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+        wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+        lock_mode = CONVERT(nvarchar(10), p.lockMode),
+        status = CONVERT(nvarchar(10), p.status),
+        priority = CONVERT(integer, p.priority),
+        transaction_count = CONVERT(integer, p.trancount),
+        client_app = CONVERT(nvarchar(256), p.clientapp),
+        host_name = CONVERT(nvarchar(256), p.hostname),
+        login_name = CONVERT(nvarchar(256), p.loginname),
+        isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+        log_used = CONVERT(bigint, p.logused),
+        clientoption1 = CONVERT(bigint, p.clientoption1),
+        clientoption2 = CONVERT(bigint, p.clientoption2),
+        currentdbname = CONVERT(sysname, p.currentdbname),
+        currentdbid = CONVERT(integer, p.currentdb)
+    FROM
+    (
+        SELECT
+            name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+            value = pat.a.value('.', 'nvarchar(1024)')
+        FROM bd.bd.nodes('process[1]/@*') AS pat(a)
+    ) AS a
+    PIVOT
+    (
+        MAX(a.value)
+        FOR a.name IN
+        (
+            spid,
+            ecid,
+            waittime,
+            transactionname,
+            lasttranstarted,
+            lastbatchcompleted,
+            waitresource,
+            lockMode,
+            status,
+            priority,
+            trancount,
+            clientapp,
+            hostname,
+            loginname,
+            isolationlevel,
+            logused,
+            clientoption1,
+            clientoption2,
+            currentdbname,
+            currentdb
+        )
+    ) AS p
+) AS pa
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
 
@@ -15013,42 +15742,42 @@ SELECT
     database_name =
         COALESCE
         (
-            NULLIF(c.value('(data[@name="database_name"]/value/text())[1]', 'sysname'), N''),
-            DB_NAME(NULLIF(c.value('(data[@name="database_id"]/value/text())[1]', 'integer'), 0))
+            NULLIF(pd.database_name, N''),
+            DB_NAME(NULLIF(pd.database_id, 0))
         ),
-    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
-    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
-    transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-    resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+    database_id = pd.database_id,
+    object_id = pd.object_id,
+    transaction_id = pd.transaction_id,
+    resource_owner_type = pd.resource_owner_type,
     /* ISNULL: a BPR with no monitorLoop attribute otherwise NULLs this,
        which fails the NOT NULL #session_leads inserts and turns every
        monitor_loop equality UNKNOWN, silently dropping the Top Lead
        Blocker rollup. Real loop counters are large positive numbers,
        so 0 cannot collide. */
     monitor_loop = ISNULL(c.value('(//@monitorLoop)[1]', 'integer'), 0),
-    blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
-    blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+    blocking_spid = pa.blocking_spid,
+    blocking_ecid = pa.blocking_ecid,
     blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
     blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
     query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
-    wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-    transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
-    last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-    last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-    wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
-    lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
-    status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-    priority = bg.value('(process/@priority)[1]', 'integer'),
-    transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-    client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-    host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
-    login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
-    isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-    log_used = bg.value('(process/@logused)[1]', 'bigint'),
-    clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-    clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
-    currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
-    currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
+    wait_time = pa.wait_time,
+    transaction_name = pa.transaction_name,
+    last_transaction_started = pa.last_transaction_started,
+    last_transaction_completed = pa.last_transaction_completed,
+    wait_resource = pa.wait_resource,
+    lock_mode = pa.lock_mode,
+    status = pa.status,
+    priority = pa.priority,
+    transaction_count = pa.transaction_count,
+    client_app = pa.client_app,
+    host_name = pa.host_name,
+    login_name = pa.login_name,
+    isolation_level = pa.isolation_level,
+    log_used = pa.log_used,
+    clientoption1 = pa.clientoption1,
+    clientoption2 = pa.clientoption2,
+    currentdbname = pa.currentdbname,
+    currentdbid = pa.currentdbid,
     blocking_level = 0,
     sort_order = CONVERT(varchar(400), ''),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
@@ -15064,8 +15793,112 @@ multiple simultaneous blockers, which is a safe 1xN fan-out, not a cross product
 */
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+OUTER APPLY
+(
+    /*
+    One pass over the data elements of the event, PIVOTed by name. Each
+    data[@name=...] lookup read all of them again and sorted the
+    matches. blocked_process is left out: it is the report itself.
+    */
+    SELECT
+        database_name = CONVERT(sysname, p.database_name),
+        database_id = CONVERT(integer, p.database_id),
+        object_id = CONVERT(integer, p.object_id),
+        transaction_id = CONVERT(bigint, p.transaction_id),
+        resource_owner_type = CONVERT(nvarchar(256), p.resource_owner_type)
+    FROM
+    (
+        SELECT
+            name = d.d.value('@name', 'sysname') COLLATE Latin1_General_BIN2,
+            value =
+                CASE
+                    WHEN d.d.value('@name', 'sysname') IN (N'resource_owner_type')
+                    THEN d.d.value('(text)[1]', 'nvarchar(256)')
+                    ELSE d.d.value('(value/text())[1]', 'nvarchar(256)')
+                END
+        FROM oa.c.nodes('data[@name != "blocked_process"]') AS d(d)
+    ) AS a
+    PIVOT
+    (
+        MAX(a.value)
+        FOR a.name IN
+        (
+            database_name,
+            database_id,
+            object_id,
+            transaction_id,
+            resource_owner_type
+        )
+    ) AS p
+) AS pd
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+OUTER APPLY
+(
+    /*
+    One pass over the blocking process attributes, PIVOTed by name.
+    blocking-process comes after the blocked process and its stack
+    frames, and each of the 20 separate value() calls read past all
+    of that again, so this is where the one pass saves time. The
+    names compare in Latin1_General_BIN2, so they stay case-sensitive
+    the way the XPath was.
+    */
+    SELECT
+        blocking_spid = CONVERT(integer, p.spid),
+        blocking_ecid = CONVERT(integer, p.ecid),
+        wait_time = CONVERT(bigint, p.waittime),
+        transaction_name = CONVERT(nvarchar(1024), p.transactionname),
+        last_transaction_started = CONVERT(datetime2, p.lastbatchstarted),
+        last_transaction_completed = CONVERT(datetime2, p.lastbatchcompleted),
+        wait_resource = CONVERT(nvarchar(1024), p.waitresource),
+        lock_mode = CONVERT(nvarchar(10), p.lockMode),
+        status = CONVERT(nvarchar(10), p.status),
+        priority = CONVERT(integer, p.priority),
+        transaction_count = CONVERT(integer, p.trancount),
+        client_app = CONVERT(nvarchar(256), p.clientapp),
+        host_name = CONVERT(nvarchar(256), p.hostname),
+        login_name = CONVERT(nvarchar(256), p.loginname),
+        isolation_level = CONVERT(nvarchar(50), p.isolationlevel),
+        log_used = CONVERT(bigint, p.logused),
+        clientoption1 = CONVERT(bigint, p.clientoption1),
+        clientoption2 = CONVERT(bigint, p.clientoption2),
+        currentdbname = CONVERT(sysname, p.currentdbname),
+        currentdbid = CONVERT(integer, p.currentdb)
+    FROM
+    (
+        SELECT
+            name = pat.a.value('local-name(.)', 'sysname') COLLATE Latin1_General_BIN2,
+            value = pat.a.value('.', 'nvarchar(1024)')
+        FROM bg.bg.nodes('process[1]/@*') AS pat(a)
+    ) AS a
+    PIVOT
+    (
+        MAX(a.value)
+        FOR a.name IN
+        (
+            spid,
+            ecid,
+            waittime,
+            transactionname,
+            lastbatchstarted,
+            lastbatchcompleted,
+            waitresource,
+            lockMode,
+            status,
+            priority,
+            trancount,
+            clientapp,
+            hostname,
+            loginname,
+            isolationlevel,
+            logused,
+            clientoption1,
+            clientoption2,
+            currentdbname,
+            currentdb
+        )
+    ) AS p
+) AS pa
 OPTION(RECOMPILE);
 
 IF @debug = 1
@@ -15870,7 +16703,8 @@ ORDER BY
         ELSE +1
     END,
     b.spid,
-    b.ecid
+    b.ecid,
+    b.transaction_id /*with n = 1 above, unique per row*/
 OPTION(RECOMPILE);';
 
 /* Handle table logging */
@@ -16163,6 +16997,7 @@ BEGIN
             ap.*,
             c.statement_start_offset,
             c.statement_end_offset,
+            c.plan_handle,
             c.creation_time,
             c.last_execution_time,
             c.execution_count,
@@ -16207,8 +17042,22 @@ BEGIN
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
+    /*
+    Plans with the same average CPU tie, so the rest of the plan key
+    follows: the statement, its plan, and the report row it came from.
+    */
     ORDER BY
-        ap.avg_worker_time_ms DESC
+        ap.avg_worker_time_ms DESC,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset,
+        ap.plan_handle,
+        ap.database_name,
+        ap.database_id,
+        ap.currentdbname,
+        ap.currentdbid,
+        ap.contentious_object,
+        ap.query_text
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 
     BlockingRollup:
@@ -17820,8 +18669,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.11',
-        @version_date = '20261101';
+        @version = '2.12',
+        @version_date = '20261201';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -17916,7 +18765,7 @@ BEGIN TRY
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
                     WHEN N'@dedupe_only' THEN 'only perform index deduplication, do not mark unused indexes for removal'
-                    WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
+                    WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases. Not supported on Azure SQL Database: it raises an error, so pass @database_name instead'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
                     WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together (Key Subset disables sort under their replacement index)'
@@ -27683,8 +28532,8 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '3.11',
-        @version_date = '20261101';
+        @version = '3.12',
+        @version_date = '20261201';
 
     IF @help = 1
     BEGIN
@@ -27704,7 +28553,7 @@ BEGIN
                      WHEN N'@days_back' THEN 'how many days back you want to search the logs'
                      WHEN N'@start_date' THEN 'if you want to search a specific time frame'
                      WHEN N'@end_date' THEN 'if you want to search a specific time frame'
-                     WHEN N'@custom_message' THEN 'if you want to search for a custom string'
+                     WHEN N'@custom_message' THEN 'if you want to search for a custom string. the built-in noise filter never removes the lines it finds'
                      WHEN N'@custom_message_only' THEN 'only search for the custom string'
                      WHEN N'@first_log_only' THEN 'only search through the first error log'
                      WHEN N'@language_id' THEN 'does not translate the search strings; they are English literals. Use @custom_message on non-English servers'
@@ -27975,6 +28824,8 @@ BEGIN
     /*variables for the variable gods*/
     DECLARE
         @c nvarchar(4000) /*holds the command to execute*/,
+        @is_custom bit = 0 /*1 when the current command is the @custom_message search*/,
+        @last_id integer = 0 /*highest #error_log id before the current search ran*/,
         @l_log integer = 0 /*low log file id*/,
         @h_log integer = 0 /*high log file id*/,
         @t_searches bigint = 0 /*total number of searches to run*/,
@@ -27990,9 +28841,22 @@ BEGIN
     CREATE TABLE
         #error_log
     (
+        /*
+        id lets the loop below find the rows one search just added: an
+        INSERT ... EXECUTE cannot add a constant column of its own.
+        */
+        id integer
+           IDENTITY
+           PRIMARY KEY CLUSTERED,
         log_date datetime,
         process_info nvarchar(100),
-        text nvarchar(4000)
+        text nvarchar(4000),
+        /*
+        1 for a row found by the caller's @custom_message search. The
+        noise filter below skips these: the caller asked for that text by
+        name, so a built-in "dumb message" pattern must not hide it.
+        */
+        is_custom bit NOT NULL DEFAULT 0
     );
 
     CREATE TABLE
@@ -28054,6 +28918,8 @@ BEGIN
             DEFAULT N'N''' + CONVERT(nvarchar(10), DATEADD(DAY, 1, SYSDATETIME()), 112) + N'''',
         search_order nvarchar(10)
             DEFAULT N'N''DESC''',
+        /*1 for the @custom_message search, 0 for the canned searches*/
+        is_custom bit NOT NULL DEFAULT 0,
         command AS
             CONVERT
             (
@@ -28329,13 +29195,15 @@ BEGIN
         search_string,
         days_back,
         start_date,
-        end_date
+        end_date,
+        is_custom
     )
     SELECT
         x.search_string,
         x.days_back,
         x.start_date,
-        x.end_date
+        x.end_date,
+        is_custom = 1
     FROM
     (
         VALUES
@@ -28398,8 +29266,9 @@ BEGIN
             READ_ONLY
         FOR
         SELECT
-            command
-        FROM #search;
+            s.command,
+            s.is_custom
+        FROM #search AS s;
 
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
 
@@ -28407,7 +29276,7 @@ BEGIN
 
         FETCH FIRST
         FROM @cs
-        INTO @c;
+        INTO @c, @is_custom;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
         WHILE @@FETCH_STATUS = 0
@@ -28447,6 +29316,14 @@ BEGIN
             IF @debug = 1 BEGIN RAISERROR('Inserting to error log', 0, 1) WITH NOWAIT; END;
             BEGIN
                 BEGIN TRY
+                    /*Note where #error_log ends, so a custom search can tag the rows it adds*/
+                    IF @is_custom = 1
+                    BEGIN
+                        SELECT
+                            @last_id = ISNULL(MAX(el.id), 0)
+                        FROM #error_log AS el;
+                    END;
+
                     /*Insert any log entries we find that match the search*/
                     INSERT
                         #error_log
@@ -28457,6 +29334,17 @@ BEGIN
                     )
                     EXECUTE sys.sp_executesql
                         @c;
+
+                    /*Tag the rows the custom search found, so the noise filter below leaves them alone*/
+                    IF @is_custom = 1
+                    BEGIN
+                        UPDATE
+                            el
+                        SET
+                            el.is_custom = 1
+                        FROM #error_log AS el
+                        WHERE el.id > @last_id;
+                    END;
                 END TRY
                 BEGIN CATCH
                     /*Insert any searches that throw an error here, and why they failed*/
@@ -28479,7 +29367,7 @@ BEGIN
             /*Get the next search command*/
             FETCH NEXT
             FROM @cs
-            INTO @c;
+            INTO @c, @is_custom;
 
             /*Increment our loop counter*/
             SELECT
@@ -28512,40 +29400,50 @@ BEGIN
     END;
     IF @debug = 1 BEGIN RAISERROR('Ended cursor', 0, 1) WITH NOWAIT; END;
 
-    /*get rid of some messages we don't care about*/
+    /*
+    get rid of some messages we don't care about.
+
+    Only rows the canned searches found are eligible. A row the caller's
+    @custom_message search found stays, even when it matches a pattern below:
+    searching for 'Login failed' must return the login failures, not nothing.
+    */
     IF @debug = 1 BEGIN RAISERROR('Delete dumb messages', 0, 1) WITH NOWAIT; END;
 
     DELETE
         el WITH(TABLOCKX)
     FROM #error_log AS el
-    WHERE el.text LIKE N'DBCC TRACEON 3604%'
-    OR    el.text LIKE N'DBCC TRACEOFF 3604%'
-    OR    el.text LIKE N'This instance of SQL Server has been using a process ID of%'
-    OR    el.text LIKE N'Could not connect because the maximum number of ''1'' dedicated administrator connections already exists%'
-    OR    el.text LIKE N'Login failed%'
-    OR    el.text LIKE N'Backup(%'
-    OR    el.text LIKE N'[[]INFO]%'
-    OR    el.text LIKE N'[[]DISK_SPACE_TO_RESERVE_PROPERTY]%'
-    OR    el.text LIKE N'[[]CFabricCommonUtils::GetFabricPropertyInternalWithRef]%'
-    OR    el.text LIKE N'CHECKDB for database % finished without errors%'
-    OR    el.text LIKE N'Parallel redo is shutdown for database%'
-    OR    el.text LIKE N'%This is an informational message only. No user action is required.%'
-    OR    el.text LIKE N'%SPN%'
-    OR    el.text LIKE N'Service Broker manager has started.%'
-    OR    el.text LIKE N'Parallel redo is started for database%'
-    OR    el.text LIKE N'Starting up database%'
-    OR    el.text LIKE N'Buffer pool extension is already disabled%'
-    OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
-    OR    el.text LIKE N'The client was unable to reuse a session with%'
-    OR    el.text LIKE N'SSPI%'
-    OR    el.text LIKE N'%Severity: 1[0-8]%'
-    OR    el.text LIKE N'Login succeeded for user%'
-    OR    el.text LIKE N'%query notification%'
-    OR    el.text IN
-          (
-              N'The Database Mirroring endpoint is in disabled or stopped state.',
-              N'The Service Broker endpoint is in disabled or stopped state.'
-          )
+    WHERE el.is_custom = 0
+    AND
+    (
+        el.text LIKE N'DBCC TRACEON 3604%'
+        OR    el.text LIKE N'DBCC TRACEOFF 3604%'
+        OR    el.text LIKE N'This instance of SQL Server has been using a process ID of%'
+        OR    el.text LIKE N'Could not connect because the maximum number of ''1'' dedicated administrator connections already exists%'
+        OR    el.text LIKE N'Login failed%'
+        OR    el.text LIKE N'Backup(%'
+        OR    el.text LIKE N'[[]INFO]%'
+        OR    el.text LIKE N'[[]DISK_SPACE_TO_RESERVE_PROPERTY]%'
+        OR    el.text LIKE N'[[]CFabricCommonUtils::GetFabricPropertyInternalWithRef]%'
+        OR    el.text LIKE N'CHECKDB for database % finished without errors%'
+        OR    el.text LIKE N'Parallel redo is shutdown for database%'
+        OR    el.text LIKE N'%This is an informational message only. No user action is required.%'
+        OR    el.text LIKE N'%Service Principal Name (SPN)%'
+        OR    el.text LIKE N'Service Broker manager has started.%'
+        OR    el.text LIKE N'Parallel redo is started for database%'
+        OR    el.text LIKE N'Starting up database%'
+        OR    el.text LIKE N'Buffer pool extension is already disabled%'
+        OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
+        OR    el.text LIKE N'The client was unable to reuse a session with%'
+        OR    el.text LIKE N'SSPI%'
+        OR    el.text LIKE N'%Severity: 1[0-8]%'
+        OR    el.text LIKE N'Login succeeded for user%'
+        OR    el.text LIKE N'%query notification%'
+        OR    el.text IN
+              (
+                  N'The Database Mirroring endpoint is in disabled or stopped state.',
+                  N'The Service Broker endpoint is in disabled or stopped state.'
+              )
+    )
     OPTION(RECOMPILE);
 
     /*get rid of duplicate messages we don't care about*/
@@ -28577,7 +29475,9 @@ BEGIN
     SELECT
         table_name =
             '#error_log',
-        el.*
+        el.log_date,
+        el.process_info,
+        el.text
     FROM #error_log AS el
     ORDER BY
         el.log_date DESC
@@ -28687,8 +29587,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.11',
-        @version_date = N'20261101';
+        @version = N'2.12',
+        @version_date = N'20261201';
 
     /*
     Help section, for help.
@@ -34203,8 +35103,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.11',
-    @version_date = '20261101';
+    @version = '6.12',
+    @version_date = '20261201';
 
 
 IF @help = 1
@@ -38171,13 +39071,28 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
         IF @log_to_table = 1
         BEGIN
-            /* Get the maximum sample_time from the CPU events table */
+            /*
+            Get the cutoff for new samples from the CPU events table: the
+            newest logged sample_time plus a 2 second margin.
+
+            sample_time is the run's SYSDATETIME() plus a whole-second offset
+            from the ring buffer, so the same ring buffer record gets a time
+            that differs by up to a second from one run to the next. Without
+            the margin, the newest record looks newer than the logged copy of
+            itself and is logged again on every run. Ring buffer records are
+            about 60 seconds apart, so the margin never hides a new record.
+            */
             SET @insert_sql = N'
                 SELECT
                     @max_sample_time_out =
                         ISNULL
                         (
-                            MAX(sample_time),
+                            DATEADD
+                            (
+                                SECOND,
+                                2,
+                                MAX(sample_time)
+                            ),
                             ''19000101''
                         )
                 FROM ' + @log_table_cpu_events + N'
@@ -39403,8 +40318,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.11',
-    @version_date = '20261101';
+    @version = '1.12',
+    @version_date = '20261201';
 
 /*Help*/
 IF @help = 1
@@ -39486,7 +40401,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'NULL; current database name if NULL'
-                WHEN N'@start_date' THEN 'the last seven days'
+                WHEN N'@start_date' THEN 'the last seven days, or the seven days before @end_date if you set only @end_date'
                 WHEN N'@end_date' THEN 'NULL'
                 WHEN N'@include_plan_ids' THEN 'NULL'
                 WHEN N'@include_query_ids' THEN 'NULL'
@@ -39810,6 +40725,30 @@ BEGIN
         RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 10, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
+END;
+
+/*
+With only @end_date given, search the seven days before it, the same
+length as the default window, as in sp_QuickieStore. Leaving @start_date
+at its default put it after an older @end_date, and the window was then
+quietly moved to seven days after the default start. @start_date keeps
+the offset of @end_date, so both are read the same way in the UTC
+conversion below.
+*/
+IF
+(
+    @start_date IS NULL
+AND @end_date IS NOT NULL
+)
+BEGIN
+    SELECT
+        @start_date =
+            DATEADD
+            (
+                DAY,
+                -7,
+                @end_date
+            );
 END;
 
 /*
@@ -42914,13 +43853,21 @@ FROM
 (
     SELECT
         qsrs.*,
+        /*
+        Last values come from the row with the latest last_execution_time,
+        whatever its execution type, so an aborted or timed out run does
+        not hide a newer regular run. The windows are not partitioned by
+        execution type, and a tie on last_execution_time goes to the later
+        interval. Every row of a plan carries the same value, so the MAX in
+        the select list only picks it up.
+        */
         partitioned_last_execution_time =
             LAST_VALUE(qsrs.last_execution_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42928,9 +43875,9 @@ FROM
             LAST_VALUE(qsrs.last_duration) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42938,9 +43885,9 @@ FROM
             LAST_VALUE(qsrs.last_cpu_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42948,9 +43895,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42958,9 +43905,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_writes) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42968,9 +43915,9 @@ FROM
             LAST_VALUE(qsrs.last_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42978,9 +43925,9 @@ FROM
             LAST_VALUE(qsrs.last_clr_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42988,9 +43935,9 @@ FROM
             LAST_VALUE(qsrs.last_dop) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -42998,9 +43945,9 @@ FROM
             LAST_VALUE(qsrs.last_query_max_used_memory) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -43008,9 +43955,9 @@ FROM
             LAST_VALUE(qsrs.last_rowcount) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),';
@@ -43023,9 +43970,9 @@ BEGIN
             LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -43033,9 +43980,9 @@ BEGIN
             LAST_VALUE(qsrs.last_log_bytes_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -43043,9 +43990,9 @@ BEGIN
             LAST_VALUE(qsrs.last_tempdb_space_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type
+                    qsrs.plan_id
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )';
@@ -44041,14 +44988,19 @@ FROM
 (
     SELECT
         qsws.*,
+        /*
+        The last value comes from the row whose runtime stats row has the
+        latest last_execution_time, whatever its execution type, as for
+        the runtime stats above. A tie goes to the later interval.
+        */
         partitioned_last_query_wait_time_ms =
             LAST_VALUE(qsws.last_query_wait_time_ms) OVER
             (
                 PARTITION BY
                     qsws.plan_id,
-                    qsws.execution_type,
                     qsws.wait_category_desc
                 ORDER BY
+                    qsws.runtime_last_execution_time ASC,
                     qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
@@ -44068,9 +45020,26 @@ FROM
         category past the fifth. Query Store keeps a small, fixed set of
         wait categories, so pulling all of them does not blow up the
         row count.
-        */
+        */';
+
+    /*
+    A separate statement, not + inside the literal above: the pieces of one
+    expression are each shorter than 4000 characters, so their sum would be
+    cut to nvarchar(4000) before it ever reached @sql.
+    */
+    SELECT
+        @sql += N'
         SELECT
-            qsws.*
+            qsws.*,
+            runtime_last_execution_time =
+                (
+                    SELECT
+                        MAX(qsrs_last.last_execution_time)
+                    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs_last
+                    WHERE qsrs_last.plan_id = qsws.plan_id
+                    AND   qsrs_last.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+                    AND   qsrs_last.execution_type = qsws.execution_type
+                )
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
         WHERE qsws.plan_id = qsrs_plans.plan_id
         AND   qsws.wait_category > 0
@@ -44673,6 +45642,25 @@ SELECT
         LTRIM(RTRIM(ps.param_data_type)),
     parameter_compiled_value =
         CASE
+            /*
+            CLR types (geography, geometry, hierarchyid, and any other
+            schema-qualified type) and sql_variant: the plan writes the bare
+            text of the value, such as POINT (1 1), /1/2/ or Jan  5 2026 10:00AM.
+            Pasted into the value list of sp_executesql that is a syntax
+            error, or for sql_variant a number where a string was, so the
+            value goes in as an N'...' string with its quotes doubled.
+            The engine parses the string into the type. This comes first so a
+            value with parentheses is not taken apart below. A NULL stays NULL.
+            */
+            WHEN ps.param_compiled_value COLLATE Latin1_General_100_BIN2 <> N'NULL'
+            AND
+            (
+                 ps.param_data_type LIKE N'%.%'
+              OR ps.param_data_type = N'sql_variant'
+            )
+            THEN N'N''' +
+                 REPLACE(ps.param_compiled_value, N'''', N'''''') +
+                 N''''
             /*Strip parentheses from values like (13)*/
             WHEN ps.param_compiled_value LIKE N'(%)'
             THEN SUBSTRING
@@ -45206,6 +46194,65 @@ AND qp.parameter_compiled_value LIKE N'0x%'
 AND t.type_length > 127
 AND DATALENGTH(qp.parameter_compiled_value) / 2 = 256
 )
+OPTION(RECOMPILE);
+
+/*
+Warn when a quoted value lost something the plan does not keep.
+
+A geography or geometry value is written as text with no SRID, so the repro
+binds it with the type default (4326 for geography, 0 for geometry). A
+sql_variant value is written with no base type, so the repro binds it as
+nvarchar: an int or a datetime in a sql_variant column or compare behaves
+differently from the same text. Only values that were quoted are named; a
+NULL, or a ? for a missing value, binds as is.
+*/
+SELECT
+    @current_table = N'checking for spatial and sql_variant parameter values';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'spatial parameter SRID',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is a ' +
+        qp.parameter_data_type +
+        N' value, and the plan does not record its SRID. The repro binds it with the type default ' +
+        N'(4326 for geography, 0 for geometry). If the original used another, set the SRID by hand.'
+FROM #query_parameters AS qp
+WHERE qp.parameter_data_type IN (N'sys.geography', N'sys.geometry')
+AND   qp.parameter_compiled_value LIKE N'N''%'
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'sql_variant parameter',
+    warning_message =
+        N'The value of ' +
+        qp.parameter_name +
+        N' is a sql_variant value, and the plan does not record the base type of the value. ' +
+        N'The repro binds it as nvarchar. If the original was another type, such as int or datetime, change it by hand.'
+FROM #query_parameters AS qp
+WHERE qp.parameter_data_type = N'sql_variant'
+AND   qp.parameter_compiled_value LIKE N'N''%'
 OPTION(RECOMPILE);
 
 /*
@@ -46757,8 +47804,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.11',
-        @version_date = '20261101';
+        @version = '1.12',
+        @version_date = '20261201';
 
     /*
     ╔══════════════════════════════════════════════════╗
@@ -46806,9 +47853,9 @@ BEGIN
                     WHEN N'@impact_threshold'
                     THEN N'minimum impact_score to surface in results'
                     WHEN N'@find_single_use_plans'
-                    THEN N'show single-use plans consuming the most memory'
+                    THEN N'show single-use plans consuming the most memory (with @find_duplicate_plans = 1 as well, both lists return)'
                     WHEN N'@find_duplicate_plans'
-                    THEN N'show query hashes with multiple cached plans'
+                    THEN N'show query hashes with multiple cached plans (with @find_single_use_plans = 1 as well, both lists return)'
                     WHEN N'@debug'
                     THEN N'print diagnostic information'
                     WHEN N'@help'
@@ -47273,7 +48320,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             sup.size_in_bytes DESC
         OPTION(RECOMPILE, MAXDOP 1);
 
-        RETURN;
+        /*
+        With @find_duplicate_plans = 1 as well, fall through so the
+        duplicate plans list returns after this one; this used to RETURN
+        here and the second list never ran, with no message.
+        */
+        IF @find_duplicate_plans = 0
+        BEGIN
+            RETURN;
+        END;
     END;
 
     /*
@@ -49938,7 +50993,7 @@ ALTER PROCEDURE
     @end_date datetimeoffset(7) = NULL, /*the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally*/
     @timezone sysname = NULL, /*user specified time zone to override dates displayed in results*/
     @execution_count bigint = NULL, /*the minimum number of executions a query must have*/
-    @duration_ms bigint = NULL, /*the minimum duration a query must have to show up in results*/
+    @duration_ms bigint = NULL, /*a plan shows up if one of its intervals averaged this many ms or more. The results count all of its intervals in the time period*/
     @execution_type_desc nvarchar(60) = NULL, /*the type of execution you want to filter by (regular, aborted, exception, failed); failed bundles aborted and exception*/
     @procedure_schema sysname = NULL, /*the schema of the procedure you're searching for*/
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
@@ -49966,7 +51021,7 @@ ALTER PROCEDURE
     @expert_mode bit = 0, /*returns additional columns and results*/
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas and most decimals rounded away*/
-    @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them*/
+    @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access, or cannot read Query Store in, are skipped*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
@@ -49981,6 +51036,7 @@ ALTER PROCEDURE
     @find_high_impact bit = 0, /*finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions*/
     @primary_window nvarchar(20) = NULL, /*with @find_high_impact, restricts results to queries whose majority activity is in this window: business, off-hours, or weekend*/
     @find_parameter_sensitive bit = 0, /*finds plan shapes whose runtime metrics swing wildly across executions of the same plan: classic parameter sensitivity*/
+    @plan_parsing bit = 0, /*shreds each plan once and returns an extra result set of plan findings (eager index spools, missing indexes, non-SARGable predicates, etc.)*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -50005,8 +51061,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.11',
-    @version_date = '20261101';
+    @version = '6.12',
+    @version_date = '20261201';
 
 /*
 Helpful section! For help.
@@ -50021,7 +51077,7 @@ BEGIN
            'hi, i''m sp_QuickieStore!' UNION ALL
     SELECT 'you got me from https://code.erikdarling.com' UNION ALL
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
-    SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
+    SELECT 'the plan analysis is mostly up to you; XML shredding only happens when you set @plan_parsing = 1' UNION ALL
     SELECT 'so what can you do, and how do you do it? read below!' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
@@ -50042,7 +51098,7 @@ BEGIN
                 WHEN N'@end_date' THEN 'the end date of your search; no offset (or +00:00) means server local time, any other offset is used as given; converted to UTC internally'
                 WHEN N'@timezone' THEN 'user specified time zone to override dates displayed in results'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
-                WHEN N'@duration_ms' THEN 'the minimum duration a query must have to show up in results'
+                WHEN N'@duration_ms' THEN 'a plan shows up if one of its intervals averaged this many ms or more. The results count all of its intervals in the time period'
                 WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter by (regular, aborted, exception, failed); failed bundles aborted and exception'
                 WHEN N'@procedure_schema' THEN 'the schema of the procedure you''re searching for'
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
@@ -50070,7 +51126,7 @@ BEGIN
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas and most decimals rounded away'
-                WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them'
+                WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them. Databases the login cannot access, or cannot read Query Store in, are skipped'
                 WHEN N'@include_databases' THEN 'comma-separated list of databases to include (only when @get_all_databases = 1)'
                 WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude (only when @get_all_databases = 1)'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
@@ -50085,6 +51141,7 @@ BEGIN
                 WHEN N'@find_high_impact' THEN N'finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions'
                 WHEN N'@primary_window' THEN N'with @find_high_impact, restricts results to queries whose majority activity is in this window (business, off-hours, or weekend)'
                 WHEN N'@find_parameter_sensitive' THEN N'finds plan shapes whose runtime metrics swing wildly across executions of the same plan: classic parameter sensitivity'
+                WHEN N'@plan_parsing' THEN N'shreds each plan once and returns an extra result set of plan findings (eager index spools, missing indexes, non-SARGable predicates, etc.)'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
@@ -50149,6 +51206,7 @@ BEGIN
                 WHEN N'@find_high_impact' THEN N'0 or 1'
                 WHEN N'@primary_window' THEN N'business, off-hours, or weekend (any unambiguous prefix works: b, biz, off, overnight, w, wknd, etc.)'
                 WHEN N'@find_parameter_sensitive' THEN N'0 or 1'
+                WHEN N'@plan_parsing' THEN N'0 or 1'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
@@ -50166,7 +51224,7 @@ BEGIN
                 WHEN N'@database_name' THEN 'NULL; current database name if NULL'
                 WHEN N'@sort_order' THEN 'cpu'
                 WHEN N'@top' THEN '10'
-                WHEN N'@start_date' THEN 'the last seven days'
+                WHEN N'@start_date' THEN 'the last seven days, or the seven days before @end_date if you set only @end_date'
                 WHEN N'@end_date' THEN 'NULL'
                 WHEN N'@timezone' THEN 'NULL'
                 WHEN N'@execution_count' THEN 'NULL'
@@ -50213,6 +51271,7 @@ BEGIN
                 WHEN N'@find_high_impact' THEN N'0'
                 WHEN N'@primary_window' THEN N'NULL'
                 WHEN N'@find_parameter_sensitive' THEN N'0'
+                WHEN N'@plan_parsing' THEN N'0'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
                 WHEN N'@troubleshoot_performance' THEN '0'
@@ -50286,6 +51345,17 @@ BEGIN
     SELECT 'Query Store Waits Total (2017+, expert mode only): wait stats totals for the queries in the results above, in the chosen date range' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Plan Findings (only when @plan_parsing = 1): one row per plan and rule, returned after the result sets above. Columns:' UNION ALL
+    SELECT '    database_name, query_id, plan_id, rule_id, rule_name, finding (the details), object_name, node_ids (plan operator ids; "4, 7, 12 and 3 more")' UNION ALL
+    SELECT 'each plan is converted to XML and shredded once, then the rules run over the shredded rows. rules, by rule_id:' UNION ALL
+    SELECT '    0 plan not checked, 1 eager index spool, 2 serial plan, 3 scalar UDF, 4 lookup with predicate, 5 NOT IN on nullable column,' UNION ALL
+    SELECT '    6 implicit conversion prevents seek, 7 missing index request, 8 late filter, 9 scan with residual predicate,' UNION ALL
+    SELECT '    10 non-SARGable predicate, 11 multi-statement table-valued function, 12 TOP over scan, 13 many-to-many merge join,' UNION ALL
+    SELECT '    14 table variable, 15 remote query, 16 wide DML, 17 Standard Edition batch mode DOP 2, 18 scan on inner side of nested loops,' UNION ALL
+    SELECT '    19 long compile' UNION ALL
+    SELECT 'no row means the rule did not fire, or the plan did not have the attribute the rule reads (older builds omit some)' UNION ALL
+    SELECT 'cannot be combined with @find_high_impact, @find_parameter_sensitive, the @regression_ parameters or @log_to_table' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Options (expert mode only): details about current query store configuration';
 
@@ -50520,6 +51590,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
     RETURN;
 END; /*End @help section*/
+
+
+/*
+The values below are checked against fixed lists of lowercase words.
+When the database that holds this procedure has a case sensitive
+collation, 'Duration' or 'Improved' would miss those lists and fall
+back to a different value, so lowercase them once before any check.
+*/
+SELECT
+    @sort_order = LOWER(@sort_order),
+    @regression_comparator = LOWER(@regression_comparator),
+    @regression_direction = LOWER(@regression_direction),
+    @execution_type_desc = LOWER(@execution_type_desc),
+    @wait_filter = LOWER(@wait_filter);
 
 
 /*
@@ -50831,6 +51915,53 @@ BEGIN
 END;
 
 /*
+@plan_parsing adds one result set to the normal path, so it can't be
+combined with the takeover modes (which skip that path), with
+regression mode (two time windows, no plan findings for either),
+or with logging (the findings are not logged to a table).
+The check uses ISNULL because the parameter normalization runs later
+*/
+IF
+(
+    ISNULL(@plan_parsing, 0) = 1
+AND @find_high_impact = 1
+)
+BEGIN
+    RAISERROR('@plan_parsing cannot be used with @find_high_impact. Run them separately.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+IF
+(
+    ISNULL(@plan_parsing, 0) = 1
+AND @find_parameter_sensitive = 1
+)
+BEGIN
+    RAISERROR('@plan_parsing cannot be used with @find_parameter_sensitive. Run them separately.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+IF
+(
+    ISNULL(@plan_parsing, 0) = 1
+AND ISNULL(@regression_mode, 0) = 1
+)
+BEGIN
+    RAISERROR('@plan_parsing cannot be used with the @regression_ parameters. Run them separately.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+IF
+(
+    ISNULL(@plan_parsing, 0) = 1
+AND @log_to_table = 1
+)
+BEGIN
+    RAISERROR('@plan_parsing cannot be used with @log_to_table. Run them separately.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
 @primary_window only applies to the @find_high_impact path, and must
 match one of the three bucket labels by case-insensitive prefix: b/o/w
 */
@@ -50965,6 +52096,16 @@ CREATE TABLE
     #plan_ids_having_enough_executions
 (
     plan_id bigint PRIMARY KEY CLUSTERED,
+);
+
+/*
+For filtering by @duration_ms.
+A plan is in here when any one of its intervals meets @duration_ms.
+*/
+CREATE TABLE
+    #plan_ids_having_enough_duration
+(
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -51666,6 +52807,385 @@ CREATE TABLE
 );
 
 /*
+Plan parsing (@plan_parsing = 1): each plan is converted to xml once
+(plan_state: 0 = converted, 1 = no plan text, 2 = would not convert),
+then shredded once into the tables below. The rules read these tables.
+Operator rows are keyed on the statement and on the QueryPlan inside it (qp_id):
+a cursor has one QueryPlan per phase and each numbers its NodeIds from 0.
+*/
+CREATE TABLE
+    #plan_parsing_xml
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    plan_xml xml NULL,
+    plan_state tinyint NOT NULL
+);
+
+/*
+One row per plan with the Query Store numbers and hint flags the rules need
+*/
+CREATE TABLE
+    #plan_facts
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    query_id bigint NOT NULL,
+    plan_state tinyint NOT NULL,
+    compatibility_level smallint NULL,
+    avg_compile_duration_ms float NULL,
+    count_executions bigint NULL,
+    avg_cpu_ms float NULL,
+    avg_duration_ms float NULL,
+    max_dop bigint NULL,
+    executions_per_day float NULL,
+    qs_hint_maxdop_2 bit NOT NULL,
+    not_in_text bit NOT NULL,
+    PRIMARY KEY CLUSTERED (database_id, plan_id)
+);
+
+/*
+One row per QueryPlan: the plan of a StmtSimple, one per phase of a StmtCursor,
+and the plan of the IF condition of a StmtCond. qp_xml is that QueryPlan on its own,
+so every later pass reads one QueryPlan at a time
+*/
+CREATE TABLE
+    #plan_statements
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    stmt_type nvarchar(60) NULL,
+    plan_guide_name nvarchar(400) NULL,
+    operation_type nvarchar(60) NULL,
+    non_parallel_reason nvarchar(200) NULL,
+    qp_xml xml NOT NULL,
+    PRIMARY KEY CLUSTERED (database_id, plan_id, stmt_id, qp_id)
+);
+
+/*
+One row per operator (RelOp) and object it touches
+*/
+CREATE TABLE
+    #plan_operators
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    physical_op nvarchar(60) NULL,
+    logical_op nvarchar(60) NULL,
+    est_rows float NULL,
+    table_cardinality float NULL,
+    exec_mode nvarchar(10) NULL,
+    is_lookup bit NULL,
+    many_to_many bit NULL,
+    top_one bit NULL,
+    startup_expr bit NULL,
+    is_scan bit NOT NULL DEFAULT 0,
+    pred_text nvarchar(4000) NULL,
+    pred_intrinsic bit NULL,
+    pred_convert bit NULL,
+    pred_if bit NULL,
+    pred_like_lead bit NULL,
+    pred_base_col bit NULL,
+    pred_expr_col bit NULL,
+    obj_database nvarchar(258) NULL,
+    obj_schema nvarchar(258) NULL,
+    obj_table nvarchar(258) NULL,
+    obj_index nvarchar(258) NULL,
+    obj_storage nvarchar(60) NULL
+);
+
+/*
+Every object under an operator (a wide DML operator lists one per index)
+*/
+CREATE TABLE
+    #plan_objects
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    obj_database nvarchar(258) NULL,
+    obj_schema nvarchar(258) NULL,
+    obj_table nvarchar(258) NULL,
+    obj_index nvarchar(258) NULL,
+    obj_storage nvarchar(60) NULL
+);
+
+/*
+Indexes that one INSERT, UPDATE, DELETE or MERGE maintains, for the wide DML rule.
+Created here, with the other plan tables, so the debug dump finds it on every exit
+*/
+CREATE TABLE
+    #plan_dml_indexes
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    obj_schema nvarchar(258) NULL,
+    obj_table nvarchar(258) NULL,
+    obj_index nvarchar(258) NULL
+);
+
+/*
+Predicate text and flags, for the operators the rules look at.
+pred_xml is a copy of the predicate on its own, so the flags read a small document
+*/
+CREATE TABLE
+    #plan_predicates
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    startup_expr bit NULL,
+    pred_text nvarchar(4000) NULL,
+    pred_intrinsic bit NULL,
+    pred_convert bit NULL,
+    pred_if bit NULL,
+    pred_like_lead bit NULL,
+    pred_base_col bit NULL,
+    pred_expr_col bit NULL,
+    pred_xml xml NULL
+);
+
+/*
+Lookups, many-to-many merge joins and Top (1) operators (special: lookup, m2m, top1).
+A lookup keeps small copies of the columns it fetches and of its predicate, so its columns are read from those
+*/
+CREATE TABLE
+    #plan_specials
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    special varchar(10) NOT NULL,
+    pred_text nvarchar(4000) NULL,
+    fetch_xml xml NULL,
+    pred_xml xml NULL,
+    obj_alias nvarchar(258) NULL
+);
+
+/*
+Column references, one row each: the seek columns of an eager index spool (seek),
+its output columns (output), the columns a lookup fetches (fetch), and the columns its own predicate reads (lkpred).
+Only references to a table are kept. is_equality is 1 for the Prefix part of a seek.
+*/
+CREATE TABLE
+    #plan_columns
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    col_role varchar(10) NOT NULL,
+    is_equality bit NOT NULL,
+    col_ord integer NOT NULL,
+    col_database nvarchar(258) NULL,
+    col_schema nvarchar(258) NULL,
+    col_table nvarchar(258) NULL,
+    col_name sysname NULL
+);
+
+/*
+Parent and child operators: one row per child, child_ordinal 1 is the first child
+*/
+CREATE TABLE
+    #plan_edges
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    parent_node_id integer NOT NULL,
+    child_node_id integer NOT NULL,
+    child_ordinal integer NULL
+);
+
+/*
+Rule 8, for a Filter whose predicate reads a computed value (an Expr): the parts of its predicate
+(the conditions of a top level AND, or the whole predicate), the Exprs each part reads, and where
+each Expr of the statement comes from (is_agg: an aggregate or a window function; has_base: a table column)
+*/
+CREATE TABLE
+    #plan_filter_parts
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    part_ord integer NOT NULL,
+    part_base_col bit NOT NULL,
+    part_agg bit NULL,
+    part_flag bit NULL,
+    part_xml xml NULL
+);
+
+CREATE TABLE
+    #plan_filter_part_exprs
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    part_ord integer NOT NULL,
+    expr_name sysname NOT NULL
+);
+
+CREATE TABLE
+    #plan_expr_defs
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    expr_name sysname NULL,
+    is_agg bit NOT NULL,
+    has_base bit NOT NULL,
+    def_xml xml NULL
+);
+
+CREATE TABLE
+    #plan_expr_refs
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    expr_name sysname NOT NULL,
+    ref_name sysname NOT NULL
+);
+
+/*
+The Exprs that come from an aggregate or a window function (agg), directly or through other Exprs,
+and the ones built from a table column (base)
+*/
+CREATE TABLE
+    #plan_expr_class
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    expr_name sysname NOT NULL,
+    expr_source varchar(4) NOT NULL
+);
+
+/*
+Columns an anti semi join compares for equality (eq) and
+columns that an operator tests with IS NULL (isnull), for the NOT IN rule
+*/
+CREATE TABLE
+    #plan_anti_cols
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    col_kind varchar(6) NOT NULL,
+    col_ref nvarchar(1000) NOT NULL
+);
+
+/*
+Where large scans, table variable scans and Top operators sit in the plan
+*/
+CREATE TABLE
+    #plan_relations
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NOT NULL,
+    parent_node_id integer NULL,
+    parent_op nvarchar(60) NULL,
+    gp_node_id integer NULL,
+    gp_op nvarchar(60) NULL,
+    child_1_id integer NULL,
+    child_1_op nvarchar(60) NULL,
+    gchild_1_id integer NULL
+);
+
+/*
+Plan warnings and scalar UDFs: warning_type is convert or udf
+*/
+CREATE TABLE
+    #plan_warnings
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    node_id integer NULL,
+    warning_type varchar(10) NOT NULL,
+    detail nvarchar(4000) NULL
+);
+
+/*
+One row per missing index request
+*/
+CREATE TABLE
+    #plan_missing_indexes
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    stmt_id integer NOT NULL,
+    qp_id integer NOT NULL,
+    impact float NULL,
+    mi_database nvarchar(258) NULL,
+    mi_schema nvarchar(258) NULL,
+    mi_table nvarchar(258) NULL,
+    equality_cols nvarchar(max) NULL,
+    inequality_cols nvarchar(max) NULL,
+    include_cols nvarchar(max) NULL,
+    n_equality integer NULL,
+    n_inequality integer NULL,
+    n_include integer NULL
+);
+
+/*
+Database scoped MAXDOP, for the serial plan and Standard Edition batch mode rules
+*/
+CREATE TABLE
+    #plan_database_maxdop
+(
+    database_id integer NOT NULL,
+    maxdop integer NULL
+);
+
+/*
+Findings before they are folded to one row per plan and rule
+*/
+CREATE TABLE
+    #plan_findings
+(
+    finding_id integer IDENTITY NOT NULL,
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    query_id bigint NOT NULL,
+    rule_id integer NOT NULL,
+    rule_name varchar(60) NOT NULL,
+    stmt_id integer NULL,
+    qp_id integer NULL,
+    node_id integer NULL,
+    phase varchar(10) NULL,
+    object_name nvarchar(1000) NULL,
+    finding nvarchar(max) NULL
+);
+
+/*
 Variant? Deviant? You decide!
 */
 CREATE TABLE
@@ -52104,7 +53624,13 @@ FROM
         is_include,
         requires_secondary_processing
     )
-WHERE v.parameter_value IS NOT NULL;
+/*
+A blank list is the same as no list. The NULLIF cleanup further down
+runs after this table is filled, so skip blank values here: a blank
+include list would otherwise add an EXISTS against an empty table and
+hide every row.
+*/
+WHERE NULLIF(v.parameter_value, N'') IS NOT NULL;
 
 /*
 Attempt at overloading procedure name so it can accept a schema.procedure or
@@ -53091,6 +54617,30 @@ END; /*End @log_to_table validation and setup*/
 
 
 /*
+With only @end_date given, search the seven days before it, the same
+length as the default window. Leaving @start_date at its default put
+it after an older @end_date, and the window was then quietly moved to
+seven days after the default start. @start_date keeps the offset of
+@end_date, so both are read the same way in the UTC conversion below.
+*/
+IF
+(
+    @start_date IS NULL
+AND @end_date IS NOT NULL
+)
+BEGIN
+    SELECT
+        @start_date =
+            DATEADD
+            (
+                DAY,
+                -7,
+                @end_date
+            );
+END;
+
+
+/*
 We also need to capture original values here.
 Doing it inside a loop over multiple databases
 would break the UTC conversion.
@@ -53355,6 +54905,21 @@ BEGIN
     AND   d.state = 0
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
+    AND   ISNULL(HAS_DBACCESS(d.name), 0) = 1
+    /*
+    A database the caller can enter but cannot read Query Store in fails the whole
+    run on the first Query Store view (Msg 262 or Msg 297). Query Store needs VIEW
+    DATABASE PERFORMANCE STATE on SQL Server 2022 and later, and VIEW DATABASE STATE
+    before that. HAS_PERMS_BY_NAME returns NULL for a permission the server does
+    not know, so the first call decides where the permission exists and the second
+    call decides on older versions. Both calls count a permission that implies the
+    one asked for, such as CONTROL on the database or VIEW SERVER STATE.
+    */
+    AND   ISNULL
+          (
+              HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+              ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+          ) = 1
     AND   (
             @include_databases IS NULL
             OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -53393,6 +54958,14 @@ BEGIN
                     THEN 'Database is read-only'
                     WHEN d.database_id <= 4
                     THEN 'System database'
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    THEN 'No database access'
+                    WHEN ISNULL
+                         (
+                             HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+                             ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+                         ) = 0
+                    THEN 'No permission to read Query Store'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
@@ -53434,18 +55007,28 @@ BEGIN
     AND   d.state = 0
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
-    AND   NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM sys.dm_hadr_availability_replica_states AS s
-        JOIN sys.availability_databases_cluster AS c
-          ON  s.group_id = c.group_id
-          AND d.name = c.database_name
-        WHERE s.is_local <> 1
-        AND   s.role_desc <> N'PRIMARY'
-        AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-    )
+    /*
+    A database the caller cannot enter still shows ONLINE here, and querying
+    it fails the whole run with Msg 916 (the login has no user in it), Msg 924
+    (single-user and held by another session) or Msg 976 (an availability
+    group secondary the session cannot read). HAS_DBACCESS returns 0 for all
+    three, so those databases are skipped instead.
+    */
+    AND   ISNULL(HAS_DBACCESS(d.name), 0) = 1
+    /*
+    A database the caller can enter but cannot read Query Store in fails the whole
+    run on the first Query Store view (Msg 262 or Msg 297). Query Store needs VIEW
+    DATABASE PERFORMANCE STATE on SQL Server 2022 and later, and VIEW DATABASE STATE
+    before that. HAS_PERMS_BY_NAME returns NULL for a permission the server does
+    not know, so the first call decides where the permission exists and the second
+    call decides on older versions. Both calls count a permission that implies the
+    one asked for, such as CONTROL on the database or VIEW SERVER STATE.
+    */
+    AND   ISNULL
+          (
+              HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+              ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+          ) = 1
     AND   (
             @include_databases IS NULL
             OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -53478,18 +55061,13 @@ BEGIN
                     WHEN d.is_in_standby = 1 THEN 'Database is in standby'
                     WHEN d.is_read_only = 1 THEN 'Database is read-only'
                     WHEN d.database_id <= 4 THEN 'System database'
-                    WHEN EXISTS
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0 THEN 'No database access'
+                    WHEN ISNULL
                          (
-                             SELECT
-                                 1/0
-                             FROM sys.dm_hadr_availability_replica_states AS s
-                             JOIN sys.availability_databases_cluster AS c
-                               ON  s.group_id = c.group_id
-                               AND d.name = c.database_name
-                             WHERE s.is_local <> 1
-                             AND   s.role_desc <> N'PRIMARY'
-                             AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-                         ) THEN 'AG replica issues'
+                             HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE PERFORMANCE STATE'),
+                             ISNULL(HAS_PERMS_BY_NAME(d.name, N'DATABASE', N'VIEW DATABASE STATE'), 0)
+                         ) = 0
+                    THEN 'No permission to read Query Store'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
@@ -53583,6 +55161,9 @@ TRUNCATE TABLE
 
 TRUNCATE TABLE
     #plan_ids_having_enough_executions;
+
+TRUNCATE TABLE
+    #plan_ids_having_enough_duration;
 
 TRUNCATE TABLE
     #include_plan_ids;
@@ -53976,6 +55557,8 @@ SELECT
         ISNULL(@include_query_hash_totals, 0),
     @include_maintenance =
         ISNULL(@include_maintenance, 0),
+    @plan_parsing =
+        ISNULL(@plan_parsing, 0),
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
@@ -59677,12 +61260,6 @@ BEGIN
 END;
 
 /*Other filters*/
-IF @duration_ms IS NOT NULL
-BEGIN
-    SELECT
-        @where_clause += N'    AND   qsrs.avg_duration >= (@duration_ms * 1000.)' + @nc10;
-END;
-
 IF @execution_type_desc IS NOT NULL
 BEGIN
     IF @execution_type_desc = N'failed'
@@ -59794,6 +61371,135 @@ N'   OR CONVERT(time(0), qsrs.last_execution_time) BETWEEN ''00:00:00'' AND @wor
 N')' + @nc10;
     END; /*Work hours*/
 END; /*Final end*/
+
+/*
+@duration_ms filters plans, not intervals.
+A plan qualifies when any one of its runtime stats intervals in the
+time period meets @duration_ms. Every interval of a qualifying plan
+then counts, so its executions, totals and averages cover all of its
+runs. Filtering the intervals themselves dropped the fast runs of a
+plan before they were added up, which understated executions and
+totals and overstated averages.
+
+The interval filters built so far (time period, execution type, work
+hours) apply to the intervals that are looked at here. Plan level
+filters are added to @where_clause after this point.
+
+In regression mode, @where_clause is also used for the baseline time
+period, so a plan qualifies when it meets @duration_ms in either time
+period. Otherwise a plan that only ran in the baseline period could
+never qualify. The baseline version of the time period filter is made
+the same way @regression_where_clause is made further down.
+*/
+IF @duration_ms IS NOT NULL
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_having_enough_duration',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    SELECT
+        qsrs.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    WHERE qsrs.avg_duration >= (@duration_ms * 1000.)
+    AND
+    (
+        (
+            1 = 1
+            ' + @where_clause + N'
+        )' +
+    CASE
+        WHEN @regression_mode = 1
+        THEN N'
+     OR (
+            1 = 1
+            ' +
+            REPLACE
+            (
+                REPLACE
+                (
+                    @where_clause,
+                    '@start_date',
+                    '@regression_baseline_start_date'
+                ),
+                '@end_date',
+                '@regression_baseline_end_date'
+            ) + N'
+        )'
+        ELSE N''
+    END
+    + N'
+    )
+    GROUP BY
+        qsrs.plan_id
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #plan_ids_having_enough_duration
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    SELECT
+        @where_clause += N'    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #plan_ids_having_enough_duration AS enough_duration
+        WHERE enough_duration.plan_id = qsrs.plan_id
+    )' + @nc10;
+END;
 
 /*
 In this section we set up the filter if someone's searching for
@@ -61095,14 +62801,32 @@ qualifies keeps the filter from matching queries whose waits
 of this category happened entirely outside of it. Matches the
 date semantics of the main where clause and the wait sort
 order joins.
+In regression mode this table also filters the baseline time
+period, so a plan with waits of this category only in the
+baseline period has to qualify too.
 */
 JOIN  ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
   ON  qsws.plan_id = qsrs.plan_id
   AND qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
   AND qsws.execution_type = qsrs.execution_type
 WHERE 1 = 1
-AND   qsrs.last_execution_time >= @start_date
-AND   qsrs.last_execution_time <  @end_date
+AND
+(
+    (
+        qsrs.last_execution_time >= @start_date
+    AND qsrs.last_execution_time <  @end_date
+    )' +
+CASE
+    WHEN @regression_mode = 1
+    THEN N'
+ OR (
+        qsrs.last_execution_time >= @regression_baseline_start_date
+    AND qsrs.last_execution_time <  @regression_baseline_end_date
+    )'
+    ELSE N''
+END
++ N'
+)
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
@@ -61145,9 +62869,13 @@ OPTION(RECOMPILE);' + @nc10;
     EXECUTE sys.sp_executesql
         @sql,
       N'@start_date datetimeoffset(7),
-        @end_date datetimeoffset(7)',
+        @end_date datetimeoffset(7),
+        @regression_baseline_start_date datetimeoffset(7),
+        @regression_baseline_end_date datetimeoffset(7)',
         @start_date,
-        @end_date;
+        @end_date,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -61301,10 +63029,16 @@ about to see, but easier because we do not need to return or sort
 by the execution count.
 We just need to know that these plans have enough executions.
 
-The rows are summed per plan first, so the window sum per query
-runs over one row per plan instead of one row per interval, and
-query_id comes from sys.query_store_plan, which has it, instead of
-a join to sys.query_store_query.
+The rows are summed per query, and query_id comes from
+sys.query_store_plan, which has it, instead of a join to
+sys.query_store_query.
+
+The executions are counted in the current time period only, but
+every plan_id of a query that has enough of them goes into the
+table, whether or not that plan ran in the current period. In
+regression mode this table also filters the baseline time period,
+and a plan that only ran in the baseline would otherwise be
+filtered out of the comparison it belongs in.
 */
 IF @execution_count > 0
 BEGIN
@@ -61325,13 +63059,11 @@ BEGIN
     SELECT
         @sql += N'
     SELECT
-        unfiltered_execution_counts.plan_id
+        qsp_all.plan_id
     FROM
     (
        SELECT
-           qsp.plan_id,
-           total_executions_for_query_of_plan =
-               SUM(SUM(qsrs.count_executions)) OVER (PARTITION BY qsp.query_id)
+           qsp.query_id
        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
        JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
          ON qsp.plan_id = qsrs.plan_id
@@ -61339,11 +63071,12 @@ BEGIN
        ' + @where_clause
          + N'
        GROUP BY
-           qsp.query_id,
-           qsp.plan_id
-    ) AS unfiltered_execution_counts
-    WHERE
-        unfiltered_execution_counts.total_executions_for_query_of_plan >= @execution_count
+           qsp.query_id
+       HAVING
+           SUM(qsrs.count_executions) >= @execution_count
+    ) AS qualifying_queries
+    JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_all
+      ON qsp_all.query_id = qualifying_queries.query_id
     OPTION(RECOMPILE, HASH JOIN);' + @nc10;
 
     IF @debug = 1
@@ -63087,14 +64820,22 @@ FROM
         If it were after GROUP BY, then we would be dealing with already aggregated data.
         If it were inside the CROSS APPLY, then we would be dealing with windows of size one.
         Both are very wrong, so we need this.
+
+        Last values come from the row with the latest last_execution_time,
+        whatever its execution type, so an aborted or timed out run does
+        not hide a newer regular run. The windows are not partitioned by
+        execution type, and a tie on last_execution_time goes to the later
+        interval. Every row of a plan, or of a plan and time period in
+        regression mode, carries the same value, so the MAX in the select
+        list only picks it up.
         */
         partitioned_last_execution_time =
             LAST_VALUE(qsrs.last_execution_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63102,9 +64843,9 @@ FROM
             LAST_VALUE(qsrs.last_duration) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63112,9 +64853,9 @@ FROM
             LAST_VALUE(qsrs.last_cpu_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63122,9 +64863,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63132,9 +64873,9 @@ FROM
             LAST_VALUE(qsrs.last_logical_io_writes) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63142,9 +64883,9 @@ FROM
             LAST_VALUE(qsrs.last_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63152,9 +64893,9 @@ FROM
             LAST_VALUE(qsrs.last_clr_time) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63162,9 +64903,9 @@ FROM
             LAST_VALUE(qsrs.last_dop) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63172,9 +64913,9 @@ FROM
             LAST_VALUE(qsrs.last_query_max_used_memory) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63182,9 +64923,9 @@ FROM
             LAST_VALUE(qsrs.last_rowcount) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),';
@@ -63197,9 +64938,9 @@ BEGIN
             LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63207,9 +64948,9 @@ BEGIN
             LAST_VALUE(qsrs.last_log_bytes_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
@@ -63217,9 +64958,9 @@ BEGIN
             LAST_VALUE(qsrs.last_tempdb_space_used) OVER
             (
                 PARTITION BY
-                    qsrs.plan_id,
-                    qsrs.execution_type' + @regression_partition + N'
+                    qsrs.plan_id' + @regression_partition + N'
                 ORDER BY
+                    qsrs.last_execution_time ASC,
                     qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )';
@@ -64586,6 +66327,9 @@ FROM
         We need this here to make sure that PARTITION BY runs before GROUP BY.
         If it were after GROUP BY, then we would be dealing with already aggregated data.
         In regression mode, each time period gets its own last value.
+        The last value comes from the row whose runtime stats row has the
+        latest last_execution_time, whatever its execution type, as for
+        the runtime stats above. A tie goes to the later interval.
         */
         partitioned_last_query_wait_time_ms =
             LAST_VALUE(qsws.last_query_wait_time_ms) OVER
@@ -64593,9 +66337,9 @@ FROM
                 PARTITION BY
                     qsws.plan_id,
                     qsrs_plans.from_regression_baseline,
-                    qsws.execution_type,
                     qsws.wait_category_desc
                 ORDER BY
+                    qsws.runtime_last_execution_time ASC,
                     qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
@@ -64617,9 +66361,26 @@ FROM
         category past the fifth. Query Store keeps a small, fixed set of
         wait categories, so pulling all of them does not blow up the
         row count.
-        */
+        */';
+
+    /*
+    A separate statement, not + inside the literal above: the pieces of one
+    expression are each shorter than 4000 characters, so their sum would be
+    cut to nvarchar(4000) before it ever reached @sql.
+    */
+    SELECT
+        @sql += N'
         SELECT
-            qsws.*
+            qsws.*,
+            runtime_last_execution_time =
+                (
+                    SELECT
+                        MAX(qsrs_last.last_execution_time)
+                    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs_last
+                    WHERE qsrs_last.plan_id = qsws.plan_id
+                    AND   qsrs_last.runtime_stats_interval_id = qsws.runtime_stats_interval_id
+                    AND   qsrs_last.execution_type = qsws.execution_type
+                )
         FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
         WHERE qsws.plan_id = qsrs_plans.plan_id
         AND   qsws.wait_category > 0
@@ -67666,6 +69427,4831 @@ BEGIN
     END;
 END; /*End Expert Mode*/
 
+/*
+Plan parsing: convert each plan once, shred it once, then run the
+rules as plain T-SQL over the shredded rows. Nothing here runs unless
+@plan_parsing = 1. The thresholds are starting values, change them here.
+
+The inserts into the plan parsing temp tables below use WITH (TABLOCK), as the style guide
+requires, and MAXDOP 1. TABLOCK lets an insert go parallel, and for these small inserts the
+parallel startup alone cost about 200 ms per statement (measured), which was most of the cost of
+the passes that return few or no rows. MAXDOP 1 in the query hint keeps them serial.
+(The INSERT ... EXECUTE for the database scoped MAXDOP has no query hint, so it only has TABLOCK.)
+*/
+IF  @plan_parsing = 1
+AND @log_to_table = 0
+BEGIN
+    DECLARE
+        @pp_cpu_ms float = 1000, /*rules 2 and 7: average CPU (ms) a plan must reach*/
+        @pp_duration_ms float = 1000, /*rule 7: average duration (ms) a plan must reach*/
+        @pp_execs_per_day float = 1000, /*rule 7: executions per day a plan must reach*/
+        @pp_min_window_minutes integer = 1440, /*rule 7: shortest window (minutes) used to turn executions into executions per day*/
+        @pp_scan_rows float = 1000000, /*rules 9 and 18: table rows a scan must cover*/
+        @pp_wide_dml_indexes integer = 5, /*rule 16: indexes one statement must maintain*/
+        @pp_compile_ms float = 1000, /*rule 19: average compile duration (ms)*/
+        @pp_mi_max_keys integer = 4, /*rule 7: key columns past which the request is flagged*/
+        @pp_mi_max_includes integer = 5, /*rule 7: included columns past which the request is flagged*/
+        @pp_text_chars integer = 300, /*predicate text is cut to this many characters in findings*/
+        @pp_node_ids_shown integer = 3, /*node ids listed before "and N more"*/
+        @pp_findings_shown integer = 3, /*findings and object names joined into one row before "and N more"*/
+        @pp_window_minutes integer,
+        @pp_workdays bigint = 0,
+        @pp_engine_edition integer = CONVERT(integer, SERVERPROPERTY('EngineEdition')),
+        @pp_server_maxdop integer,
+        @pp_rg_maxdop_1 bit = 0,
+        @pp_has_anti_join bit = 0,
+        @pp_has_lasj bit = 0,
+        @pp_has_merge_join bit = 0,
+        @pp_has_top bit = 0,
+        @pp_has_lookup bit = 0,
+        @pp_has_eager_index_spool bit = 0,
+        @pp_has_nested_loops bit = 0,
+        @pp_has_expr_filter bit = 0,
+        @pp_troubleshoot_sql nvarchar(max) = N'(static statements of the plan parsing section, no dynamic SQL)',
+        @pp_sql nvarchar(max) = N'',
+        @pp_print_start integer = 1;
+
+    /*
+    With @workdays = 1 the runtime stats only cover weekdays, Monday to Friday in server local time
+    (the same test the @workdays filter uses), so rule 7 divides by the weekdays in the window:
+    executions per work day. The window is @start_date up to, not including, @end_date.
+    */
+    IF @workdays = 1
+    BEGIN
+        SELECT
+            @pp_workdays =
+                (wd.days_total / 7) * 5 +
+                (
+                    SELECT
+                        COUNT_BIG(*)
+                    FROM
+                    (
+                        VALUES
+                            (0),
+                            (1),
+                            (2),
+                            (3),
+                            (4),
+                            (5)
+                    ) AS k (n)
+                    WHERE k.n < wd.days_total % 7
+                    AND   (wd.first_weekday + k.n) % 7 < 5
+                )
+        FROM
+        (
+            SELECT
+                days_total =
+                    DATEDIFF(DAY, ld.first_day, ld.last_day) + 1,
+                first_weekday =
+                    DATEDIFF(DAY, 0, ld.first_day) % 7
+            FROM
+            (
+                SELECT
+                    first_day =
+                        CONVERT(date, DATEADD(MINUTE, -@utc_minutes_difference, CONVERT(datetime2(7), @start_date))),
+                    last_day =
+                        CONVERT(date, DATEADD(MICROSECOND, -1, DATEADD(MINUTE, -@utc_minutes_difference, CONVERT(datetime2(7), @end_date))))
+            ) AS ld
+        ) AS wd;
+    END;
+
+    SELECT
+        @current_table = 'plan parsing: converting plans to xml',
+        @pp_window_minutes =
+            CASE
+                WHEN @workdays = 1
+                AND  @pp_workdays * 1440 < @pp_min_window_minutes
+                THEN @pp_min_window_minutes
+                WHEN @workdays = 1
+                THEN @pp_workdays * 1440
+                WHEN DATEDIFF(MINUTE, @start_date, @end_date) < @pp_min_window_minutes
+                THEN @pp_min_window_minutes
+                ELSE DATEDIFF(MINUTE, @start_date, @end_date)
+            END;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    /*
+    Convert each plan to xml once. A plan that has no text, and a plan that will not
+    convert (more than 128 levels of nesting), are told apart so rule 0 can say which
+    */
+    INSERT
+        #plan_parsing_xml
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        plan_xml,
+        plan_state
+    )
+    SELECT
+        qsp.database_id,
+        qsp.plan_id,
+        px.plan_xml,
+        plan_state =
+            CASE
+                WHEN qsp.query_plan IS NULL
+                THEN 1
+                WHEN px.plan_xml IS NULL
+                THEN 2
+                ELSE 0
+            END
+    FROM #query_store_plan AS qsp
+    CROSS APPLY
+    (
+        SELECT
+            plan_xml = TRY_CAST(qsp.query_plan AS xml)
+    ) AS px
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+    /*
+    One row per plan with the Query Store numbers the rules use.
+    Averages are weighted by executions across the runtime stats rows.
+    The one hint flag reads the Query Store hints table, which holds only the hint option itself.
+    */
+    SELECT
+        @current_table = 'plan parsing: collecting plan facts';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    INSERT
+        #plan_facts
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        plan_state,
+        compatibility_level,
+        avg_compile_duration_ms,
+        count_executions,
+        avg_cpu_ms,
+        avg_duration_ms,
+        max_dop,
+        executions_per_day,
+        qs_hint_maxdop_2,
+        not_in_text
+    )
+    SELECT
+        ppx.database_id,
+        ppx.plan_id,
+        qsp.query_id,
+        ppx.plan_state,
+        qsp.compatibility_level,
+        qsp.avg_compile_duration_ms,
+        rs.count_executions,
+        rs.avg_cpu_ms,
+        rs.avg_duration_ms,
+        rs.max_dop,
+        executions_per_day =
+            rs.count_executions * 1440.0 / @pp_window_minutes,
+        qs_hint_maxdop_2 =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_store_query_hints AS qsqh
+                         WHERE qsqh.database_id = qsp.database_id
+                         AND   qsqh.query_id = qsp.query_id
+                         AND   UPPER(qsqh.query_hint_text) + N' ' LIKE N'%MAXDOP 2[^0-9]%'
+                     )
+                THEN 1
+                ELSE 0
+            END,
+        not_in_text =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #query_store_query AS qsq
+                         JOIN #query_store_query_text AS qsqt
+                           ON  qsqt.database_id = qsq.database_id
+                           AND qsqt.query_text_id = qsq.query_text_id
+                         CROSS APPLY
+                         (
+                             SELECT
+                                 query_text =
+                                     CONVERT(nvarchar(max), qsqt.query_sql_text) COLLATE Latin1_General_100_CI_AS
+                         ) AS qt
+                         WHERE qsq.database_id = qsp.database_id
+                         AND   qsq.query_id = qsp.query_id
+                         AND
+                         (
+                              qt.query_text LIKE N'%NOT[ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N']IN[ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N'(]%'
+                           OR qt.query_text LIKE N'%NOT[ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N'][ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N']IN[ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N'(]%'
+                           OR qt.query_text LIKE N'%<>[ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N']ALL%'
+                           OR qt.query_text LIKE N'%!=[ ' + NCHAR(9) + NCHAR(10) + NCHAR(13) + N']ALL%'
+                         )
+                     )
+                THEN 1
+                ELSE 0
+            END
+    FROM #plan_parsing_xml AS ppx
+    JOIN #query_store_plan AS qsp
+      ON  qsp.database_id = ppx.database_id
+      AND qsp.plan_id = ppx.plan_id
+    LEFT JOIN
+    (
+        SELECT
+            qsrs.database_id,
+            qsrs.plan_id,
+            count_executions =
+                SUM(qsrs.count_executions),
+            avg_cpu_ms =
+                SUM(qsrs.avg_cpu_time_ms * qsrs.count_executions) /
+                    NULLIF(SUM(qsrs.count_executions), 0),
+            avg_duration_ms =
+                SUM(qsrs.avg_duration_ms * qsrs.count_executions) /
+                    NULLIF(SUM(qsrs.count_executions), 0),
+            max_dop =
+                MAX(qsrs.max_dop)
+        FROM #query_store_runtime_stats AS qsrs
+        GROUP BY
+            qsrs.database_id,
+            qsrs.plan_id
+    ) AS rs
+      ON  rs.database_id = qsp.database_id
+      AND rs.plan_id = qsp.plan_id
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+    /*
+    Shred the statements: one row per QueryPlan. A StmtSimple has one, a StmtCursor has one per phase
+    (populate, fetch, refresh), and the IF condition of a StmtCond has one. Rule 0 only fires for a
+    plan that has none. qp_id counts the QueryPlans of a statement; each is copied out on its own
+    so the passes below read one QueryPlan at a time.
+    The statement kind comes from local-name() and each kind reads only its own path to its QueryPlans:
+    a self:: test on every statement, the three paths on every statement and a trip up to the parent
+    for OperationType each read the whole plan again.
+    */
+    SELECT
+        @current_table = 'plan parsing: shredding statements';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_statements
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        stmt_type,
+        plan_guide_name,
+        operation_type,
+        non_parallel_reason,
+        qp_xml
+    )
+    SELECT
+        ppx.database_id,
+        ppx.plan_id,
+        stmt_id =
+            ISNULL(sv.stmt_id, 0),
+        qp_id =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    ppx.database_id,
+                    ppx.plan_id,
+                    ISNULL(sv.stmt_id, 0)
+                ORDER BY
+                    qv.operation_type
+            ),
+        sv.stmt_type,
+        sv.plan_guide_name,
+        qv.operation_type,
+        qv.non_parallel_reason,
+        qv.qp_xml
+    FROM #plan_parsing_xml AS ppx
+    CROSS APPLY ppx.plan_xml.nodes(N'//Statements/*') AS s (stmt)
+    CROSS APPLY
+    (
+        /* Read each attribute once; each .value() call is its own XML reader */
+        SELECT
+            stmt_kind =
+                s.stmt.value(N'local-name(.)', N'nvarchar(60)'),
+            stmt_id =
+                s.stmt.value(N'(@StatementId)[1]', N'integer'),
+            stmt_type =
+                s.stmt.value(N'(@StatementType)[1]', N'nvarchar(60)'),
+            plan_guide_name =
+                s.stmt.value(N'(@PlanGuideName)[1]', N'nvarchar(400)')
+    ) AS sv
+    CROSS APPLY
+    (
+        SELECT
+            operation_type =
+                CONVERT(nvarchar(60), NULL),
+            non_parallel_reason =
+                q.qp.value(N'(@NonParallelPlanReason)[1]', N'nvarchar(200)'),
+            qp_xml =
+                q.qp.query(N'.')
+        FROM s.stmt.nodes(N'QueryPlan') AS q (qp)
+        WHERE sv.stmt_kind = N'StmtSimple'
+
+        UNION ALL
+
+        SELECT
+            operation_type =
+                CONVERT(nvarchar(60), NULL),
+            non_parallel_reason =
+                q.qp.value(N'(@NonParallelPlanReason)[1]', N'nvarchar(200)'),
+            qp_xml =
+                q.qp.query(N'.')
+        FROM s.stmt.nodes(N'Condition/QueryPlan') AS q (qp)
+        WHERE sv.stmt_kind = N'StmtCond'
+
+        UNION ALL
+
+        SELECT
+            operation_type =
+                o.op.value(N'(@OperationType)[1]', N'nvarchar(60)'),
+            non_parallel_reason =
+                q.qp.value(N'(@NonParallelPlanReason)[1]', N'nvarchar(200)'),
+            qp_xml =
+                q.qp.query(N'.')
+        FROM s.stmt.nodes(N'CursorPlan/Operation') AS o (op)
+        CROSS APPLY o.op.nodes(N'QueryPlan') AS q (qp)
+        WHERE sv.stmt_kind = N'StmtCursor'
+    ) AS qv
+    WHERE ppx.plan_state = 0
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+    /*
+    Shred the operators. Reading every property of every operator is slow
+    (a child path or a trip up to the parent costs far more than an attribute),
+    so the first pass reads only attributes. The properties that need a path are read in
+    small passes that only visit the operators they are about.
+    */
+    SELECT
+        @current_table = 'plan parsing: shredding operators';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_operators
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id,
+        physical_op,
+        logical_op,
+        est_rows,
+        table_cardinality,
+        exec_mode
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        ov.node_id,
+        ov.physical_op,
+        ov.logical_op,
+        ov.est_rows,
+        tc.table_cardinality,
+        ov.exec_mode
+    FROM #plan_statements AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp') AS r (rel)
+    CROSS APPLY
+    (
+        /* Read each attribute once; each .value() call is its own XML reader */
+        SELECT
+            node_id =
+                r.rel.value(N'(@NodeId)[1]', N'integer'),
+            physical_op =
+                r.rel.value(N'(@PhysicalOp)[1]', N'nvarchar(60)'),
+            logical_op =
+                r.rel.value(N'(@LogicalOp)[1]', N'nvarchar(60)'),
+            est_rows =
+                r.rel.value(N'(@EstimateRows)[1]', N'float'),
+            exec_mode =
+                r.rel.value(N'(@EstimatedExecutionMode)[1]', N'nvarchar(10)')
+    ) AS ov
+    /*
+    An attribute the operator does not have makes .value() read the operator's whole subtree,
+    so TableCardinality is only read from the scans, seeks and lookups that carry it
+    */
+    OUTER APPLY
+    (
+        SELECT
+            table_cardinality =
+                r.rel.value(N'(@TableCardinality)[1]', N'float')
+        WHERE ov.physical_op LIKE N'%Scan%'
+        OR    ov.physical_op LIKE N'%Seek%'
+        OR    ov.physical_op LIKE N'%Lookup%'
+    ) AS tc
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    CREATE CLUSTERED INDEX
+        c
+    ON #plan_operators
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id
+    );
+
+    /*
+    Objects: one row per object under an operator (a wide DML operator lists one per index).
+    The objects are read from their operator, not the other way round: a trip up to the
+    parent (../../@NodeId) from every Object cost more than the rest of this pass.
+    */
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_objects
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id,
+        obj_database,
+        obj_schema,
+        obj_table,
+        obj_index,
+        obj_storage
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        rv.node_id,
+        obv.obj_database,
+        obv.obj_schema,
+        obv.obj_table,
+        obv.obj_index,
+        obv.obj_storage
+    FROM #plan_statements AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[*/Object]') AS r (rel)
+    CROSS APPLY
+    (
+        SELECT
+            node_id =
+                r.rel.value(N'(@NodeId)[1]', N'integer')
+    ) AS rv
+    CROSS APPLY r.rel.nodes(N'*/Object') AS ob (obj)
+    CROSS APPLY
+    (
+        SELECT
+            obj_database =
+                ob.obj.value(N'(@Database)[1]', N'nvarchar(258)'),
+            obj_schema =
+                ob.obj.value(N'(@Schema)[1]', N'nvarchar(258)'),
+            obj_table =
+                ob.obj.value(N'(@Table)[1]', N'nvarchar(258)'),
+            obj_index =
+                ob.obj.value(N'(@Index)[1]', N'nvarchar(258)'),
+            obj_storage =
+                ob.obj.value(N'(@Storage)[1]', N'nvarchar(60)')
+    ) AS obv
+    WHERE rv.node_id IS NOT NULL
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Give each operator the first object it touches
+    */
+    UPDATE
+        po
+    SET
+        po.obj_database = po2.obj_database,
+        po.obj_schema = po2.obj_schema,
+        po.obj_table = po2.obj_table,
+        po.obj_index = po2.obj_index,
+        po.obj_storage = po2.obj_storage
+    FROM #plan_operators AS po
+    CROSS APPLY
+    (
+        SELECT TOP (1)
+            pob.*
+        FROM #plan_objects AS pob
+        WHERE pob.database_id = po.database_id
+        AND   pob.plan_id = po.plan_id
+        AND   pob.stmt_id = po.stmt_id
+        AND   pob.qp_id = po.qp_id
+        AND   pob.node_id = po.node_id
+        ORDER BY
+            pob.obj_index
+    ) AS po2
+    OPTION(RECOMPILE);
+
+    /*
+    Mark the scans: row store scans only, not columnstore, and not the system objects in schema sys
+    */
+    UPDATE
+        po
+    SET
+        po.is_scan = 1
+    FROM #plan_operators AS po
+    WHERE po.physical_op IN (N'Clustered Index Scan', N'Index Scan', N'Table Scan')
+    AND   ISNULL(po.obj_storage, N'') <> N'ColumnStore'
+    AND   ISNULL(po.obj_schema, N'') <> N'[sys]'
+    OPTION(RECOMPILE);
+
+    /*
+    Which operators the plans have at all. The procedure is WITH RECOMPILE, so every statement
+    below compiles on every call, and the xml statements take 20 to 120 ms each to compile.
+    A pass or a rule that reads an operator no plan has cannot return a row, so it is skipped.
+    */
+    SELECT
+        @pp_has_anti_join =
+            ISNULL(MAX(CASE WHEN po.logical_op IN (N'Left Anti Semi Join', N'Right Anti Semi Join') THEN 1 ELSE 0 END), 0),
+        @pp_has_lasj =
+            ISNULL(MAX(CASE WHEN po.logical_op = N'Left Anti Semi Join' THEN 1 ELSE 0 END), 0),
+        @pp_has_merge_join =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Merge Join' THEN 1 ELSE 0 END), 0),
+        @pp_has_top =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Top' OR po.logical_op = N'TopN Sort' THEN 1 ELSE 0 END), 0),
+        @pp_has_eager_index_spool =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Index Spool' AND po.logical_op = N'Eager Spool' THEN 1 ELSE 0 END), 0),
+        @pp_has_nested_loops =
+            ISNULL(MAX(CASE WHEN po.physical_op = N'Nested Loops' THEN 1 ELSE 0 END), 0)
+    FROM #plan_operators AS po
+    OPTION(RECOMPILE);
+
+    /*
+    Parents and children: one row per operator under an operator.
+    The first child has child_ordinal 1 (NodeIds count up in plan order, so the children sort by NodeId).
+    Listing the children of an operator reads its whole subtree, so this is the most expensive pass.
+    Only the statements a rule reads edges for are opened: a Top or TopN Sort (rule 12), an anti semi
+    join (rule 5), a table variable scan estimated at one row (rule 14), and a large scan in a plan
+    with a Nested Loops join (rule 18). A new rule that reads #plan_edges has to be added here.
+    */
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_edges
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        parent_node_id,
+        child_node_id,
+        child_ordinal
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        pv.parent_node_id,
+        cv.child_node_id,
+        child_ordinal =
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    ps.database_id,
+                    ps.plan_id,
+                    ps.stmt_id,
+                    ps.qp_id,
+                    pv.parent_node_id
+                ORDER BY
+                    cv.child_node_id
+            )
+    FROM
+    (
+        SELECT
+            ps0.*
+        FROM #plan_statements AS ps0
+        WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS eo
+                  WHERE eo.database_id = ps0.database_id
+                  AND   eo.plan_id = ps0.plan_id
+                  AND   eo.stmt_id = ps0.stmt_id
+                  AND   eo.qp_id = ps0.qp_id
+                  AND
+                  (
+                       eo.physical_op = N'Top'
+                    OR eo.logical_op IN (N'TopN Sort', N'Left Anti Semi Join')
+                    OR
+                      (
+                          eo.is_scan = 1
+                      AND LEFT(eo.obj_table, 2) = N'[@'
+                      AND eo.est_rows = 1
+                      )
+                  )
+              )
+        OR
+        (
+            EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #plan_operators AS eo
+                WHERE eo.database_id = ps0.database_id
+                AND   eo.plan_id = ps0.plan_id
+                AND   eo.stmt_id = ps0.stmt_id
+                AND   eo.qp_id = ps0.qp_id
+                AND   eo.is_scan = 1
+                AND   eo.table_cardinality >= @pp_scan_rows
+            )
+        AND EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #plan_operators AS eo
+                WHERE eo.database_id = ps0.database_id
+                AND   eo.plan_id = ps0.plan_id
+                AND   eo.stmt_id = ps0.stmt_id
+                AND   eo.qp_id = ps0.qp_id
+                AND   eo.physical_op = N'Nested Loops'
+            )
+        )
+    ) AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[*/RelOp]') AS p (rel)
+    CROSS APPLY
+    (
+        SELECT
+            parent_node_id =
+                p.rel.value(N'(@NodeId)[1]', N'integer')
+    ) AS pv
+    CROSS APPLY p.rel.nodes(N'*/RelOp') AS c (rel)
+    CROSS APPLY
+    (
+        SELECT
+            child_node_id =
+                c.rel.value(N'(@NodeId)[1]', N'integer')
+    ) AS cv
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    CREATE CLUSTERED INDEX
+        c
+    ON #plan_edges
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        parent_node_id,
+        child_node_id
+    );
+
+    /*
+    Predicates: only for the operators the rules look at (scans, filters, anti semi joins) that have one.
+    The operator is picked with attribute tests, which are cheap. Each predicate is copied out once into
+    a small xml column; the text and the flags are then read from that copy, not from the whole plan.
+    Two things cost more than the rest of the pass, so they are not done here: a test for the predicate
+    in the path (the copy is made anyway, and an empty copy is dropped instead), and a read of
+    StartupExpression from operators that are not a Filter (a missing attribute reads the whole subtree).
+    */
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_predicates
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id,
+        startup_expr,
+        pred_xml
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        pv.node_id,
+        su.startup_expr,
+        pq.pred_xml
+    FROM #plan_statements AS ps
+    CROSS APPLY ps.qp_xml.nodes
+    (
+        N'.//RelOp[@PhysicalOp = ("Clustered Index Scan", "Index Scan", "Table Scan", "Filter") or @LogicalOp = "Left Anti Semi Join"]'
+    ) AS r (rel)
+    CROSS APPLY
+    (
+        SELECT
+            node_id =
+                r.rel.value(N'(@NodeId)[1]', N'integer'),
+            physical_op =
+                r.rel.value(N'(@PhysicalOp)[1]', N'nvarchar(60)')
+    ) AS pv
+    CROSS APPLY
+    (
+        SELECT
+            pred_xml =
+                r.rel.query(N'*/*[self::Predicate or self::ProbeResidual]')
+    ) AS pq
+    OUTER APPLY
+    (
+        SELECT
+            startup_expr =
+                r.rel.value(N'(Filter/@StartupExpression)[1]', N'bit')
+        WHERE pv.physical_op = N'Filter'
+    ) AS su
+    WHERE pq.pred_xml.exist(N'*') = 1
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    The flags look for a function, an implicit conversion, a CASE or COALESCE around a column,
+    or a LIKE that starts with a wildcard. Only columns of a real table count: a column
+    reference with no database (a system view) or in schema sys is left out. A table variable
+    column has no database either, but it is a real table, so a table name that starts with @ counts.
+    pred_expr_col marks a predicate that reads a column another operator computed (an Expr, not a
+    parameter or variable, and not the bitmap a PROBE reads): a Filter on it cannot move down to a scan.
+    */
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    UPDATE
+        pp
+    SET
+        pp.pred_text =
+            pp.pred_xml.value(N'(*/ScalarOperator/@ScalarString)[1]', N'nvarchar(4000)'),
+        pp.pred_intrinsic =
+            pp.pred_xml.exist(N'Predicate//Intrinsic[lower-case(@FunctionName) != "like"][lower-case(@FunctionName) != "probe"][.//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]]'),
+        pp.pred_convert =
+            pp.pred_xml.exist(N'Predicate//Convert[@Implicit = "1"][.//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]]'),
+        pp.pred_if =
+            pp.pred_xml.exist(N'Predicate//IF[.//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]]'),
+        pp.pred_like_lead =
+            pp.pred_xml.exist(N'Predicate//Intrinsic[@FunctionName = "like"][ScalarOperator[2]/Const[substring(@ConstValue, 1, 3) = "N''%" or substring(@ConstValue, 1, 2) = "''%"]]'),
+        pp.pred_base_col =
+            pp.pred_xml.exist(N'Predicate//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]'),
+        pp.pred_expr_col =
+            pp.pred_xml.exist(N'Predicate//ColumnReference[not(@Table)][not(substring(@Column, 1, 1) = "@")][not(substring(@Column, 1, 10) = "Opt_Bitmap")]')
+    FROM #plan_predicates AS pp
+    OPTION(RECOMPILE);
+
+    UPDATE
+        po
+    SET
+        po.startup_expr = ISNULL(pp.startup_expr, 0),
+        po.pred_text = pp.pred_text,
+        po.pred_intrinsic = pp.pred_intrinsic,
+        po.pred_convert = pp.pred_convert,
+        po.pred_if = pp.pred_if,
+        po.pred_like_lead = pp.pred_like_lead,
+        po.pred_base_col = pp.pred_base_col,
+        po.pred_expr_col = pp.pred_expr_col
+    FROM #plan_operators AS po
+    JOIN #plan_predicates AS pp
+      ON  pp.database_id = po.database_id
+      AND pp.plan_id = po.plan_id
+      AND pp.stmt_id = po.stmt_id
+      AND pp.qp_id = po.qp_id
+      AND pp.node_id = po.node_id
+    WHERE pp.pred_text IS NOT NULL
+    OPTION(RECOMPILE);
+
+    /*
+    Rule 8 traces the computed values (Exprs) a Filter reads. Only the statements with a Filter whose
+    predicate reads one are opened. Each part of the predicate (a condition of a top level AND, or the
+    whole predicate) is read from the predicate copy, with the Exprs it reads. Each Expr the statement
+    defines is read with where it comes from: an Aggregate (Stream Aggregate, Hash Match aggregate,
+    Window Aggregate) or a Sequence (Sequence Project) in its definition, a table column in it, and the
+    Exprs it is built from, so a Compute Scalar chain can be followed to its source.
+    */
+    SELECT
+        @pp_has_expr_filter =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #plan_operators AS po
+                         WHERE po.physical_op = N'Filter'
+                         AND   po.startup_expr = 0
+                         AND   po.pred_expr_col = 1
+                     )
+                THEN 1
+                ELSE 0
+            END;
+
+    IF @pp_has_expr_filter = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_filter_parts
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            part_ord,
+            part_base_col,
+            part_xml
+        )
+        SELECT
+            pp.database_id,
+            pp.plan_id,
+            pp.stmt_id,
+            pp.qp_id,
+            pp.node_id,
+            part_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        pp.database_id,
+                        pp.plan_id,
+                        pp.stmt_id,
+                        pp.qp_id,
+                        pp.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            part_base_col =
+                pt.part.exist(N'.//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]'),
+            part_xml =
+                pt.part.query(N'.')
+        FROM #plan_predicates AS pp
+        JOIN #plan_operators AS po
+          ON  po.database_id = pp.database_id
+          AND po.plan_id = pp.plan_id
+          AND po.stmt_id = pp.stmt_id
+          AND po.qp_id = pp.qp_id
+          AND po.node_id = pp.node_id
+        CROSS APPLY pp.pred_xml.nodes
+        (
+            N'(Predicate/ScalarOperator[Logical/@Operation = "AND"]/Logical/ScalarOperator, Predicate/ScalarOperator[not(Logical/@Operation = "AND")])'
+        ) AS pt (part)
+        WHERE po.physical_op = N'Filter'
+        AND   po.startup_expr = 0
+        AND   po.pred_expr_col = 1
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_filter_part_exprs
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            part_ord,
+            expr_name
+        )
+        SELECT DISTINCT
+            fp.database_id,
+            fp.plan_id,
+            fp.stmt_id,
+            fp.qp_id,
+            fp.node_id,
+            fp.part_ord,
+            expr_name =
+                c.col.value(N'(@Column)[1]', N'sysname')
+        FROM #plan_filter_parts AS fp
+        CROSS APPLY fp.part_xml.nodes(N'.//ColumnReference[not(@Table)][not(substring(@Column, 1, 1) = "@")][not(substring(@Column, 1, 10) = "Opt_Bitmap")]') AS c (col)
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_expr_defs
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            is_agg,
+            has_base,
+            def_xml
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            expr_name = NULL,
+            is_agg = 0,
+            has_base = 0,
+            def_xml = d.def.query(N'.')
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_filter_parts AS fp
+                      WHERE fp.database_id = ps0.database_id
+                      AND   fp.plan_id = ps0.plan_id
+                      AND   fp.stmt_id = ps0.stmt_id
+                      AND   fp.qp_id = ps0.qp_id
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//DefinedValue[ScalarOperator]') AS d (def)
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        /*
+        The name and the flags are read from the small copies: the same reads on the plans cost several times as much
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        UPDATE
+            xd
+        SET
+            xd.expr_name =
+                xd.def_xml.value(N'(DefinedValue/ColumnReference/@Column)[1]', N'sysname'),
+            xd.is_agg =
+                xd.def_xml.exist(N'(DefinedValue/ScalarOperator/Aggregate, DefinedValue/ScalarOperator/Sequence)'),
+            xd.has_base =
+                xd.def_xml.exist(N'DefinedValue/ScalarOperator//ColumnReference[@Table][@Database or substring(@Table, 1, 1) = "@" or substring(@Table, 1, 2) = "[@"][not(@Schema = "[sys]")]')
+        FROM #plan_expr_defs AS xd
+        OPTION(RECOMPILE);
+
+        DELETE
+            xd
+        FROM #plan_expr_defs AS xd
+        WHERE xd.expr_name IS NULL
+        OPTION(RECOMPILE);
+
+        /*
+        A join can output an Expr that no DefinedValue defines: the probe result of a semi join (Nested Loops
+        names it in ProbeColumn and an empty DefinedValue; Merge Join only lists it in its OutputList).
+        A batch mode Window Aggregate does the same for COUNT_BIG(*) OVER (...): its DefinedValues are empty.
+        Only that operator can make such an Expr, so it counts as a result of the operator, like an aggregate:
+        a Filter on it cannot run earlier.
+        An Expr that an input RelOp also outputs is only passed through (a Constant Scan or Concatenation
+        outputs the UnionNNNN columns of VALUES and UNION ALL without a DefinedValue), so it does not count.
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_expr_defs
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            is_agg,
+            has_base,
+            def_xml
+        )
+        SELECT DISTINCT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            cn.expr_name,
+            is_agg = 1,
+            has_base = 0,
+            def_xml = NULL
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_filter_parts AS fp
+                      WHERE fp.database_id = ps0.database_id
+                      AND   fp.plan_id = ps0.plan_id
+                      AND   fp.stmt_id = ps0.stmt_id
+                      AND   fp.qp_id = ps0.qp_id
+                  )
+            AND   EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS jo
+                      WHERE jo.database_id = ps0.database_id
+                      AND   jo.plan_id = ps0.plan_id
+                      AND   jo.stmt_id = ps0.stmt_id
+                      AND   jo.qp_id = ps0.qp_id
+                      AND   jo.physical_op IN (N'Nested Loops', N'Merge Join', N'Hash Match', N'Adaptive Join', N'Window Aggregate')
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Nested Loops" or @PhysicalOp = "Merge Join" or @PhysicalOp = "Hash Match" or @PhysicalOp = "Adaptive Join" or @PhysicalOp = "Window Aggregate"]') AS r (rel)
+        CROSS APPLY r.rel.nodes(N'OutputList/ColumnReference[not(@Table)]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                expr_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cn
+        WHERE NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_expr_defs AS xd
+                  WHERE xd.database_id = ps.database_id
+                  AND   xd.plan_id = ps.plan_id
+                  AND   xd.stmt_id = ps.stmt_id
+                  AND   xd.qp_id = ps.qp_id
+                  AND   xd.expr_name = cn.expr_name
+              )
+        AND   r.rel.exist(N'*/RelOp/OutputList/ColumnReference[not(@Table)][@Column = sql:column("cn.expr_name")]') = 0
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_expr_refs
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            ref_name
+        )
+        SELECT DISTINCT
+            xd.database_id,
+            xd.plan_id,
+            xd.stmt_id,
+            xd.qp_id,
+            xd.expr_name,
+            ref_name =
+                c.col.value(N'(@Column)[1]', N'sysname')
+        FROM #plan_expr_defs AS xd
+        CROSS APPLY xd.def_xml.nodes(N'DefinedValue/ScalarOperator//ColumnReference[not(@Table)][not(substring(@Column, 1, 1) = "@")][not(substring(@Column, 1, 10) = "Opt_Bitmap")]') AS c (col)
+        /* an operator can pass an Expr on as itself ([Expr1018] = [Expr1018]); that is not a source */
+        WHERE c.col.value(N'(@Column)[1]', N'sysname') <> xd.expr_name
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        /*
+        Follow the chains: an Expr built from an aggregate or window Expr is one too, and an Expr built
+        from a table column (or from such an Expr) is a base Expr. The depth stops a runaway chain.
+        */
+        WITH
+            chain
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            expr_source,
+            depth
+        ) AS
+        (
+            SELECT DISTINCT
+                xd.database_id,
+                xd.plan_id,
+                xd.stmt_id,
+                xd.qp_id,
+                xd.expr_name,
+                expr_source =
+                    CONVERT(varchar(4), 'agg'),
+                depth = 0
+            FROM #plan_expr_defs AS xd
+            WHERE xd.is_agg = 1
+
+            UNION ALL
+
+            SELECT DISTINCT
+                xd.database_id,
+                xd.plan_id,
+                xd.stmt_id,
+                xd.qp_id,
+                xd.expr_name,
+                expr_source =
+                    CONVERT(varchar(4), 'base'),
+                depth = 0
+            FROM #plan_expr_defs AS xd
+            WHERE xd.has_base = 1
+
+            UNION ALL
+
+            SELECT
+                er.database_id,
+                er.plan_id,
+                er.stmt_id,
+                er.qp_id,
+                er.expr_name,
+                c.expr_source,
+                depth = c.depth + 1
+            FROM chain AS c
+            JOIN #plan_expr_refs AS er
+              ON  er.database_id = c.database_id
+              AND er.plan_id = c.plan_id
+              AND er.stmt_id = c.stmt_id
+              AND er.qp_id = c.qp_id
+              AND er.ref_name = c.expr_name
+            WHERE c.depth < 32
+        )
+        INSERT
+            #plan_expr_class
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            expr_name,
+            expr_source
+        )
+        SELECT DISTINCT
+            c.database_id,
+            c.plan_id,
+            c.stmt_id,
+            c.qp_id,
+            c.expr_name,
+            c.expr_source
+        FROM chain AS c
+        OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+
+        /*
+        A part reads an aggregate or window result when one of its Exprs is an agg Expr: it can only be
+        checked after that operator. Any other part that reads a table column, directly or through
+        an Expr, could have been checked earlier, so rule 8 counts it.
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        UPDATE
+            fp
+        SET
+            fp.part_agg =
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #plan_filter_part_exprs AS fe
+                             JOIN #plan_expr_class AS ec
+                               ON  ec.database_id = fe.database_id
+                               AND ec.plan_id = fe.plan_id
+                               AND ec.stmt_id = fe.stmt_id
+                               AND ec.qp_id = fe.qp_id
+                               AND ec.expr_name = fe.expr_name
+                               AND ec.expr_source = 'agg'
+                             WHERE fe.database_id = fp.database_id
+                             AND   fe.plan_id = fp.plan_id
+                             AND   fe.stmt_id = fp.stmt_id
+                             AND   fe.qp_id = fp.qp_id
+                             AND   fe.node_id = fp.node_id
+                             AND   fe.part_ord = fp.part_ord
+                         )
+                    THEN 1
+                    ELSE 0
+                END,
+            fp.part_flag =
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #plan_filter_part_exprs AS fe
+                             JOIN #plan_expr_class AS ec
+                               ON  ec.database_id = fe.database_id
+                               AND ec.plan_id = fe.plan_id
+                               AND ec.stmt_id = fe.stmt_id
+                               AND ec.qp_id = fe.qp_id
+                               AND ec.expr_name = fe.expr_name
+                               AND ec.expr_source = 'agg'
+                             WHERE fe.database_id = fp.database_id
+                             AND   fe.plan_id = fp.plan_id
+                             AND   fe.stmt_id = fp.stmt_id
+                             AND   fe.qp_id = fp.qp_id
+                             AND   fe.node_id = fp.node_id
+                             AND   fe.part_ord = fp.part_ord
+                         )
+                    THEN 0
+                    /* a bitmap probe is the optimizer's own filter, as in the PROBE-only test */
+                    WHEN fp.part_xml.exist(N'ScalarOperator/Intrinsic[@FunctionName = "PROBE"]') = 1
+                    THEN 0
+                    WHEN fp.part_base_col = 1
+                    THEN 1
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #plan_filter_part_exprs AS fe
+                             JOIN #plan_expr_class AS ec
+                               ON  ec.database_id = fe.database_id
+                               AND ec.plan_id = fe.plan_id
+                               AND ec.stmt_id = fe.stmt_id
+                               AND ec.qp_id = fe.qp_id
+                               AND ec.expr_name = fe.expr_name
+                               AND ec.expr_source = 'base'
+                             WHERE fe.database_id = fp.database_id
+                             AND   fe.plan_id = fp.plan_id
+                             AND   fe.stmt_id = fp.stmt_id
+                             AND   fe.qp_id = fp.qp_id
+                             AND   fe.node_id = fp.node_id
+                             AND   fe.part_ord = fp.part_ord
+                         )
+                    THEN 1
+                    ELSE 0
+                END
+        FROM #plan_filter_parts AS fp
+        OPTION(RECOMPILE);
+
+        /*
+        A wide (per index) UPDATE or MERGE plan has a Filter the optimizer adds to test whether the index key
+        changed (an Expr built from the old and the new value). It reads the rows a Split makes: the Split itself,
+        a Table Spool over the Split, or the second Table Spool that reads that spool (its PrimaryNodeId).
+        That check has no earlier place, so it does not count. Only the statements with a Split are opened.
+        */
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        UPDATE
+            fp
+        SET
+            fp.part_flag = 0
+        FROM #plan_filter_parts AS fp
+        JOIN #plan_statements AS ps
+          ON  ps.database_id = fp.database_id
+          AND ps.plan_id = fp.plan_id
+          AND ps.stmt_id = fp.stmt_id
+          AND ps.qp_id = fp.qp_id
+        WHERE fp.part_flag = 1
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS so
+                  WHERE so.database_id = fp.database_id
+                  AND   so.plan_id = fp.plan_id
+                  AND   so.stmt_id = fp.stmt_id
+                  AND   so.qp_id = fp.qp_id
+                  AND   so.physical_op = N'Split'
+              )
+        AND   ps.qp_xml.exist
+              (
+                  N'.//RelOp[@PhysicalOp = "Filter"][@NodeId = sql:column("fp.node_id")]/Filter/RelOp
+                      [
+                          @PhysicalOp = "Split"
+                       or (
+                              @PhysicalOp = "Table Spool"
+                          and (
+                                  Spool/RelOp/@PhysicalOp = "Split"
+                               or Spool/@PrimaryNodeId = //RelOp[@PhysicalOp = "Table Spool"][Spool/RelOp/@PhysicalOp = "Split"]/@NodeId
+                              )
+                          )
+                      ]'
+              ) = 1
+        OPTION(RECOMPILE);
+    END;
+
+    /*
+    The NOT IN rule. A column that an operator tests with IS NULL, read from the predicate copies
+    that mention IS NULL; and the columns the anti semi joins compare for equality (hash keys,
+    merge join columns, or an equality in the predicate). The equality pass only opens the
+    statements that have an anti semi join.
+    */
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_anti_cols
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id,
+        col_kind,
+        col_ref
+    )
+    SELECT
+        pp.database_id,
+        pp.plan_id,
+        pp.stmt_id,
+        pp.qp_id,
+        pp.node_id,
+        col_kind = 'isnull',
+        cv.col_ref
+    FROM #plan_predicates AS pp
+    CROSS APPLY pp.pred_xml.nodes(N'*//Compare[@CompareOp = "IS"][ScalarOperator[2]/Const[@ConstValue = "NULL"]]/ScalarOperator[1]/Identifier/ColumnReference[@Column]') AS c (col)
+    CROSS APPLY
+    (
+        SELECT
+            col_ref =
+                ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
+                ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
+                ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
+                QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
+    ) AS cv
+    WHERE pp.pred_text LIKE N'%IS NULL%'
+    AND   cv.col_ref IS NOT NULL
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    IF @pp_has_anti_join = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_anti_cols
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_kind,
+            col_ref
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            av.node_id,
+            col_kind = 'eq',
+            cv.col_ref
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS aj
+                      WHERE aj.database_id = ps0.database_id
+                      AND   aj.plan_id = ps0.plan_id
+                      AND   aj.stmt_id = ps0.stmt_id
+                      AND   aj.qp_id = ps0.qp_id
+                      AND   aj.logical_op IN (N'Left Anti Semi Join', N'Right Anti Semi Join')
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@LogicalOp = "Left Anti Semi Join" or @LogicalOp = "Right Anti Semi Join"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS av
+        CROSS APPLY r.rel.nodes
+        (
+            N'(*/*[self::HashKeysBuild or self::HashKeysProbe or self::InnerSideJoinColumns or self::OuterSideJoinColumns]//ColumnReference[@Column],
+               */*[self::Predicate or self::ProbeResidual or self::Residual]//Compare[@CompareOp = "EQ"]/ScalarOperator//ColumnReference[@Column])'
+        ) AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_ref =
+                    ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
+                    QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
+        ) AS cv
+        WHERE cv.col_ref IS NOT NULL
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    The IS NULL test of a NOT IN is often an index seek: the seek's residual Predicate, or a seek key
+    on the column with the value NULL. A merge join anti semi join keeps its test in Residual. The
+    equality of a correlated NOT IN can also sit in a seek's Predicate. Only plans with an anti semi
+    join are read, so most plans are never opened for this.
+    */
+    IF @pp_has_lasj = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_anti_cols
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_kind,
+            col_ref
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_kind = 'isnull',
+            cv.col_ref
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS aj
+                      WHERE aj.database_id = ps0.database_id
+                      AND   aj.plan_id = ps0.plan_id
+                      AND   aj.stmt_id = ps0.stmt_id
+                      AND   aj.qp_id = ps0.qp_id
+                      AND   aj.logical_op = N'Left Anti Semi Join'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek" or @LogicalOp = "Left Anti Semi Join"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes
+        (
+            N'(*/*[self::Predicate or self::Residual]//Compare[@CompareOp = "IS"][ScalarOperator[2]/Const[@ConstValue = "NULL"]]/ScalarOperator[1]/Identifier/ColumnReference[@Column],
+               */SeekPredicates//Prefix[@ScanType = "EQ"][RangeExpressions/ScalarOperator[1]/Const[@ConstValue = "NULL"]]/RangeColumns/ColumnReference[1][@Column],
+               */SeekPredicates//Prefix[@ScanType = "EQ"][RangeExpressions/ScalarOperator[2]/Const[@ConstValue = "NULL"]]/RangeColumns/ColumnReference[2][@Column])'
+        ) AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_ref =
+                    ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
+                    QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
+        ) AS cv
+        WHERE cv.col_ref IS NOT NULL
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    IF @pp_has_lasj = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_anti_cols
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_kind,
+            col_ref
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_kind = 'eq',
+            cv.col_ref
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS aj
+                      WHERE aj.database_id = ps0.database_id
+                      AND   aj.plan_id = ps0.plan_id
+                      AND   aj.stmt_id = ps0.stmt_id
+                      AND   aj.qp_id = ps0.qp_id
+                      AND   aj.logical_op = N'Left Anti Semi Join'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Seek" or @PhysicalOp = "Clustered Index Seek"][*/Predicate]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes
+        (
+            N'*/Predicate//Compare[@CompareOp = "EQ"]/ScalarOperator//ColumnReference[@Column]'
+        ) AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_ref =
+                    ISNULL(c.col.value(N'(@Database)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Schema)[1]', N'nvarchar(258)') + N'.', N'') +
+                    ISNULL(c.col.value(N'(@Table)[1]', N'nvarchar(258)') + N'.', N'') +
+                    QUOTENAME(c.col.value(N'(@Column)[1]', N'sysname'))
+        ) AS cv
+        WHERE cv.col_ref IS NOT NULL
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    Lookups, many-to-many merge joins, Top (1) operators and eager index spools:
+    found by the operator element or an attribute, so only the operators that matter are read.
+    Every pass reads the whole of each plan it opens, so the merge join and Top passes only open
+    the statements that have that operator in #plan_operators.
+    */
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_specials
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id,
+        special,
+        pred_text,
+        fetch_xml,
+        pred_xml,
+        obj_alias
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        lv.node_id,
+        special = 'lookup',
+        lv.pred_text,
+        lv.fetch_xml,
+        lv.pred_xml,
+        lv.obj_alias
+    FROM #plan_statements AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'.//IndexScan[@Lookup = "1"]') AS l (lk)
+    CROSS APPLY
+    (
+        SELECT
+            node_id =
+                l.lk.value(N'(../@NodeId)[1]', N'integer'),
+            pred_text =
+                l.lk.value(N'(Predicate/ScalarOperator/@ScalarString)[1]', N'nvarchar(4000)'),
+            fetch_xml =
+                l.lk.query(N'DefinedValues'),
+            pred_xml =
+                l.lk.query(N'Predicate'),
+            obj_alias =
+                l.lk.value(N'(Object/@Alias)[1]', N'nvarchar(258)')
+    ) AS lv
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    SELECT
+        @pp_has_lookup =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #plan_specials AS psp
+                         WHERE psp.special = 'lookup'
+                     )
+                THEN 1
+                ELSE 0
+            END;
+
+    IF @pp_has_merge_join = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_specials
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            special
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            mv.node_id,
+            special = 'm2m'
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS mj
+                      WHERE mj.database_id = ps0.database_id
+                      AND   mj.plan_id = ps0.plan_id
+                      AND   mj.stmt_id = ps0.stmt_id
+                      AND   mj.qp_id = ps0.qp_id
+                      AND   mj.physical_op = N'Merge Join'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//Merge[@ManyToMany = "1"]') AS m (mg)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    m.mg.value(N'(../@NodeId)[1]', N'integer')
+        ) AS mv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    IF @pp_has_top = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_specials
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            special
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            tv.node_id,
+            special = 'top1'
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS tp
+                      WHERE tp.database_id = ps0.database_id
+                      AND   tp.plan_id = ps0.plan_id
+                      AND   tp.stmt_id = ps0.stmt_id
+                      AND   tp.qp_id = ps0.qp_id
+                      AND   tp.physical_op = N'Top'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Top"][Top/TopExpression/ScalarOperator/Const[@ConstValue = "(1)" or @ConstValue = "1"]]') AS t (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    t.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS tv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    Columns, one row each, so the lists are built from rows and not from the text of an xml value:
+    the columns a lookup fetches and the columns its own predicate reads, and the seek and output
+    columns of an eager index spool. The order of the rows (col_ord) is the order in the plan.
+    The lookup columns are read from the small copies the lookup pass kept, not from the plans.
+    The spool passes only open the statements that have an eager index spool.
+    */
+    IF @pp_has_lookup = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
+        SELECT
+            psp.database_id,
+            psp.plan_id,
+            psp.stmt_id,
+            psp.qp_id,
+            psp.node_id,
+            col_role = 'fetch',
+            is_equality = 0,
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        psp.database_id,
+                        psp.plan_id,
+                        psp.stmt_id,
+                        psp.qp_id,
+                        psp.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM #plan_specials AS psp
+        CROSS APPLY psp.fetch_xml.nodes(N'DefinedValues/DefinedValue/ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        WHERE psp.special = 'lookup'
+        OPTION(RECOMPILE, MAXDOP 1);
+
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
+        SELECT
+            psp.database_id,
+            psp.plan_id,
+            psp.stmt_id,
+            psp.qp_id,
+            psp.node_id,
+            col_role = 'lkpred',
+            is_equality = 0,
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        psp.database_id,
+                        psp.plan_id,
+                        psp.stmt_id,
+                        psp.qp_id,
+                        psp.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM #plan_specials AS psp
+        CROSS APPLY psp.pred_xml.nodes(N'Predicate//ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname'),
+                col_alias =
+                    c.col.value(N'(@Alias)[1]', N'nvarchar(258)')
+        ) AS cv
+        WHERE psp.special = 'lookup'
+        AND   ISNULL(cv.col_alias, N'') = ISNULL(psp.obj_alias, N'')
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_role = 'seek',
+            is_equality =
+                c.col.exist(N'../../self::Prefix'),
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ps.database_id,
+                        ps.plan_id,
+                        ps.stmt_id,
+                        ps.qp_id,
+                        sv.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS sp
+                      WHERE sp.database_id = ps0.database_id
+                      AND   sp.plan_id = ps0.plan_id
+                      AND   sp.stmt_id = ps0.stmt_id
+                      AND   sp.qp_id = ps0.qp_id
+                      AND   sp.physical_op = N'Index Spool'
+                      AND   sp.logical_op = N'Eager Spool'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes(N'Spool/SeekPredicateNew/SeekKeys/*/RangeColumns/ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_role = 'output',
+            is_equality = 0,
+            col_ord =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ps.database_id,
+                        ps.plan_id,
+                        ps.stmt_id,
+                        ps.qp_id,
+                        sv.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS sp
+                      WHERE sp.database_id = ps0.database_id
+                      AND   sp.plan_id = ps0.plan_id
+                      AND   sp.stmt_id = ps0.stmt_id
+                      AND   sp.qp_id = ps0.qp_id
+                      AND   sp.physical_op = N'Index Spool'
+                      AND   sp.logical_op = N'Eager Spool'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes(N'OutputList/ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    A computed column in the spool's output (Expr1004 = LEN(w)) has no table. The columns it is computed
+    from are read below the spool, so the index covers them. They are listed after the plain output columns.
+    */
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        WITH XMLNAMESPACES
+        (
+            DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+        )
+        INSERT
+            #plan_columns
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            stmt_id,
+            qp_id,
+            node_id,
+            col_role,
+            is_equality,
+            col_ord,
+            col_database,
+            col_schema,
+            col_table,
+            col_name
+        )
+        SELECT
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            sv.node_id,
+            col_role = 'output',
+            is_equality = 0,
+            col_ord =
+                1000 +
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ps.database_id,
+                        ps.plan_id,
+                        ps.stmt_id,
+                        ps.qp_id,
+                        sv.node_id
+                    ORDER BY
+                        (SELECT NULL)
+                ),
+            cv.col_database,
+            cv.col_schema,
+            cv.col_table,
+            cv.col_name
+        FROM
+        (
+            SELECT
+                ps0.*
+            FROM #plan_statements AS ps0
+            WHERE EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM #plan_operators AS sp
+                      WHERE sp.database_id = ps0.database_id
+                      AND   sp.plan_id = ps0.plan_id
+                      AND   sp.stmt_id = ps0.stmt_id
+                      AND   sp.qp_id = ps0.qp_id
+                      AND   sp.physical_op = N'Index Spool'
+                      AND   sp.logical_op = N'Eager Spool'
+                  )
+        ) AS ps
+        CROSS APPLY ps.qp_xml.nodes(N'.//RelOp[@PhysicalOp = "Index Spool"][@LogicalOp = "Eager Spool"][OutputList/ColumnReference[not(@Table)]]') AS r (rel)
+        CROSS APPLY
+        (
+            SELECT
+                node_id =
+                    r.rel.value(N'(@NodeId)[1]', N'integer')
+        ) AS sv
+        CROSS APPLY r.rel.nodes(N'.//RelOp[@PhysicalOp = "Compute Scalar"]/ComputeScalar/DefinedValues/DefinedValue/ScalarOperator//ColumnReference[@Table][@Column]') AS c (col)
+        CROSS APPLY
+        (
+            SELECT
+                col_database =
+                    c.col.value(N'(@Database)[1]', N'nvarchar(258)'),
+                col_schema =
+                    c.col.value(N'(@Schema)[1]', N'nvarchar(258)'),
+                col_table =
+                    c.col.value(N'(@Table)[1]', N'nvarchar(258)'),
+                col_name =
+                    c.col.value(N'(@Column)[1]', N'sysname')
+        ) AS cv
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    UPDATE
+        po
+    SET
+        po.is_lookup = 1,
+        po.pred_text = psp.pred_text
+    FROM #plan_operators AS po
+    JOIN #plan_specials AS psp
+      ON  psp.database_id = po.database_id
+      AND psp.plan_id = po.plan_id
+      AND psp.stmt_id = po.stmt_id
+      AND psp.qp_id = po.qp_id
+      AND psp.node_id = po.node_id
+      AND psp.special = 'lookup'
+    OPTION(RECOMPILE);
+
+    UPDATE
+        po
+    SET
+        po.many_to_many = 1
+    FROM #plan_operators AS po
+    JOIN #plan_specials AS psp
+      ON  psp.database_id = po.database_id
+      AND psp.plan_id = po.plan_id
+      AND psp.stmt_id = po.stmt_id
+      AND psp.qp_id = po.qp_id
+      AND psp.node_id = po.node_id
+      AND psp.special = 'm2m'
+    OPTION(RECOMPILE);
+
+    UPDATE
+        po
+    SET
+        po.top_one = 1
+    FROM #plan_operators AS po
+    JOIN #plan_specials AS psp
+      ON  psp.database_id = po.database_id
+      AND psp.plan_id = po.plan_id
+      AND psp.stmt_id = po.stmt_id
+      AND psp.qp_id = po.qp_id
+      AND psp.node_id = po.node_id
+      AND psp.special = 'top1'
+    OPTION(RECOMPILE);
+
+    /*
+    Relations: where a scan sits (its parent and its grandparent)
+    and what sits under a Top or TopN Sort. Only the scans and Top operators the rules can use
+    are listed, and the parents and children come from the edges.
+    */
+    INSERT
+        #plan_relations
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        node_id,
+        parent_node_id,
+        parent_op,
+        gp_node_id,
+        gp_op,
+        child_1_id,
+        child_1_op,
+        gchild_1_id
+    )
+    SELECT
+        po.database_id,
+        po.plan_id,
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        parent_node_id = e1.parent_node_id,
+        parent_op = pa.physical_op,
+        gp_node_id = e3.parent_node_id,
+        gp_op = gp.physical_op,
+        child_1_id = c1.child_node_id,
+        child_1_op = co.physical_op,
+        gchild_1_id = g1.child_node_id
+    FROM #plan_operators AS po
+    LEFT JOIN #plan_edges AS e1
+      ON  e1.database_id = po.database_id
+      AND e1.plan_id = po.plan_id
+      AND e1.stmt_id = po.stmt_id
+      AND e1.qp_id = po.qp_id
+      AND e1.child_node_id = po.node_id
+    LEFT JOIN #plan_operators AS pa
+      ON  pa.database_id = e1.database_id
+      AND pa.plan_id = e1.plan_id
+      AND pa.stmt_id = e1.stmt_id
+      AND pa.qp_id = e1.qp_id
+      AND pa.node_id = e1.parent_node_id
+    LEFT JOIN #plan_edges AS e3
+      ON  e3.database_id = e1.database_id
+      AND e3.plan_id = e1.plan_id
+      AND e3.stmt_id = e1.stmt_id
+      AND e3.qp_id = e1.qp_id
+      AND e3.child_node_id = e1.parent_node_id
+    LEFT JOIN #plan_operators AS gp
+      ON  gp.database_id = e3.database_id
+      AND gp.plan_id = e3.plan_id
+      AND gp.stmt_id = e3.stmt_id
+      AND gp.qp_id = e3.qp_id
+      AND gp.node_id = e3.parent_node_id
+    LEFT JOIN #plan_edges AS c1
+      ON  c1.database_id = po.database_id
+      AND c1.plan_id = po.plan_id
+      AND c1.stmt_id = po.stmt_id
+      AND c1.qp_id = po.qp_id
+      AND c1.parent_node_id = po.node_id
+      AND c1.child_ordinal = 1
+    LEFT JOIN #plan_operators AS co
+      ON  co.database_id = c1.database_id
+      AND co.plan_id = c1.plan_id
+      AND co.stmt_id = c1.stmt_id
+      AND co.qp_id = c1.qp_id
+      AND co.node_id = c1.child_node_id
+    LEFT JOIN #plan_edges AS g1
+      ON  g1.database_id = c1.database_id
+      AND g1.plan_id = c1.plan_id
+      AND g1.stmt_id = c1.stmt_id
+      AND g1.qp_id = c1.qp_id
+      AND g1.parent_node_id = c1.child_node_id
+      AND g1.child_ordinal = 1
+    WHERE
+    (
+        po.is_scan = 1
+    AND
+        (
+             po.table_cardinality >= @pp_scan_rows
+          OR (LEFT(po.obj_table, 2) = N'[@' AND po.est_rows = 1)
+        )
+    )
+    OR    po.physical_op = N'Top'
+    OR    po.logical_op = N'TopN Sort'
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+    /*
+    Shred the warnings and the scalar functions the plan calls.
+    The convert warning belongs to the statement, so it has no node id.
+    */
+    SELECT
+        @current_table = 'plan parsing: shredding warnings';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_warnings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        warning_type,
+        detail
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        warning_type = 'convert',
+        detail =
+            w.warn.value(N'(@Expression)[1]', N'nvarchar(4000)')
+    FROM #plan_statements AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'.//PlanAffectingConvert[@ConvertIssue = "Seek Plan"]') AS w (warn)
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_warnings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        warning_type,
+        detail
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        warning_type = 'udf',
+        detail =
+            uv.function_name +
+            CASE
+                WHEN uv.is_clr = 1
+                THEN N' (CLR)'
+                ELSE N''
+            END
+    FROM #plan_statements AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'.//UserDefinedFunction') AS u (udf)
+    CROSS APPLY
+    (
+        SELECT
+            function_name =
+                u.udf.value(N'(@FunctionName)[1]', N'nvarchar(776)'),
+            is_clr =
+                u.udf.value(N'(@IsClrFunction)[1]', N'bit')
+    ) AS uv
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+    /*
+    Shred the missing index requests: one row per request, columns as lists
+    */
+    SELECT
+        @current_table = 'plan parsing: shredding missing indexes';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    WITH XMLNAMESPACES
+    (
+        DEFAULT N'http://schemas.microsoft.com/sqlserver/2004/07/showplan'
+    )
+    INSERT
+        #plan_missing_indexes
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        qp_id,
+        impact,
+        mi_database,
+        mi_schema,
+        mi_table,
+        equality_cols,
+        inequality_cols,
+        include_cols,
+        n_equality,
+        n_inequality,
+        n_include
+    )
+    SELECT
+        ps.database_id,
+        ps.plan_id,
+        ps.stmt_id,
+        ps.qp_id,
+        mv.impact,
+        mv.mi_database,
+        mv.mi_schema,
+        mv.mi_table,
+        mv.equality_cols,
+        mv.inequality_cols,
+        mv.include_cols,
+        mv.n_equality,
+        mv.n_inequality,
+        mv.n_include
+    FROM #plan_statements AS ps
+    CROSS APPLY ps.qp_xml.nodes(N'QueryPlan/MissingIndexes/MissingIndexGroup') AS g (grp)
+    CROSS APPLY g.grp.nodes(N'MissingIndex') AS m (mi)
+    CROSS APPLY
+    (
+        SELECT
+            impact =
+                g.grp.value(N'(@Impact)[1]', N'float'),
+            mi_database =
+                m.mi.value(N'(@Database)[1]', N'nvarchar(258)'),
+            mi_schema =
+                m.mi.value(N'(@Schema)[1]', N'nvarchar(258)'),
+            mi_table =
+                m.mi.value(N'(@Table)[1]', N'nvarchar(258)'),
+            equality_cols =
+                CONVERT(nvarchar(max), m.mi.query(N'data(ColumnGroup[@Usage = "EQUALITY"]/Column/@Name)')),
+            inequality_cols =
+                CONVERT(nvarchar(max), m.mi.query(N'data(ColumnGroup[@Usage = "INEQUALITY"]/Column/@Name)')),
+            include_cols =
+                CONVERT(nvarchar(max), m.mi.query(N'data(ColumnGroup[@Usage = "INCLUDE"]/Column/@Name)')),
+            n_equality =
+                m.mi.value(N'count(ColumnGroup[@Usage = "EQUALITY"]/Column)', N'integer'),
+            n_inequality =
+                m.mi.value(N'count(ColumnGroup[@Usage = "INEQUALITY"]/Column)', N'integer'),
+            n_include =
+                m.mi.value(N'count(ColumnGroup[@Usage = "INCLUDE"]/Column)', N'integer')
+    ) AS mv
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    The missing index column names are bracketed and come out of the xml separated by single spaces:
+    put commas between them
+    */
+    UPDATE
+        pmi
+    SET
+        pmi.equality_cols = REPLACE(pmi.equality_cols, N'] [', N'], ['),
+        pmi.inequality_cols = REPLACE(pmi.inequality_cols, N'] [', N'], ['),
+        pmi.include_cols = REPLACE(pmi.include_cols, N'] [', N'], [')
+    FROM #plan_missing_indexes AS pmi
+    OPTION(RECOMPILE);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+    /*
+    The MAXDOP settings. A plan that is serial because of MaxDOPSetToOne, and a plan that ran at DOP 2,
+    are only the plan's own doing when the server and database settings do not explain them.
+    Resource Governor can also set a MAXDOP for a workload group: when it is on and a group has
+    max_dop 1, there is no way to tell which group the query ran in, so the serial plan rule skips MaxDOPSetToOne.
+    */
+    SELECT
+        @current_table = 'plan parsing: reading MAXDOP settings';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @pp_server_maxdop = CONVERT(integer, c.value_in_use)
+    FROM sys.configurations AS c
+    WHERE c.name = N'max degree of parallelism';
+
+    IF @pp_engine_edition <> 5
+    BEGIN
+        BEGIN TRY
+            EXECUTE sys.sp_executesql
+                N'
+                SELECT
+                    @rg_maxdop_1 =
+                        CASE
+                            WHEN EXISTS
+                                 (
+                                     SELECT
+                                         1/0
+                                     FROM sys.resource_governor_configuration AS rgc
+                                     WHERE rgc.is_enabled = 1
+                                 )
+                            AND  EXISTS
+                                 (
+                                     SELECT
+                                         1/0
+                                     FROM sys.resource_governor_workload_groups AS wg
+                                     WHERE wg.max_dop = 1
+                                 )
+                            THEN 1
+                            ELSE 0
+                        END;
+                ',
+                N'@rg_maxdop_1 bit OUTPUT',
+                @rg_maxdop_1 = @pp_rg_maxdop_1 OUTPUT;
+        END TRY
+        BEGIN CATCH
+            /* Not allowed to read it: treat it as off */
+            SELECT
+                @pp_rg_maxdop_1 = 0;
+        END CATCH;
+    END;
+
+    SELECT
+        @pp_sql =
+            STUFF
+            (
+                (
+                    SELECT
+                        N' UNION ALL SELECT database_id = ' + CONVERT(nvarchar(20), cd.database_id) +
+                        N', maxdop = CONVERT(integer, dsc.value) FROM ' + QUOTENAME(DB_NAME(cd.database_id)) +
+                        N'.sys.database_scoped_configurations AS dsc WHERE dsc.name = N''MAXDOP'''
+                    FROM
+                    (
+                        SELECT DISTINCT
+                            pf.database_id
+                        FROM #plan_facts AS pf
+                        WHERE EXISTS
+                              (
+                                  SELECT
+                                      1/0
+                                  FROM #plan_statements AS ps
+                                  WHERE ps.database_id = pf.database_id
+                                  AND   ps.plan_id = pf.plan_id
+                                  AND   ps.non_parallel_reason = N'MaxDOPSetToOne'
+                              )
+                        OR
+                        (
+                            @pp_engine_edition = 2
+                        AND pf.max_dop = 2
+                        )
+                    ) AS cd
+                    FOR
+                        XML
+                        PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                11,
+                N''
+            );
+
+    IF  @debug = 1
+    AND @pp_sql IS NOT NULL
+    BEGIN
+        /*
+        PRINT cuts off at 4,000 characters for nvarchar, so a long @pp_sql is printed in chunks.
+        SUBSTRING's third argument is a length, not an end position.
+        */
+        PRINT LEN(@pp_sql);
+
+        WHILE @pp_print_start <= LEN(@pp_sql)
+        BEGIN
+            PRINT SUBSTRING(@pp_sql, @pp_print_start, 4000);
+
+            SELECT
+                @pp_print_start += 4000;
+        END;
+    END;
+
+    IF @pp_sql IS NOT NULL
+    BEGIN
+        INSERT
+            #plan_database_maxdop
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            maxdop
+        )
+        EXECUTE sys.sp_executesql
+            @pp_sql;
+    END;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_sql,
+            @current_table;
+    END;
+
+    /*
+    The rules. Each one is an INSERT into #plan_findings, one row per plan and operator
+    (or one per plan for plan level rules); the output step folds them to one row per plan and rule.
+    */
+    SELECT
+        @current_table = 'plan parsing: running the rules';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    /*
+    Rule 0: plan not checked
+    No plan text, a plan that would not convert to xml, or a plan with no QueryPlan the checks read
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 0,
+        rule_name = 'plan not checked',
+        finding =
+            CASE pf.plan_state
+                WHEN 1
+                THEN N'Query Store has no plan text for this plan, so no plan checks ran.'
+                WHEN 2
+                THEN N'The plan text would not convert to xml (plans nested more than 128 levels deep will not), so no plan checks ran.'
+                ELSE N'The plan converted to xml but has no QueryPlan in it, so no plan checks ran.'
+            END
+    FROM #plan_facts AS pf
+    WHERE pf.plan_state <> 0
+    OR    NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #plan_statements AS ps
+              WHERE ps.database_id = pf.database_id
+              AND   ps.plan_id = pf.plan_id
+          )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 1: eager index spool
+    The finding is the index the spool is building on the fly, scripted.
+    The key is the spool's seek columns (equality first, each column once) and the
+    INCLUDE is its other output columns of the same table; computed columns are left out.
+    */
+    IF @pp_has_eager_index_spool = 1
+    BEGIN
+        INSERT
+            #plan_findings
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            object_name,
+            finding
+        )
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 1,
+            rule_name = 'eager index spool',
+            po.stmt_id,
+            po.qp_id,
+            po.node_id,
+            object_name = st.table_name,
+            finding =
+                CASE
+                    /*
+                    A table variable cannot take CREATE INDEX: the index goes in its DECLARE.
+                    Before SQL Server 2019 the inline index cannot take INCLUDE (Msg 102), and the include
+                    columns cannot go in the key (a max column fails with Msg 1919, a long one fails on
+                    insert with Msg 1946). So there the inline index lists the seek columns only, and the
+                    temp table alternative is a separate CREATE INDEX ... INCLUDE. A table-valued parameter
+                    looks the same in the plan, and its index goes in its table type.
+                    */
+                    WHEN LEFT(sk.col_table, 1) = N'@'
+                    OR   LEFT(sk.col_table, 2) = N'[@'
+                    THEN
+                        N'The optimizer builds a temporary index on the table variable ' + st.table_name +
+                        N' every time this runs. A table variable cannot take CREATE INDEX: declare it with the index, INDEX ' +
+                        QUOTENAME(N'ix_' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'') + N'_spool') +
+                        N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
+                        CASE
+                            WHEN il.include_list IS NOT NULL
+                            AND  NOT (@product_version < 15 AND @azure = 0)
+                            THEN N' INCLUDE (' + il.include_list + N')'
+                            ELSE N''
+                        END +
+                        N' in its DECLARE (or in its table type, for a table-valued parameter)' +
+                        CASE
+                            WHEN il.include_list IS NOT NULL
+                            AND  @product_version < 15
+                            AND  @azure = 0
+                            THEN
+                                N'. That index covers the seek columns only, because an inline index cannot INCLUDE before SQL Server 2019. To cover the other columns, use a temp table and CREATE INDEX ' +
+                                QUOTENAME(N'ix_' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'') + N'_spool') +
+                                N' ON ' + QUOTENAME(N'#' + REPLACE(REPLACE(REPLACE(sk.col_table, N'[', N''), N']', N''), N'@', N'')) +
+                                N' (' + ISNULL(kl.key_list, N'<seek columns>') + N') INCLUDE (' + il.include_list + N');'
+                            ELSE N', or use a temp table with that index.'
+                        END
+                    ELSE
+                        N'The optimizer builds a temporary index on ' + ISNULL(st.table_name, N'a table') +
+                        N' every time this runs. Create the index instead: CREATE INDEX ' +
+                        QUOTENAME(N'ix_' + REPLACE(REPLACE(ISNULL(sk.col_table, N'[table]'), N'[', N''), N']', N'') + N'_spool') +
+                        N' ON ' + ISNULL(st.table_name, N'<table>') + N' (' + ISNULL(kl.key_list, N'<seek columns>') + N')' +
+                        CASE
+                            WHEN il.include_list IS NOT NULL
+                            THEN N' INCLUDE (' + il.include_list + N')'
+                            ELSE N''
+                        END + N';'
+                END
+        FROM #plan_operators AS po
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = po.database_id
+          AND pf.plan_id = po.plan_id
+        OUTER APPLY
+        (
+            SELECT TOP (1)
+                pc.col_database,
+                pc.col_schema,
+                pc.col_table
+            FROM #plan_columns AS pc
+            WHERE pc.database_id = po.database_id
+            AND   pc.plan_id = po.plan_id
+            AND   pc.stmt_id = po.stmt_id
+            AND   pc.qp_id = po.qp_id
+            AND   pc.node_id = po.node_id
+            AND   pc.col_role = 'seek'
+            ORDER BY
+                pc.col_ord
+        ) AS sk
+        CROSS APPLY
+        (
+            SELECT
+                table_name =
+                    ISNULL(sk.col_database + N'.', N'') +
+                    ISNULL(sk.col_schema + N'.', N'') +
+                    sk.col_table
+        ) AS st
+        CROSS APPLY
+        (
+            SELECT
+                key_list =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                N', ' + QUOTENAME(k.col_name)
+                            FROM
+                            (
+                                SELECT
+                                    pc.col_name,
+                                    key_rank =
+                                        MIN
+                                        (
+                                            CASE
+                                                WHEN pc.is_equality = 1
+                                                THEN 0
+                                                ELSE 1
+                                            END
+                                        ),
+                                    key_ord =
+                                        MIN(pc.col_ord)
+                                FROM #plan_columns AS pc
+                                WHERE pc.database_id = po.database_id
+                                AND   pc.plan_id = po.plan_id
+                                AND   pc.stmt_id = po.stmt_id
+                                AND   pc.qp_id = po.qp_id
+                                AND   pc.node_id = po.node_id
+                                AND   pc.col_role = 'seek'
+                                GROUP BY
+                                    pc.col_name
+                            ) AS k
+                            ORDER BY
+                                k.key_rank,
+                                k.key_ord
+                            FOR
+                                XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        2,
+                        N''
+                    )
+        ) AS kl
+        CROSS APPLY
+        (
+            SELECT
+                include_list =
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                N', ' + QUOTENAME(i.col_name)
+                            FROM
+                            (
+                                SELECT
+                                    pc.col_name,
+                                    include_ord =
+                                        MIN(pc.col_ord)
+                                FROM #plan_columns AS pc
+                                WHERE pc.database_id = po.database_id
+                                AND   pc.plan_id = po.plan_id
+                                AND   pc.stmt_id = po.stmt_id
+                                AND   pc.qp_id = po.qp_id
+                                AND   pc.node_id = po.node_id
+                                AND   pc.col_role = 'output'
+                                AND   pc.col_table = sk.col_table
+                                AND   ISNULL(pc.col_schema, N'') = ISNULL(sk.col_schema, N'')
+                                AND   NOT EXISTS
+                                      (
+                                          SELECT
+                                              1/0
+                                          FROM #plan_columns AS pk
+                                          WHERE pk.database_id = pc.database_id
+                                          AND   pk.plan_id = pc.plan_id
+                                          AND   pk.stmt_id = pc.stmt_id
+                                          AND   pk.qp_id = pc.qp_id
+                                          AND   pk.node_id = pc.node_id
+                                          AND   pk.col_role = 'seek'
+                                          AND   pk.col_name = pc.col_name
+                                      )
+                                GROUP BY
+                                    pc.col_name
+                            ) AS i
+                            ORDER BY
+                                i.include_ord
+                            FOR
+                                XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        2,
+                        N''
+                    )
+        ) AS il
+        WHERE po.physical_op = N'Index Spool'
+        AND   po.logical_op = N'Eager Spool'
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    Rule 2: serial plan
+    The reasons that cannot be acted on are left out. A plan that calls a T-SQL scalar UDF is left to rule 3,
+    whatever reason it gives (SQL Server 2019 and earlier say CouldNotGenerateValidParallelPlan for it). CLR scalar
+    functions do not force a serial plan, so they do not send the plan to rule 3.
+    A cursor has a QueryPlan for each phase. Its fetch and refresh steps always say
+    NonParallelizableIntrinsicFunction (the cursor's own machinery), so only the populate step is read.
+    MaxDOPSetToOne only counts when neither the server nor the database MAXDOP is 1 (and no Resource Governor
+    workload group has max_dop 1): then the MAXDOP 1 came from the query, a Query Store hint or a plan guide,
+    unless a setting was 1 when the plan compiled. The plan does not say, so the finding says so.
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 2,
+        rule_name = 'serial plan',
+        finding =
+            N'The plan is serial (NonParallelPlanReason: ' + ps.non_parallel_reason +
+            N') and averages ' + FORMAT(pf.avg_cpu_ms, 'N0') + N' ms of CPU. ' +
+            CASE ps.non_parallel_reason
+                WHEN N'MaxDOPSetToOne'
+                THEN N'The server and database MAXDOP are not 1 now, so unless MAXDOP was 1 when the plan compiled, MAXDOP 1 was asked for in the query, a Query Store hint or a plan guide.'
+                WHEN N'NonParallelizableIntrinsicFunction'
+                THEN N'The query uses an intrinsic function that cannot run in parallel.'
+                WHEN N'CouldNotGenerateValidParallelPlan'
+                THEN N'SQL Server could not build a valid parallel plan for this query.'
+                ELSE N'Look at what the reason names and whether it can be changed.'
+            END
+    FROM #plan_statements AS ps
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = ps.database_id
+      AND pf.plan_id = ps.plan_id
+    LEFT JOIN #plan_database_maxdop AS dm
+      ON dm.database_id = ps.database_id
+    WHERE ps.non_parallel_reason IS NOT NULL
+    AND   (ps.operation_type IS NULL OR ps.operation_type = N'PopulateQuery')
+    AND   ps.non_parallel_reason NOT IN
+          (
+              N'EstimatedDOPIsOne',
+              N'NoParallelPlansInDesktopOrExpressEdition',
+              N'NoParallelCreateIndexInNonEnterpriseEdition',
+              N'TSQLUserDefinedFunctionsNotParallelizable'
+          )
+    AND   pf.avg_cpu_ms >= @pp_cpu_ms
+    AND   NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #plan_warnings AS pw
+              WHERE pw.database_id = ps.database_id
+              AND   pw.plan_id = ps.plan_id
+              AND   pw.warning_type = 'udf'
+              AND   pw.detail NOT LIKE N'% (CLR)'
+          )
+    AND
+    (
+         ps.non_parallel_reason <> N'MaxDOPSetToOne'
+      OR
+        (
+            ISNULL(@pp_server_maxdop, 0) <> 1
+        AND ISNULL(dm.maxdop, 0) <> 1
+        AND @pp_rg_maxdop_1 = 0
+        )
+    )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 3: scalar UDF
+    Inlined functions do not appear in the plan, so what shows here was not inlined.
+    The finding only says the functions force a serial plan when the plan gives the UDF reason:
+    TSQLUserDefinedFunctionsNotParallelizable, or CouldNotGenerateValidParallelPlan on SQL Server 2019
+    and earlier, which is what those versions report for a T-SQL scalar UDF.
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 3,
+        rule_name = 'scalar UDF',
+        finding =
+            N'The plan calls ' + fn.function_names +
+            N'. These run once per row' +
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #plan_statements AS ps
+                         WHERE ps.database_id = pf.database_id
+                         AND   ps.plan_id = pf.plan_id
+                         AND   (ps.operation_type IS NULL OR ps.operation_type = N'PopulateQuery')
+                         AND
+                         (
+                              ps.non_parallel_reason = N'TSQLUserDefinedFunctionsNotParallelizable'
+                           OR
+                             (
+                                 ps.non_parallel_reason = N'CouldNotGenerateValidParallelPlan'
+                             AND @product_version < 16
+                             AND @azure = 0
+                             )
+                         )
+                     )
+                AND  EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #plan_warnings AS pw
+                         WHERE pw.database_id = pf.database_id
+                         AND   pw.plan_id = pf.plan_id
+                         AND   pw.warning_type = 'udf'
+                         AND   pw.detail NOT LIKE N'% (CLR)'
+                     )
+                THEN N' and force a serial plan (the plan gives that as its NonParallelPlanReason).'
+                ELSE N'.'
+            END
+    FROM #plan_facts AS pf
+    CROSS APPLY
+    (
+        SELECT
+            function_names =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' + pw.detail
+                        FROM #plan_warnings AS pw
+                        WHERE pw.database_id = pf.database_id
+                        AND   pw.plan_id = pf.plan_id
+                        AND   pw.warning_type = 'udf'
+                        GROUP BY
+                            pw.detail
+                        ORDER BY
+                            pw.detail
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS fn
+    WHERE fn.function_names IS NOT NULL
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 4: lookup with predicate
+    The columns to add are the ones the lookup fetches and the ones of its own table that its predicate reads:
+    with both in the index, the seek needs no lookup. In a self-join the predicate can also read the other
+    alias of the same table, which is an outer row value, so the predicate columns are matched on the alias too. Lookups into system tables (schema sys) are left out.
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 4,
+        rule_name = 'lookup with predicate',
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        object_name = tn.table_name,
+        finding =
+            N'The lookup into ' + ISNULL(tn.table_name, N'a table') + N' applies its own predicate: ' +
+            LEFT(po.pred_text, @pp_text_chars) +
+            CASE
+                WHEN LEN(po.pred_text) > @pp_text_chars
+                THEN N'...'
+                ELSE N''
+            END +
+            N'. Rows are fetched before they are filtered. ' +
+            CASE
+                WHEN fl.fetch_list IS NOT NULL
+                AND  pl.pred_list IS NOT NULL
+                THEN N'It fetches ' + fl.fetch_list + N' and filters on ' + pl.pred_list
+                WHEN fl.fetch_list IS NOT NULL
+                THEN N'It fetches ' + fl.fetch_list
+                WHEN pl.pred_list IS NOT NULL
+                THEN N'It fetches no other columns and filters on ' + pl.pred_list
+                ELSE N'It fetches <columns not listed>'
+            END +
+            N': add them to the index the seek uses as INCLUDE (or key) columns. The number of lookups swings with the parameter values, so this is also a parameter sensitivity risk.'
+    FROM #plan_operators AS po
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = po.database_id
+      AND pf.plan_id = po.plan_id
+    CROSS APPLY
+    (
+        SELECT
+            table_name =
+                ISNULL(po.obj_database + N'.', N'') +
+                ISNULL(po.obj_schema + N'.', N'') +
+                po.obj_table
+    ) AS tn
+    CROSS APPLY
+    (
+        SELECT
+            fetch_list =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' + QUOTENAME(f.col_name)
+                        FROM
+                        (
+                            SELECT
+                                pc.col_name,
+                                fetch_ord =
+                                    MIN(pc.col_ord)
+                            FROM #plan_columns AS pc
+                            WHERE pc.database_id = po.database_id
+                            AND   pc.plan_id = po.plan_id
+                            AND   pc.stmt_id = po.stmt_id
+                            AND   pc.qp_id = po.qp_id
+                            AND   pc.node_id = po.node_id
+                            AND   pc.col_role = 'fetch'
+                            GROUP BY
+                                pc.col_name
+                        ) AS f
+                        ORDER BY
+                            f.fetch_ord
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS fl
+    CROSS APPLY
+    (
+        SELECT
+            pred_list =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' + QUOTENAME(k.col_name)
+                        FROM
+                        (
+                            SELECT
+                                pc.col_name,
+                                pred_ord =
+                                    MIN(pc.col_ord)
+                            FROM #plan_columns AS pc
+                            WHERE pc.database_id = po.database_id
+                            AND   pc.plan_id = po.plan_id
+                            AND   pc.stmt_id = po.stmt_id
+                            AND   pc.qp_id = po.qp_id
+                            AND   pc.node_id = po.node_id
+                            AND   pc.col_role = 'lkpred'
+                            AND   pc.col_table = po.obj_table
+                            AND   ISNULL(pc.col_schema, N'') = ISNULL(po.obj_schema, N'')
+                            AND   ISNULL(pc.col_database, N'') = ISNULL(po.obj_database, N'')
+                            AND   NOT EXISTS
+                                  (
+                                      SELECT
+                                          1/0
+                                      FROM #plan_columns AS pf2
+                                      WHERE pf2.database_id = pc.database_id
+                                      AND   pf2.plan_id = pc.plan_id
+                                      AND   pf2.stmt_id = pc.stmt_id
+                                      AND   pf2.qp_id = pc.qp_id
+                                      AND   pf2.node_id = pc.node_id
+                                      AND   pf2.col_role = 'fetch'
+                                      AND   pf2.col_name = pc.col_name
+                                  )
+                            GROUP BY
+                                pc.col_name
+                        ) AS k
+                        ORDER BY
+                            k.pred_ord
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS pl
+    WHERE
+    (
+         po.is_lookup = 1
+      OR po.physical_op = N'RID Lookup'
+    )
+    AND   po.pred_text IS NOT NULL
+    AND   ISNULL(po.obj_schema, N'') <> N'[sys]'
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 5: NOT IN on nullable column
+    The optimizer only adds the IS NULL handling when it cannot prove the column is NOT NULL.
+    The handling is a Left Anti Semi Join; the IS NULL test is in its own predicate, or in the
+    predicate or seek of an operator in its inner (second) branch, and it is on a column that an
+    anti semi join in the plan compares with = (hash keys, merge columns or an equality in the
+    predicate). An IS NULL on any other column, or a column compared with < or >, does not count.
+    The query text must also have NOT IN or <> ALL: a hand-written wildcard such as
+    NOT EXISTS (... WHERE t.v = o.v OR t.v IS NULL) puts the same shape in the plan as a
+    correlated NOT IN, so the shape alone cannot tell them apart. The text test is a gate on the
+    shape, not the proof: it can match a comment, but only a plan that already has the shape gets there.
+    */
+    IF @pp_has_lasj = 1
+    BEGIN
+        WITH inner_nodes AS
+        (
+            SELECT
+                lj.database_id,
+                lj.plan_id,
+                lj.stmt_id,
+                lj.qp_id,
+                lasj_node_id = lj.node_id,
+                node_id = lj.node_id,
+                is_inner = CONVERT(bit, 0)
+            FROM #plan_operators AS lj
+            WHERE lj.logical_op = N'Left Anti Semi Join'
+
+            UNION ALL
+
+            SELECT
+                lj.database_id,
+                lj.plan_id,
+                lj.stmt_id,
+                lj.qp_id,
+                lasj_node_id = lj.node_id,
+                node_id = e.child_node_id,
+                is_inner = CONVERT(bit, 1)
+            FROM #plan_operators AS lj
+            JOIN #plan_edges AS e
+              ON  e.database_id = lj.database_id
+              AND e.plan_id = lj.plan_id
+              AND e.stmt_id = lj.stmt_id
+              AND e.qp_id = lj.qp_id
+              AND e.parent_node_id = lj.node_id
+              AND e.child_ordinal = 2
+            WHERE lj.logical_op = N'Left Anti Semi Join'
+
+            UNION ALL
+
+            SELECT
+                i.database_id,
+                i.plan_id,
+                i.stmt_id,
+                i.qp_id,
+                i.lasj_node_id,
+                node_id = e.child_node_id,
+                is_inner = CONVERT(bit, 1)
+            FROM inner_nodes AS i
+            JOIN #plan_edges AS e
+              ON  e.database_id = i.database_id
+              AND e.plan_id = i.plan_id
+              AND e.stmt_id = i.stmt_id
+              AND e.qp_id = i.qp_id
+              AND e.parent_node_id = i.node_id
+            WHERE i.is_inner = 1
+        )
+        INSERT
+            #plan_findings
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            finding
+        )
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 5,
+            rule_name = 'NOT IN on nullable column',
+            stmt_id = i.stmt_id,
+            qp_id = i.qp_id,
+            node_id =
+                MIN(i.lasj_node_id),
+            finding =
+                N'The plan has an anti join that handles NULLs: it tests ' + nl.col_ref +
+                N' IS NULL, and that column is one the anti join compares. The optimizer only adds that handling when it cannot prove ' +
+                N'the column is NOT NULL, as with NOT IN over a nullable column. Rewrite with NOT EXISTS, or make the column NOT NULL.'
+        FROM inner_nodes AS i
+        JOIN #plan_anti_cols AS nl
+          ON  nl.database_id = i.database_id
+          AND nl.plan_id = i.plan_id
+          AND nl.stmt_id = i.stmt_id
+          AND nl.qp_id = i.qp_id
+          AND nl.node_id = i.node_id
+          AND nl.col_kind = 'isnull'
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = i.database_id
+          AND pf.plan_id = i.plan_id
+        WHERE pf.not_in_text = 1
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_anti_cols AS eq
+                  WHERE eq.database_id = nl.database_id
+                  AND   eq.plan_id = nl.plan_id
+                  AND   eq.stmt_id = nl.stmt_id
+                  AND   eq.qp_id = nl.qp_id
+                  AND   eq.col_kind = 'eq'
+                  AND   eq.col_ref = nl.col_ref
+              )
+        GROUP BY
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            i.stmt_id,
+            i.qp_id,
+            nl.col_ref
+        OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+    END;
+
+    /*
+    Rule 6: implicit conversion prevents seek
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 6,
+        rule_name = 'implicit conversion prevents seek',
+        pw.stmt_id,
+        pw.qp_id,
+        pw.node_id,
+        finding =
+            N'An implicit conversion keeps SQL Server from using an index seek: ' +
+            LEFT(pw.detail, @pp_text_chars) +
+            CASE
+                WHEN LEN(pw.detail) > @pp_text_chars
+                THEN N'...'
+                ELSE N''
+            END +
+            N'. Make the data types of the column and the value match.'
+    FROM #plan_warnings AS pw
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = pw.database_id
+      AND pf.plan_id = pw.plan_id
+    WHERE pw.warning_type = 'convert'
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 7: missing index request
+    Only for plans that are expensive or run a lot, by Query Store's numbers
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 7,
+        rule_name = 'missing index request',
+        object_name = tn.table_name,
+        finding =
+            N'Missing index request on ' + ISNULL(tn.table_name, N'a table') +
+            N' (estimated impact ' + ISNULL(CONVERT(nvarchar(30), CONVERT(decimal(38,1), pmi.impact)), N'?') + N'%): CREATE INDEX [ix_missing] ON ' +
+            ISNULL(tn.table_name, N'<table>') + N' (' +
+            ISNULL
+            (
+                NULLIF
+                (
+                    pmi.equality_cols +
+                    CASE
+                        WHEN pmi.equality_cols <> N''
+                        AND  pmi.inequality_cols <> N''
+                        THEN N', '
+                        ELSE N''
+                    END +
+                    pmi.inequality_cols,
+                    N''
+                ),
+                N'<none>'
+            ) + N')' +
+            CASE
+                WHEN pmi.include_cols <> N''
+                THEN N' INCLUDE (' + pmi.include_cols + N')'
+                ELSE N''
+            END + N';' +
+            CASE
+                WHEN pmi.n_equality + pmi.n_inequality > @pp_mi_max_keys
+                THEN N' It has ' + CONVERT(nvarchar(20), pmi.n_equality + pmi.n_inequality) + N' key columns, which is a lot.'
+                ELSE N''
+            END +
+            CASE
+                WHEN pmi.n_include > @pp_mi_max_includes
+                THEN N' It has ' + CONVERT(nvarchar(20), pmi.n_include) + N' included columns, which is a lot.'
+                ELSE N''
+            END +
+            CASE
+                WHEN pmi.requests_on_table > 1
+                THEN N' The plan has ' + CONVERT(nvarchar(20), pmi.requests_on_table) + N' requests for this table: look at them together.'
+                ELSE N''
+            END
+    FROM
+    (
+        SELECT
+            m.*,
+            requests_on_table =
+                COUNT_BIG(*) OVER
+                (
+                    PARTITION BY
+                        m.database_id,
+                        m.plan_id,
+                        m.mi_database,
+                        m.mi_schema,
+                        m.mi_table
+                )
+        FROM #plan_missing_indexes AS m
+    ) AS pmi
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = pmi.database_id
+      AND pf.plan_id = pmi.plan_id
+    CROSS APPLY
+    (
+        SELECT
+            table_name =
+                ISNULL(pmi.mi_database + N'.', N'') +
+                ISNULL(pmi.mi_schema + N'.', N'') +
+                pmi.mi_table
+    ) AS tn
+    WHERE
+    (
+         pf.avg_cpu_ms >= @pp_cpu_ms
+      OR pf.avg_duration_ms >= @pp_duration_ms
+      OR pf.executions_per_day >= @pp_execs_per_day
+    )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 8: late filter
+    A Filter operator whose predicate reads a table column could have filtered earlier, in the scan or seek.
+    A Filter that only probes a bitmap (the test rule 9 uses) is the optimizer's own and is left out.
+    A predicate that reads a computed value (an Expr) is checked part by part (the conditions of a
+    top level AND). A part that reads an aggregate or window function result, directly or through a
+    Compute Scalar chain, can only be checked here, so it does not count. Any other part that reads a
+    table column, directly or through a Compute Scalar, counts. The plan has no text for each part, so
+    the finding shows the whole predicate and says when part of it reads an aggregate or window result.
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 8,
+        rule_name = 'late filter',
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        finding =
+            N'A Filter operator applies a predicate on table columns after the rows were read: ' +
+            LEFT(po.pred_text, @pp_text_chars) +
+            CASE
+                WHEN LEN(po.pred_text) > @pp_text_chars
+                THEN N'...'
+                ELSE N''
+            END +
+            CASE
+                WHEN fc.agg_parts > 0
+                THEN N' (part of the predicate reads an aggregate or window function result, which only exists here; the table column part could filter earlier)'
+                ELSE N''
+            END +
+            N'. Rows were read, joined or computed before they were thrown away; look for a way to filter earlier.'
+    FROM #plan_operators AS po
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = po.database_id
+      AND pf.plan_id = po.plan_id
+    CROSS APPLY
+    (
+        SELECT
+            flag_parts =
+                ISNULL(SUM(CASE WHEN fp.part_flag = 1 THEN 1 ELSE 0 END), 0),
+            agg_parts =
+                ISNULL(SUM(CASE WHEN fp.part_agg = 1 THEN 1 ELSE 0 END), 0)
+        FROM #plan_filter_parts AS fp
+        WHERE fp.database_id = po.database_id
+        AND   fp.plan_id = po.plan_id
+        AND   fp.stmt_id = po.stmt_id
+        AND   fp.qp_id = po.qp_id
+        AND   fp.node_id = po.node_id
+    ) AS fc
+    WHERE po.physical_op = N'Filter'
+    AND   po.startup_expr = 0
+    AND   po.pred_text IS NOT NULL
+    AND   NOT
+          (
+              po.pred_text LIKE N'PROBE(%'
+              AND po.pred_text NOT LIKE N'%AND [^P]%'
+          )
+    AND
+    (
+        (
+            ISNULL(po.pred_expr_col, 0) = 0
+        AND po.pred_base_col = 1
+        )
+     OR
+        (
+            po.pred_expr_col = 1
+        AND fc.flag_parts > 0
+        )
+    )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 9: scan with residual predicate
+    A predicate that only probes a bitmap is not residual
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 9,
+        rule_name = 'scan with residual predicate',
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        object_name = tn.table_name,
+        finding =
+            N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + FORMAT(po.table_cardinality, 'N0') +
+            N' rows) applies a predicate to every row it reads: ' +
+            LEFT(po.pred_text, @pp_text_chars) +
+            CASE
+                WHEN LEN(po.pred_text) > @pp_text_chars
+                THEN N'...'
+                ELSE N''
+            END +
+            N'. An index on the predicate columns would let it seek.'
+    FROM #plan_operators AS po
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = po.database_id
+      AND pf.plan_id = po.plan_id
+    CROSS APPLY
+    (
+        SELECT
+            table_name =
+                ISNULL(po.obj_database + N'.', N'') +
+                ISNULL(po.obj_schema + N'.', N'') +
+                po.obj_table
+    ) AS tn
+    WHERE po.is_scan = 1
+    AND   po.pred_text IS NOT NULL
+    AND   po.table_cardinality >= @pp_scan_rows
+    AND   NOT
+          (
+              po.pred_text LIKE N'PROBE(%'
+              AND po.pred_text NOT LIKE N'%AND [^P]%'
+          )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 10: non-SARGable predicate
+    Read from the predicate in the plan: a function, an implicit conversion, a CASE or COALESCE around a column, or a LIKE that starts with %
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 10,
+        rule_name = 'non-SARGable predicate',
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        object_name = tn.table_name,
+        finding =
+            N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' has a predicate that cannot use an index seek (' +
+            STUFF
+            (
+                CASE
+                    WHEN po.pred_intrinsic = 1
+                    THEN N', a function wraps a column'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN po.pred_convert = 1
+                    THEN N', an implicit conversion wraps a column'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN po.pred_if = 1
+                    THEN N', a CASE or COALESCE wraps a column'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN po.pred_like_lead = 1
+                    THEN N', LIKE starts with a wildcard'
+                    ELSE N''
+                END,
+                1,
+                2,
+                N''
+            ) + N'): ' +
+            LEFT(po.pred_text, @pp_text_chars) +
+            CASE
+                WHEN LEN(po.pred_text) > @pp_text_chars
+                THEN N'...'
+                ELSE N''
+            END
+    FROM #plan_operators AS po
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = po.database_id
+      AND pf.plan_id = po.plan_id
+    CROSS APPLY
+    (
+        SELECT
+            table_name =
+                ISNULL(po.obj_database + N'.', N'') +
+                ISNULL(po.obj_schema + N'.', N'') +
+                po.obj_table
+    ) AS tn
+    WHERE po.is_scan = 1
+    AND   po.pred_text IS NOT NULL
+    AND
+    (
+         po.pred_intrinsic = 1
+      OR po.pred_convert = 1
+      OR po.pred_if = 1
+      OR po.pred_like_lead = 1
+    )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 11: multi-statement table-valued function
+    A table-valued function operator with a schema is a function you wrote
+    (built in functions have none); inline functions are expanded and do not show up
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 11,
+        rule_name = 'multi-statement table-valued function',
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        object_name = tn.table_name,
+        finding =
+            N'The plan calls the multi-statement table-valued function ' + ISNULL(tn.table_name, N'') +
+            N', which the optimizer cannot see into and usually guesses at row counts for.' +
+            CASE
+                WHEN pf.compatibility_level >= 140
+                THEN N' Database compatibility level is ' + CONVERT(nvarchar(20), pf.compatibility_level) + N', so interleaved execution can fix the row guess if the plan is not already using it; an inline function is still better.'
+                ELSE N' An inline table-valued function is usually the fix.'
+            END
+    FROM #plan_operators AS po
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = po.database_id
+      AND pf.plan_id = po.plan_id
+    CROSS APPLY
+    (
+        SELECT
+            table_name =
+                ISNULL(po.obj_database + N'.', N'') +
+                ISNULL(po.obj_schema + N'.', N'') +
+                po.obj_table
+    ) AS tn
+    WHERE po.physical_op = N'Table-valued function'
+    AND   po.obj_schema IS NOT NULL
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 12: TOP over scan
+    A TopN Sort over a scan, or a Top over a scan that filters; the scan may sit under a Compute Scalar or Parallelism.
+    A Top (1) is skipped: the optimizer adds one for EXISTS and for the NOT IN null check, and a plain unordered TOP (1) does not count.
+    */
+    IF @pp_has_top = 1
+    BEGIN
+        INSERT
+            #plan_findings
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            object_name,
+            finding
+        )
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 12,
+            rule_name = 'TOP over scan',
+            top_op.stmt_id,
+            top_op.qp_id,
+            top_op.node_id,
+            object_name = tn.table_name,
+            finding =
+                N'A ' +
+                CASE
+                    WHEN top_op.logical_op = N'TopN Sort'
+                    THEN N'TopN Sort'
+                    ELSE N'Top'
+                END +
+                N' sits over a scan of ' + ISNULL(tn.table_name, N'a table') +
+                CASE
+                    WHEN top_op.logical_op = N'TopN Sort'
+                    THEN N': the whole table is read and sorted to find the top rows. An index in the ORDER BY order lets it read only the rows it needs.'
+                    ELSE N' that filters rows (' + LEFT(sc.pred_text, @pp_text_chars) +
+                         CASE
+                             WHEN LEN(sc.pred_text) > @pp_text_chars
+                             THEN N'...'
+                             ELSE N''
+                         END +
+                         N'): the scan can read a lot of the table before it finds enough matching rows. An index on the filter columns helps.'
+                END
+        FROM #plan_operators AS top_op
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = top_op.database_id
+          AND pf.plan_id = top_op.plan_id
+        JOIN #plan_relations AS rl
+          ON  rl.database_id = top_op.database_id
+          AND rl.plan_id = top_op.plan_id
+          AND rl.stmt_id = top_op.stmt_id
+          AND rl.qp_id = top_op.qp_id
+          AND rl.node_id = top_op.node_id
+        JOIN #plan_operators AS c1
+          ON  c1.database_id = top_op.database_id
+          AND c1.plan_id = top_op.plan_id
+          AND c1.stmt_id = top_op.stmt_id
+          AND c1.qp_id = top_op.qp_id
+          AND c1.node_id = rl.child_1_id
+        LEFT JOIN #plan_operators AS c2
+          ON  c2.database_id = c1.database_id
+          AND c2.plan_id = c1.plan_id
+          AND c2.stmt_id = c1.stmt_id
+          AND c2.qp_id = c1.qp_id
+          AND c2.node_id = rl.gchild_1_id
+          AND c1.physical_op IN (N'Compute Scalar', N'Parallelism')
+        CROSS APPLY
+        (
+            SELECT
+                is_scan =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.is_scan
+                        ELSE c2.is_scan
+                    END,
+                pred_text =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.pred_text
+                        ELSE c2.pred_text
+                    END,
+                obj_database =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.obj_database
+                        ELSE c2.obj_database
+                    END,
+                obj_schema =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.obj_schema
+                        ELSE c2.obj_schema
+                    END,
+                obj_table =
+                    CASE
+                        WHEN c1.is_scan = 1
+                        THEN c1.obj_table
+                        ELSE c2.obj_table
+                    END
+        ) AS sc
+        CROSS APPLY
+        (
+            SELECT
+                table_name =
+                    ISNULL(sc.obj_database + N'.', N'') +
+                    ISNULL(sc.obj_schema + N'.', N'') +
+                    sc.obj_table
+        ) AS tn
+        WHERE
+        (
+             top_op.logical_op = N'TopN Sort'
+          OR
+            (
+                top_op.physical_op = N'Top'
+            AND ISNULL(top_op.top_one, 0) = 0
+            )
+        )
+        AND   sc.is_scan = 1
+        AND
+        (
+             top_op.logical_op = N'TopN Sort'
+          OR sc.pred_text IS NOT NULL
+        )
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    Rule 13: many-to-many merge join
+    */
+    IF @pp_has_merge_join = 1
+    BEGIN
+        INSERT
+            #plan_findings
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            finding
+        )
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 13,
+            rule_name = 'many-to-many merge join',
+            po.stmt_id,
+            po.qp_id,
+            po.node_id,
+            finding =
+                N'A Merge Join is many-to-many: neither input is unique on the join columns, so SQL Server keeps the duplicate rows in a worktable in tempdb. Unique indexes or a different join may avoid it.'
+        FROM #plan_operators AS po
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = po.database_id
+          AND pf.plan_id = po.plan_id
+        WHERE po.physical_op = N'Merge Join'
+        AND   po.many_to_many = 1
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    Rule 14: table variable
+    A scan of a table variable estimated at one row, feeding a join, below compatibility level 150.
+    Table valued parameters look the same.
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 14,
+        rule_name = 'table variable',
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        object_name = po.obj_table,
+        finding =
+            N'The plan scans the table variable ' + po.obj_table +
+            N' with an estimate of 1 row, at compatibility level ' + CONVERT(nvarchar(20), pf.compatibility_level) +
+            N', and joins it. Table variables below level 150 get a fixed one row guess however many rows they hold; a temp table gets real statistics. Table valued parameters look the same here.'
+    FROM #plan_operators AS po
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = po.database_id
+      AND pf.plan_id = po.plan_id
+    JOIN #plan_relations AS rl
+      ON  rl.database_id = po.database_id
+      AND rl.plan_id = po.plan_id
+      AND rl.stmt_id = po.stmt_id
+      AND rl.qp_id = po.qp_id
+      AND rl.node_id = po.node_id
+    WHERE po.is_scan = 1
+    AND   LEFT(po.obj_table, 2) = N'[@'
+    AND   po.est_rows = 1
+    AND   pf.compatibility_level < 150
+    AND
+    (
+         rl.parent_op IN (N'Nested Loops', N'Hash Match', N'Merge Join')
+      OR
+        (
+            rl.parent_op IN (N'Compute Scalar', N'Sort', N'Filter', N'Parallelism')
+        AND rl.gp_op IN (N'Nested Loops', N'Hash Match', N'Merge Join')
+        )
+    )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 15: remote query
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        stmt_id,
+        qp_id,
+        node_id,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 15,
+        rule_name = 'remote query',
+        po.stmt_id,
+        po.qp_id,
+        po.node_id,
+        object_name = po.obj_table,
+        finding =
+            N'The plan has a ' + po.physical_op + N' operator: part of the query runs on a linked server, where the optimizer has few statistics and cannot always push predicates down.'
+    FROM #plan_operators AS po
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = po.database_id
+      AND pf.plan_id = po.plan_id
+    WHERE po.physical_op IN
+          (
+              N'Remote Query',
+              N'Remote Scan',
+              N'Remote Index Scan',
+              N'Remote Index Seek',
+              N'Remote Insert',
+              N'Remote Update',
+              N'Remote Delete'
+          )
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 16: wide DML
+    One INSERT, UPDATE, DELETE or MERGE statement that maintains many indexes.
+    An object with no table name is not one of yours: a cursor worktable ([CWT_PrimaryKey]) is left out
+    */
+    INSERT
+        #plan_dml_indexes
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        stmt_id,
+        obj_schema,
+        obj_table,
+        obj_index
+    )
+    SELECT
+        pob.database_id,
+        pob.plan_id,
+        pob.stmt_id,
+        pob.obj_schema,
+        pob.obj_table,
+        pob.obj_index
+    FROM #plan_objects AS pob
+    JOIN #plan_operators AS po
+      ON  po.database_id = pob.database_id
+      AND po.plan_id = pob.plan_id
+      AND po.stmt_id = pob.stmt_id
+      AND po.qp_id = pob.qp_id
+      AND po.node_id = pob.node_id
+    WHERE pob.obj_index IS NOT NULL
+    AND   pob.obj_table IS NOT NULL
+    AND
+    (
+         po.physical_op LIKE N'%Insert'
+      OR po.physical_op LIKE N'%Update'
+      OR po.physical_op LIKE N'%Delete'
+      OR po.physical_op LIKE N'%Merge'
+    )
+    AND   po.physical_op NOT LIKE N'Remote%'
+    GROUP BY
+        pob.database_id,
+        pob.plan_id,
+        pob.stmt_id,
+        pob.obj_schema,
+        pob.obj_table,
+        pob.obj_index
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        object_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 16,
+        rule_name = 'wide DML',
+        object_name =
+            CASE
+                WHEN dm.min_table = dm.max_table
+                THEN dm.min_table
+            END,
+        finding =
+            N'One ' + ISNULL(dm.stmt_type, N'DML') + N' statement maintains ' + CONVERT(nvarchar(20), dm.index_count) +
+            N' indexes (' + dm.index_names + N'). Every row written is written once per index; check that each index earns its cost.'
+    FROM
+    (
+        SELECT
+            d.database_id,
+            d.plan_id,
+            d.stmt_id,
+            stmt_type = MAX(ps.stmt_type),
+            index_count = COUNT_BIG(*),
+            min_table = MIN(d.obj_table),
+            max_table = MAX(d.obj_table),
+            index_names =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' + d2.obj_index
+                        FROM #plan_dml_indexes AS d2
+                        WHERE d2.database_id = d.database_id
+                        AND   d2.plan_id = d.plan_id
+                        AND   d2.stmt_id = d.stmt_id
+                        ORDER BY
+                            d2.obj_index
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+        FROM #plan_dml_indexes AS d
+        LEFT JOIN #plan_statements AS ps
+          ON  ps.database_id = d.database_id
+          AND ps.plan_id = d.plan_id
+          AND ps.stmt_id = d.stmt_id
+        GROUP BY
+            d.database_id,
+            d.plan_id,
+            d.stmt_id
+        HAVING
+            COUNT_BIG(*) >= @pp_wide_dml_indexes
+    ) AS dm
+    JOIN #plan_facts AS pf
+      ON  pf.database_id = dm.database_id
+      AND pf.plan_id = dm.plan_id
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    /*
+    Rule 17: Standard Edition batch mode DOP 2
+    Standard Edition caps batch mode at DOP 2. The plan used batch mode, Query Store saw DOP 2,
+    and the effective MAXDOP (server, database scoped) is 0 or higher than 2: then the cap is what did it.
+    No Query Store hint and no plan guide asked for MAXDOP 2. The MAXDOP settings were read above.
+    A MAXDOP 2 written in the query text cannot be told apart, so the finding says "likely".
+    */
+    IF @pp_engine_edition = 2
+    BEGIN
+        INSERT
+            #plan_findings
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            finding
+        )
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 17,
+            rule_name = 'Standard Edition batch mode DOP 2',
+            finding =
+                N'The plan uses batch mode and ran at DOP 2, and this is Standard Edition, which limits batch mode to DOP 2. Effective MAXDOP is ' +
+                CASE
+                    WHEN em.effective_maxdop = 0
+                    THEN N'0 (all cores)'
+                    ELSE CONVERT(nvarchar(20), em.effective_maxdop)
+                END +
+                N', so the cap is the likely cause. Row mode plans can use more; whether that is better depends on the query.'
+        FROM #plan_facts AS pf
+        LEFT JOIN #plan_database_maxdop AS dm
+          ON dm.database_id = pf.database_id
+        CROSS APPLY
+        (
+            SELECT
+                effective_maxdop =
+                    CASE
+                        WHEN ISNULL(dm.maxdop, 0) > 0
+                        THEN dm.maxdop
+                        ELSE ISNULL(@pp_server_maxdop, 0)
+                    END
+        ) AS em
+        WHERE pf.max_dop = 2
+        AND   pf.qs_hint_maxdop_2 = 0
+        AND   NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_statements AS ps
+                  WHERE ps.database_id = pf.database_id
+                  AND   ps.plan_id = pf.plan_id
+                  AND   ps.plan_guide_name IS NOT NULL
+              )
+        AND   em.effective_maxdop <> 1
+        AND   em.effective_maxdop <> 2
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #plan_operators AS po
+                  WHERE po.database_id = pf.database_id
+                  AND   po.plan_id = pf.plan_id
+                  AND   po.exec_mode = N'Batch'
+              )
+        OPTION(RECOMPILE, MAXDOP 1);
+    END;
+
+    /*
+    Rule 18: scan on inner side of nested loops
+    The scan is the inner (second) child of a Nested Loops join, directly or under a chain of
+    lazy spools and compute scalars. The chain is walked up from the scan until it reaches a Nested Loops.
+    It stops at an eager spool (rule 1 covers that: the scan runs once and the spool is read for each
+    outer row) and at a Row Count Spool (it only counts rows, it does not replay the scan).
+    */
+    IF @pp_has_nested_loops = 1
+    BEGIN
+        WITH climb AS
+        (
+            SELECT
+                po.database_id,
+                po.plan_id,
+                po.stmt_id,
+                po.qp_id,
+                scan_node_id = po.node_id,
+                cur_node_id = po.node_id
+            FROM #plan_operators AS po
+            WHERE po.is_scan = 1
+            AND   po.table_cardinality >= @pp_scan_rows
+
+            UNION ALL
+
+            SELECT
+                c.database_id,
+                c.plan_id,
+                c.stmt_id,
+                c.qp_id,
+                c.scan_node_id,
+                cur_node_id = e.parent_node_id
+            FROM climb AS c
+            JOIN #plan_edges AS e
+              ON  e.database_id = c.database_id
+              AND e.plan_id = c.plan_id
+              AND e.stmt_id = c.stmt_id
+              AND e.qp_id = c.qp_id
+              AND e.child_node_id = c.cur_node_id
+            JOIN #plan_operators AS pa
+              ON  pa.database_id = e.database_id
+              AND pa.plan_id = e.plan_id
+              AND pa.stmt_id = e.stmt_id
+              AND pa.qp_id = e.qp_id
+              AND pa.node_id = e.parent_node_id
+            WHERE pa.physical_op = N'Compute Scalar'
+            OR
+            (
+                    pa.physical_op IN (N'Table Spool', N'Index Spool')
+                AND pa.logical_op = N'Lazy Spool'
+            )
+        )
+        INSERT
+            #plan_findings
+        WITH
+            (TABLOCK)
+        (
+            database_id,
+            plan_id,
+            query_id,
+            rule_id,
+            rule_name,
+            stmt_id,
+            qp_id,
+            node_id,
+            object_name,
+            finding
+        )
+        SELECT
+            pf.database_id,
+            pf.plan_id,
+            pf.query_id,
+            rule_id = 18,
+            rule_name = 'scan on inner side of nested loops',
+            po.stmt_id,
+            po.qp_id,
+            po.node_id,
+            object_name = tn.table_name,
+            finding =
+                N'The scan of ' + ISNULL(tn.table_name, N'a table') + N' (' + FORMAT(po.table_cardinality, 'N0') +
+                N' rows) is on the inner side of a Nested Loops join, so it can run again for each row from the outer side. The plan cannot show how many times it ran: if the outer side returns more than a few rows, an index on the join columns lets it seek instead.'
+        FROM climb AS c
+        JOIN #plan_edges AS e
+          ON  e.database_id = c.database_id
+          AND e.plan_id = c.plan_id
+          AND e.stmt_id = c.stmt_id
+          AND e.qp_id = c.qp_id
+          AND e.child_node_id = c.cur_node_id
+          AND e.child_ordinal = 2
+        JOIN #plan_operators AS nl
+          ON  nl.database_id = e.database_id
+          AND nl.plan_id = e.plan_id
+          AND nl.stmt_id = e.stmt_id
+          AND nl.qp_id = e.qp_id
+          AND nl.node_id = e.parent_node_id
+          AND nl.physical_op = N'Nested Loops'
+        JOIN #plan_operators AS po
+          ON  po.database_id = c.database_id
+          AND po.plan_id = c.plan_id
+          AND po.stmt_id = c.stmt_id
+          AND po.qp_id = c.qp_id
+          AND po.node_id = c.scan_node_id
+        JOIN #plan_facts AS pf
+          ON  pf.database_id = po.database_id
+          AND pf.plan_id = po.plan_id
+        CROSS APPLY
+        (
+            SELECT
+                table_name =
+                    ISNULL(po.obj_database + N'.', N'') +
+                    ISNULL(po.obj_schema + N'.', N'') +
+                    po.obj_table
+        ) AS tn
+        OPTION(RECOMPILE, MAXRECURSION 0, MAXDOP 1);
+    END;
+
+    /*
+    Rule 19: long compile
+    */
+    INSERT
+        #plan_findings
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_id,
+        rule_id,
+        rule_name,
+        finding
+    )
+    SELECT
+        pf.database_id,
+        pf.plan_id,
+        pf.query_id,
+        rule_id = 19,
+        rule_name = 'long compile',
+        finding =
+            N'The plan takes ' + FORMAT(pf.avg_compile_duration_ms, 'N0') +
+            N' ms on average to compile. Every recompile pays that again: check why it recompiles, and whether the query can be simpler.'
+    FROM #plan_facts AS pf
+    WHERE pf.avg_compile_duration_ms >= @pp_compile_ms
+    OPTION(RECOMPILE, MAXDOP 1);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+    /*
+    Return the findings: one row per plan and rule. The first few findings are joined, and the object
+    names and node ids (lowest node ids first) are listed the same way, each with "and N more" when
+    there are more. A finding with no node id still counts toward the findings. Identical finding
+    texts count once. A cursor has a QueryPlan for each phase and each numbers its operators from 0,
+    so a node id from a cursor phase is listed with the phase: "3 (fetch), 3 (populate)".
+    */
+    SELECT
+        @current_table = 'plan parsing: returning findings';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    UPDATE
+        pfi
+    SET
+        pfi.phase =
+            CASE ps.operation_type
+                WHEN N'PopulateQuery'
+                THEN 'populate'
+                WHEN N'FetchQuery'
+                THEN 'fetch'
+                WHEN N'RefreshQuery'
+                THEN 'refresh'
+            END
+    FROM #plan_findings AS pfi
+    JOIN #plan_statements AS ps
+      ON  ps.database_id = pfi.database_id
+      AND ps.plan_id = pfi.plan_id
+      AND ps.stmt_id = pfi.stmt_id
+      AND ps.qp_id = pfi.qp_id
+    WHERE ps.operation_type IS NOT NULL
+    OPTION(RECOMPILE);
+
+    SELECT
+        database_name = DB_NAME(fg.database_id),
+        fg.query_id,
+        fg.plan_id,
+        fg.rule_id,
+        fg.rule_name,
+        finding =
+            fx.finding +
+            CASE
+                WHEN fg.finding_count > @pp_findings_shown
+                THEN N' | and ' + CONVERT(nvarchar(20), fg.finding_count - @pp_findings_shown) + N' more'
+                ELSE N''
+            END,
+        object_name =
+            ox.object_names +
+            CASE
+                WHEN fg.object_count > @pp_findings_shown
+                THEN N' and ' + CONVERT(nvarchar(20), fg.object_count - @pp_findings_shown) + N' more'
+                ELSE N''
+            END,
+        node_ids =
+            nx.node_ids +
+            CASE
+                WHEN fg.node_count > @pp_node_ids_shown
+                THEN N' and ' + CONVERT(nvarchar(20), fg.node_count - @pp_node_ids_shown) + N' more'
+                ELSE N''
+            END
+    FROM
+    (
+        SELECT
+            pfi.database_id,
+            pfi.plan_id,
+            pfi.query_id,
+            pfi.rule_id,
+            pfi.rule_name,
+            finding_count =
+                COUNT_BIG(DISTINCT pfi.finding),
+            /*
+            The two counts skip the findings with no object or no node id before they count,
+            so the aggregate never sees a NULL (that sent "Null value is eliminated" to the client)
+            */
+            object_count =
+                (
+                    SELECT
+                        COUNT_BIG(DISTINCT f4.object_name)
+                    FROM #plan_findings AS f4
+                    WHERE f4.database_id = pfi.database_id
+                    AND   f4.plan_id = pfi.plan_id
+                    AND   f4.rule_id = pfi.rule_id
+                    AND   f4.object_name IS NOT NULL
+                ),
+            node_count =
+                (
+                    SELECT
+                        COUNT_BIG(DISTINCT CONVERT(varchar(30), ISNULL(f5.stmt_id, 0)) + '.' + CONVERT(varchar(30), ISNULL(f5.qp_id, 0)) + '.' + CONVERT(varchar(30), f5.node_id))
+                    FROM #plan_findings AS f5
+                    WHERE f5.database_id = pfi.database_id
+                    AND   f5.plan_id = pfi.plan_id
+                    AND   f5.rule_id = pfi.rule_id
+                    AND   f5.node_id IS NOT NULL
+                )
+        FROM #plan_findings AS pfi
+        GROUP BY
+            pfi.database_id,
+            pfi.plan_id,
+            pfi.query_id,
+            pfi.rule_id,
+            pfi.rule_name
+    ) AS fg
+    CROSS APPLY
+    (
+        SELECT
+            finding =
+                STUFF
+                (
+                    (
+                        SELECT TOP (@pp_findings_shown)
+                            N' | ' + f1.finding
+                        FROM
+                        (
+                            SELECT
+                                f0.finding,
+                                /* the lowest node id, NULL when the finding has none, without a NULL reaching MIN */
+                                node_id =
+                                    NULLIF(MIN(ISNULL(f0.node_id, 2147483647)), 2147483647),
+                                finding_id =
+                                    MIN(f0.finding_id)
+                            FROM #plan_findings AS f0
+                            WHERE f0.database_id = fg.database_id
+                            AND   f0.plan_id = fg.plan_id
+                            AND   f0.rule_id = fg.rule_id
+                            GROUP BY
+                                f0.finding
+                        ) AS f1
+                        ORDER BY
+                            f1.node_id,
+                            f1.finding_id
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    3,
+                    N''
+                )
+    ) AS fx
+    CROSS APPLY
+    (
+        SELECT
+            object_names =
+                STUFF
+                (
+                    (
+                        SELECT TOP (@pp_findings_shown)
+                            N', ' + o1.object_name
+                        FROM
+                        (
+                            SELECT
+                                f2.object_name,
+                                first_finding_id =
+                                    MIN(f2.finding_id)
+                            FROM #plan_findings AS f2
+                            WHERE f2.database_id = fg.database_id
+                            AND   f2.plan_id = fg.plan_id
+                            AND   f2.rule_id = fg.rule_id
+                            AND   f2.object_name IS NOT NULL
+                            GROUP BY
+                                f2.object_name
+                        ) AS o1
+                        ORDER BY
+                            o1.first_finding_id
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS ox
+    CROSS APPLY
+    (
+        SELECT
+            node_ids =
+                STUFF
+                (
+                    (
+                        SELECT TOP (@pp_node_ids_shown)
+                            N', ' + CONVERT(nvarchar(20), n1.node_id) +
+                            ISNULL(N' (' + n1.phase + N')', N'')
+                        FROM
+                        (
+                            SELECT DISTINCT
+                                f3.stmt_id,
+                                f3.qp_id,
+                                f3.node_id,
+                                f3.phase
+                            FROM #plan_findings AS f3
+                            WHERE f3.database_id = fg.database_id
+                            AND   f3.plan_id = fg.plan_id
+                            AND   f3.rule_id = fg.rule_id
+                            AND   f3.node_id IS NOT NULL
+                        ) AS n1
+                        ORDER BY
+                            n1.node_id,
+                            n1.stmt_id,
+                            n1.qp_id
+                        FOR
+                            XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+    ) AS nx
+    ORDER BY
+        fg.database_id,
+        fg.query_id,
+        fg.plan_id,
+        fg.rule_id
+    OPTION(RECOMPILE);
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @pp_troubleshoot_sql,
+            @current_table;
+    END;
+
+END; /*End plan parsing*/
+
 IF  @query_store_trouble = 1
 AND @log_to_table = 0
 BEGIN
@@ -68022,6 +74608,8 @@ BEGIN
             @primary_window,
         find_parameter_sensitive =
             @find_parameter_sensitive,
+        plan_parsing =
+            @plan_parsing,
         help =
             @help,
         debug =
@@ -68476,6 +75064,29 @@ BEGIN
            (
                SELECT
                    1/0
+               FROM #plan_ids_having_enough_duration AS plans
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#plan_ids_having_enough_duration',
+                plans.*
+            FROM #plan_ids_having_enough_duration AS plans
+            ORDER BY
+                plans.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#plan_ids_having_enough_duration is empty';
+        END;
+
+        IF EXISTS
+           (
+               SELECT
+                   1/0
                FROM #plan_ids_with_query_hashes AS hashes
            )
         BEGIN
@@ -68885,6 +75496,197 @@ BEGIN
         SELECT
             result =
                 '#query_store_plan is empty';
+    END;
+
+    IF @plan_parsing = 1
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_parsing_xml',
+            ppx.database_id,
+            ppx.plan_id,
+            ppx.plan_state
+        FROM #plan_parsing_xml AS ppx
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_facts',
+            pf.*
+        FROM #plan_facts AS pf
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_statements',
+            ps.database_id,
+            ps.plan_id,
+            ps.stmt_id,
+            ps.qp_id,
+            ps.stmt_type,
+            ps.plan_guide_name,
+            ps.operation_type,
+            ps.non_parallel_reason
+        FROM #plan_statements AS ps
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_operators',
+            po.*
+        FROM #plan_operators AS po
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_objects',
+            pob.*
+        FROM #plan_objects AS pob
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_predicates',
+            pp.database_id,
+            pp.plan_id,
+            pp.stmt_id,
+            pp.qp_id,
+            pp.node_id,
+            pp.startup_expr,
+            pp.pred_text,
+            pp.pred_intrinsic,
+            pp.pred_convert,
+            pp.pred_if,
+            pp.pred_like_lead,
+            pp.pred_base_col,
+            pp.pred_expr_col
+        FROM #plan_predicates AS pp
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_specials',
+            psp.database_id,
+            psp.plan_id,
+            psp.stmt_id,
+            psp.qp_id,
+            psp.node_id,
+            psp.special,
+            psp.pred_text
+        FROM #plan_specials AS psp
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_columns',
+            pc.*
+        FROM #plan_columns AS pc
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_edges',
+            pe.*
+        FROM #plan_edges AS pe
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_anti_cols',
+            pac.*
+        FROM #plan_anti_cols AS pac
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_filter_parts',
+            fp.database_id,
+            fp.plan_id,
+            fp.stmt_id,
+            fp.qp_id,
+            fp.node_id,
+            fp.part_ord,
+            fp.part_base_col,
+            fp.part_agg,
+            fp.part_flag
+        FROM #plan_filter_parts AS fp
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_filter_part_exprs',
+            fe.*
+        FROM #plan_filter_part_exprs AS fe
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_expr_defs',
+            xd.database_id,
+            xd.plan_id,
+            xd.stmt_id,
+            xd.qp_id,
+            xd.expr_name,
+            xd.is_agg,
+            xd.has_base
+        FROM #plan_expr_defs AS xd
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_expr_refs',
+            er.*
+        FROM #plan_expr_refs AS er
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_expr_class',
+            ec.*
+        FROM #plan_expr_class AS ec
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_relations',
+            prl.*
+        FROM #plan_relations AS prl
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_warnings',
+            pw.*
+        FROM #plan_warnings AS pw
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_missing_indexes',
+            pmi.*
+        FROM #plan_missing_indexes AS pmi
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_database_maxdop',
+            pdm.*
+        FROM #plan_database_maxdop AS pdm
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_dml_indexes',
+            pdi.*
+        FROM #plan_dml_indexes AS pdi
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name =
+                '#plan_findings',
+            pfi.*
+        FROM #plan_findings AS pfi
+        OPTION(RECOMPILE);
     END;
 
     IF EXISTS
